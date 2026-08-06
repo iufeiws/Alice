@@ -27,7 +27,7 @@ test("Memorize prompt uses one Layer for every target", () => {
         toolCalls: [{
           id: "memorize_test_call",
           type: "function",
-          function: { name: "self_talk", arguments: "{\"content\":\"{{memorize/timezone}}\"}" }
+          function: { name: "Read", arguments: "{\"path\":\"{{memorize/timezone}}\"}" }
         }]
       },
       { meta: { title: "Disabled", enabled: false }, role: "system", content: "hidden" }
@@ -47,13 +47,15 @@ test("Memorize prompt uses one Layer for every target", () => {
   const previewWithoutMaxTokens = buildMemoryPromptPreview(deps, "persistent");
   const previewWithMaxTokens = buildMemoryPromptPreview({ ...deps, config: { maxTokens: 4096 } }, "persistent");
 
-  assert.deepEqual(preferences, persistent);
+  assert.equal(preferences.length, persistent.length);
+  assert.deepEqual(preferences[0], persistent[0]);
+  assert.deepEqual(preferences[1], persistent[1]);
   assert.equal(persistent.length, 3);
   assert.equal(previewWithoutMaxTokens.request.maxTokens, undefined);
   assert.equal(previewWithMaxTokens.request.maxTokens, 4096);
   assert.match(String(persistent[0]?.content), /hello/);
   assert.equal(persistent[1]?.toolCalls?.[0]?.id, "memorize_test_call");
-  assert.match(String(persistent[2]?.content), /Asia\/Shanghai/);
+  assert.match(String(persistent[2]?.content), /persistent-memory/);
   assert.deepEqual(JSON.parse(fs.readFileSync(filePath, "utf8")), prompts);
   assert.equal(fs.readFileSync(filePath, "utf8").includes("persistentLayers"), false);
 });

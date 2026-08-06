@@ -7,7 +7,6 @@ import {
   type PromptRenderContext
 } from "./build-system-prompt.js";
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
-import { memoryToolDefinitions } from "../../../memory/src/memory.js";
 
 export function createPromptToolPreviewRuntime(input: {
   time: CurrentTimeProvider;
@@ -44,7 +43,7 @@ export function createPromptToolPreviewRuntime(input: {
       const tool = plugin.listTools().find((entry: ToolDefinition) => entry.name === name);
       if (tool) return tool;
     }
-    return memoryToolDefinitions().find((tool) => tool.name === name);
+    return undefined;
   }
 
   async function buildPromptPreviewMessages(

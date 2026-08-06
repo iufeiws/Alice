@@ -74,7 +74,7 @@ test("sleepInduction_closedBoundaryWindow_recordsCurrentTimestampBeforeQuery", a
   assert.equal(memoryStore.read().persistent, "");
   assert.equal(memoryStore.read().userPreferences, "");
   assert.equal(memoryStore.read().yesterdaySummary, "");
-  assert.equal(fs.existsSync(path.join(sandbox.config.hostWorkspaceDir, "memory_organization")), false);
+  assert.equal(fs.existsSync(path.join(sandbox.hostRoot, "memory_organization")), false);
 });
 
 test("sleepInduction_latestBoundaryOnly_usesOpenStart", async () => {

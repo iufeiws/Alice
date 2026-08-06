@@ -5,9 +5,20 @@ import type { LLMChatResult, LLMClient, LLMMessage, LLMToolSpec } from '../../..
 import type { LLMRequestSender } from '../../../contexts/llm-gateway/src/llm-tool-loop.js';
 import type { PromptContextRuntime } from '../../../contexts/prompt-context/src/index.js';
 import type { PromptLayer } from '../../../contexts/agent-profile/src/domain/prompt-layer.js';
-import type { BashSandboxConfig, BashSandboxRuntime } from '../../../contexts/bash-sandbox/src/index.js';
+import type { PiWorkerRuntime } from '../../../contexts/pi-worker/src/index.js';
 
 export type MemoryTarget = "persistent" | "userPreferences" | "yesterdaySummary";
+
+/**
+ * Pi-backed sandbox for Memorize file tools. The Pi Worker shares the Docker
+ * container, so `containerRoot` is the Pi cwd and `hostRoot` is its host mount;
+ * only the PiWorkerRuntime executes tools.
+ */
+export type MemorySandbox = {
+  runtime: PiWorkerRuntime;
+  containerRoot: string;
+  hostRoot: string;
+};
 
 export type MemorySnapshot = {
   persistent: string;
@@ -72,10 +83,7 @@ export type MemorySummaryDeps = {
   memoryStore: MemoryStore;
   promptStore: MemoryInductionPromptStore;
   promptContextRuntime: PromptContextRuntime;
-  sandbox?: {
-    config: BashSandboxConfig;
-    runtime: BashSandboxRuntime;
-  };
+  sandbox?: MemorySandbox;
   stateStore: SleepMemoryStateStore;
   diaryStore?: Pick<DiaryStore, "listSleepBoundaries" | "recordSleepBoundary">;
   messageStore: {

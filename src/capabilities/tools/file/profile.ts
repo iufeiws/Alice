@@ -1,32 +1,65 @@
 import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 
+/**
+ * 容器工具名映射:Alice 对外大写名 → Pi 容器小写工具名。
+ * 参数协议以容器为准(参数名原样透传,不在此转换)。
+ */
+export const piFileToolNames: Record<"Read" | "Write" | "Edit", "read" | "write" | "edit"> = {
+  Read: "read",
+  Write: "write",
+  Edit: "edit"
+};
+
 export const readTool: ToolDefinition = {
   name: "Read",
-  description: "Reads a file by absolute path. This tool can read text and images (eg PNG, JPG, etc). ",
+  description: "Reads a file. Supports text and images. Use offset/limit to page through large files.",
   inputSchema: {
     type: "object",
     properties: {
-      file_path: { type: "string", description: "Absolute path to the file to read." },
-      offset: { type: "number", description: "Optional 1-based line number to start reading from." },
-      limit: { type: "number", description: "Optional number of lines to read." }
+      path: { type: "string", description: "Path to the file to read (relative or absolute)." },
+      offset: { type: "number", description: "Line number to start reading from (1-indexed)." },
+      limit: { type: "number", description: "Maximum number of lines to read." }
     },
-    required: ["file_path"],
+    required: ["path"],
+    additionalProperties: false
+  }
+};
+
+export const writeTool: ToolDefinition = {
+  name: "Write",
+  description: "Writes content to a file, creating or overwriting it. Parent directories are created automatically.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "Path to the file to write (relative or absolute)." },
+      content: { type: "string", description: "Content to write to the file." }
+    },
+    required: ["path", "content"],
     additionalProperties: false
   }
 };
 
 export const editTool: ToolDefinition = {
   name: "Edit",
-  description: "Performs exact string replacements in a file.",
+  description: "Edits one file with one or more exact-text replacements in a single call. Every edits[].oldText must be unique and non-overlapping in the original file; merge nearby changes into one edit instead of emitting overlapping ones.",
   inputSchema: {
     type: "object",
     properties: {
-      file_path: { type: "string", description: "Absolute path to the file to modify." },
-      old_string: { type: "string", description: "The text to replace." },
-      new_string: { type: "string", description: "The text to replace it with." },
-      replace_all: { type: "boolean", description: "Replace all occurrences of old_string." }
+      path: { type: "string", description: "Path to the file to edit (relative or absolute)." },
+      edits: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            oldText: { type: "string", description: "Exact text to replace; must be unique in the original file." },
+            newText: { type: "string", description: "Replacement text." }
+          },
+          required: ["oldText", "newText"],
+          additionalProperties: false
+        }
+      }
     },
-    required: ["file_path", "old_string", "new_string"],
+    required: ["path", "edits"],
     additionalProperties: false
   }
 };
@@ -39,32 +72,6 @@ export const globTool: ToolDefinition = {
     properties: {
       pattern: { type: "string", description: "The glob pattern to match files against." },
       path: { type: "string", description: "Optional absolute directory path to search in." }
-    },
-    required: ["pattern"],
-    additionalProperties: false
-  }
-};
-
-export const grepTool: ToolDefinition = {
-  name: "Grep",
-  description: "Searches file contents with ripgrep.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      pattern: { type: "string", description: "The regular expression pattern to search for in file contents." },
-      path: { type: "string", description: "Optional absolute file or directory path to search in." },
-      glob: { type: "string", description: "Optional glob pattern to filter files." },
-      output_mode: { type: "string", enum: ["content", "files_with_matches", "count"], description: "Output mode. Defaults to files_with_matches." },
-      "-B": { type: "number", description: "Number of lines to show before each match for content output." },
-      "-A": { type: "number", description: "Number of lines to show after each match for content output." },
-      "-C": { type: "number", description: "Alias for context." },
-      context: { type: "number", description: "Number of lines to show before and after each match for content output." },
-      "-n": { type: "boolean", description: "Show line numbers in content output. Defaults to true." },
-      "-i": { type: "boolean", description: "Case insensitive search." },
-      type: { type: "string", description: "Ripgrep file type filter." },
-      head_limit: { type: "number", description: "Limit output to first N lines or entries. Defaults to 250; pass 0 for unlimited." },
-      offset: { type: "number", description: "Skip first N lines or entries before applying head_limit." },
-      multiline: { type: "boolean", description: "Enable multiline mode." }
     },
     required: ["pattern"],
     additionalProperties: false

@@ -1,17 +1,21 @@
 import type { StoredConversationMessage } from '../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js';
 import { registerLLMToolLoopTools, runLLMToolLoop } from '../../../contexts/llm-gateway/src/llm-tool-loop.js';
+import type { LLMRequestSenderInput } from '../../../contexts/llm-gateway/src/llm-tool-loop.js';
+import type { LLMToolSpec } from '../../../contexts/llm-gateway/src/index.js';
+import type { ToolDefinition } from '../../../contexts/agent-loop/src/contracts/agent-contracts.js';
 import type { MemoryInductionSession, MemoryRunResult, MemoryRunSummary, MemorySummaryDeps, MemoryTarget } from './model.js';
 import { maxMessagesPerSummary, memoryFileLimits, targetFiles, targetResultFiles } from './model.js';
 import { latestMemorySleepWindow } from './sleep-window.js';
 import { buildMemoryErrorMessages, buildMemoryPromptMessages, readMemoryTargetForRun } from './prompt-build.js';
 import { createMemoryInductionSession } from './session.js';
-import { createMemoryLocalLLMRequestSender, createMemorySelfTalkToolPlugin, memoryToolDefinitions, memoryToolNames, memoryTools } from './tools.js';
 import { lineCount, utf8ByteLength } from './text-utils.js';
 import { createFileTools } from '../../../capabilities/tools/file/src/index.js';
+import { createMemorySelfTalkToolPlugin, memorySelfTalkDefinition, memorySelfTalkSpec, memorySelfTalkToolName } from './self-talk-tool.js';
 import { readFile, writeAtomic } from './store.js';
 
 let memoryToolRegistrySeq = 0;
 const memoryTargets: MemoryTarget[] = ["persistent", "userPreferences", "yesterdaySummary"];
+const emptyDiaryPlaceholder = "# ___ 日记\n";
 const fs = await import('node:fs');
 const path = await import('node:path');
 
@@ -207,14 +211,17 @@ function createMemoryOrganizationWorkspace(
   }
 ): MemoryOrganizationWorkspace {
   if (!deps.sandbox) throw new Error("memory_sandbox_required");
-  const hostRoot = path.join(deps.sandbox.config.hostWorkspaceDir, "memory_organization");
-  const containerRoot = path.posix.join(deps.sandbox.config.workspaceDir, "memory_organization");
+  const hostRoot = path.join(deps.sandbox.hostRoot, "memory_organization");
+  const containerRoot = path.posix.join(deps.sandbox.containerRoot, "memory_organization");
   fs.rmSync(hostRoot, { recursive: true, force: true });
   fs.mkdirSync(hostRoot, { recursive: true });
 
   const hostFiles = Object.fromEntries(memoryTargets.map((target) => [target, path.join(hostRoot, targetFiles[target])])) as Record<MemoryTarget, string>;
   const containerFiles = Object.fromEntries(memoryTargets.map((target) => [target, path.posix.join(containerRoot, targetFiles[target])])) as Record<MemoryTarget, string>;
-  const initialContent = Object.fromEntries(memoryTargets.map((target) => [target, readMemoryTargetForRun(deps.memoryStore, target)])) as Record<MemoryTarget, string>;
+  const initialContent = Object.fromEntries(memoryTargets.map((target) => {
+    const content = readMemoryTargetForRun(deps.memoryStore, target);
+    return [target, target === "yesterdaySummary" && content === "" ? emptyDiaryPlaceholder : content];
+  })) as Record<MemoryTarget, string>;
   for (const target of memoryTargets) writeAtomic(hostFiles[target], initialContent[target]);
 
   return { hostRoot, containerRoot, hostFiles, containerFiles, initialContent };
@@ -288,7 +295,7 @@ function commitMemoryOrganizationWorkspace(
 
 function toolCallsForTarget(toolCalls: MemoryRunResult["toolCalls"], target: MemoryTarget): MemoryRunResult["toolCalls"] {
   const file = targetResultFiles[target];
-  return toolCalls.filter((entry) => entry.file === file || entry.name === "self_talk");
+  return toolCalls.filter((entry) => entry.file === file);
 }
 
 function fileForSandboxPath(workspace: MemoryOrganizationWorkspace, filePath: string): MemoryRunResult["toolCalls"][number]["file"] {
@@ -301,6 +308,18 @@ function fileForSandboxPath(workspace: MemoryOrganizationWorkspace, filePath: st
 function withMemoryPromptPaths(runtime: MemorySummaryDeps["promptContextRuntime"], workspace: MemoryOrganizationWorkspace): MemorySummaryDeps["promptContextRuntime"] {
   const variables = Object.fromEntries(memoryTargets.map((target) => [`memorize/files/${target}/filePath`, workspace.containerFiles[target]])) as Record<string, string>;
   return runtime.withVariables(variables);
+}
+
+/** Read/Edit definitions come from the same Pi adapter that executes them. */
+function memoryToolsToSpecs(definitions: ToolDefinition[]): LLMToolSpec[] {
+  return definitions.map((tool) => ({
+    type: "function",
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.inputSchema
+    }
+  }));
 }
 
 async function runMemoryOrganizationInduction(
@@ -332,15 +351,11 @@ async function runMemoryOrganizationInduction(
       ? [...session.messages, ...promptMessages]
       : promptMessages;
     const toolRegistryName = `memory_organization_${memoryToolRegistrySeq += 1}`;
-    const fileTools = createFileTools({
-      runtime: deps.sandbox.runtime,
-      config: deps.sandbox.config,
-      promptContextRuntime: promptRuntime
-    });
-    const unregisterTools = registerLLMToolLoopTools(toolRegistryName, [
-      fileTools,
-      createMemorySelfTalkToolPlugin({ toolCalls })
-    ]);
+    const piAdapter = createFileTools({ piWorker: deps.sandbox.runtime });
+    const memoryDefinitions = piAdapter.listTools().filter((tool) => tool.name === "Read" || tool.name === "Edit");
+    const selfTalkPlugin = createMemorySelfTalkToolPlugin({ toolCalls });
+    const memoryToolNames = [...memoryDefinitions.map((tool) => tool.name), memorySelfTalkToolName];
+    const unregisterTools = registerLLMToolLoopTools(toolRegistryName, [piAdapter, selfTalkPlugin]);
 
     let currentMessages = messages;
     let totalRounds = 0;
@@ -359,7 +374,7 @@ async function runMemoryOrganizationInduction(
               temperature: deps.config.temperature,
               maxTokens: deps.config.maxTokens,
               extraParams,
-              tools: memoryTools(),
+              tools: [...memoryToolsToSpecs(memoryDefinitions), memorySelfTalkSpec],
               messages
             };
             deps.onRound?.(promptTarget, absoluteRound + 1);
@@ -373,13 +388,13 @@ async function runMemoryOrganizationInduction(
               maxTokens: deps.config.maxTokens,
               extraParams,
               toolNames: [...memoryToolNames],
-              inlineTools: memoryToolDefinitions(),
+              inlineTools: [...memoryDefinitions, memorySelfTalkDefinition],
               toolVariables: promptRuntime,
               stream: deps.config.stream === true,
               metadata: { target: promptTarget }
             };
           },
-          sendRequest: deps.llmRequestSender ?? createMemoryLocalLLMRequestSender(deps.llm),
+          sendRequest: deps.llmRequestSender ?? ((input) => sendMemoryLLMRequest(input, deps.llm, [...memoryToolsToSpecs(memoryDefinitions), memorySelfTalkSpec])),
           afterRequest({ round, result }) {
             session.append?.({ type: "response", round: session.roundOffset + roundBase + round, response: result });
           },
@@ -388,7 +403,7 @@ async function runMemoryOrganizationInduction(
           },
           afterToolResult({ call, toolInput, toolResult }) {
             if (call.function.name === "Read" || call.function.name === "Edit") {
-              const file = fileForSandboxPath(workspace, typeof toolInput.file_path === "string" ? toolInput.file_path : "");
+              const file = fileForSandboxPath(workspace, typeof toolInput.path === "string" ? toolInput.path : "");
               toolCalls.push({
                 name: call.function.name,
                 file,
@@ -444,4 +459,19 @@ async function runMemoryOrganizationInduction(
   } finally {
     cleanupMemoryOrganizationWorkspace(workspace);
   }
+}
+
+async function sendMemoryLLMRequest(input: LLMRequestSenderInput, llm: MemorySummaryDeps["llm"], tools: LLMToolSpec[]) {
+  if (!llm) throw new Error("missing Memorize API preset or API key");
+  const request = {
+    messages: input.messages,
+    model: input.model,
+    temperature: input.temperature,
+    maxTokens: input.maxTokens,
+    extraParams: input.extraParams,
+    tools
+  };
+  return input.stream === true && llm.chatStream
+    ? llm.chatStream(request, input.streamHandlers)
+    : llm.chat(request);
 }

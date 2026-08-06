@@ -1,11 +1,10 @@
 import type { StoredConversationMessage } from '../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js';
-import type { LLMMessage } from '../../../contexts/llm-gateway/src/index.js';
+import type { LLMMessage, LLMToolSpec } from '../../../contexts/llm-gateway/src/index.js';
 import type { PromptContextPrimitive, PromptContextRuntime } from '../../../contexts/prompt-context/src/index.js';
 import type { MemorySummaryConfig } from './contracts/memory-config.js';
-import { parsePromptToolArguments, promptMessageToMessage } from '../../../contexts/agent-profile/src/domain/prompt-layer.js';
+import { promptMessageToMessage } from '../../../contexts/agent-profile/src/domain/prompt-layer.js';
 import type { MemoryInductionPrompts, MemoryInductionPromptStore, MemoryPromptPreview, MemoryStore, MemoryTarget } from './model.js';
 import { memoryFileLimits, targetResultFiles } from './model.js';
-import { memoryTools } from './tools.js';
 import { normalizeMemoryInductionPrompts } from './prompt-store.js';
 import { readFile } from './store.js';
 import { lineCount, utf8ByteLength } from './text-utils.js';
@@ -30,6 +29,7 @@ export function buildMemoryPromptPreview(
     config?: Partial<MemorySummaryConfig>;
     promptContextRuntime: PromptContextRuntime;
     sandboxPaths?: MemorySandboxPromptPaths;
+    tools?: LLMToolSpec[];
     generatedAt?: string;
   },
   target: MemoryTarget
@@ -60,7 +60,7 @@ export function buildMemoryPromptPreview(
       maxTokens: deps.config?.maxTokens,
       extraParams: deps.config?.extraParams,
       followupExtraParams: deps.config?.followupExtraParams,
-      tools: memoryTools(),
+      tools: deps.tools ?? [],
       messages
     }
   };
@@ -168,11 +168,6 @@ function memoryPromptToolResult(
   toolName: string,
   rawArguments = "{}"
 ): string {
-  if (toolName === "self_talk") {
-    const input = parsePromptToolArguments(rawArguments);
-    const content = typeof input.content === "string" ? input.content : "";
-    return `爱丽丝听到自己说:\n${content}`;
-  }
   if (toolName !== "Read") return `error: unsupported prompt tool ${toolName}`;
   return formatReadMemoryResult(target, readMemoryTargetForRun(deps.memoryStore, target, deps.diaryDraftPath));
 }

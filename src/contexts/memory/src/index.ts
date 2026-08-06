@@ -21,6 +21,5 @@ export { createMarkdownMemoryStore, createMemoryDiaryStore, memoryDatabasePath }
 export { createMemoryInductionPromptStore, defaultMemoryInductionPrompts } from './prompt-store.js';
 export { buildMemoryPromptPreview } from './prompt-build.js';
 export { createSleepMemoryStateStore, latestMemorySleepWindow, listMemorySleepWindows, resolveMemorySleepWindowForDate } from './sleep-window.js';
-export { memoryToolDefinitions, memoryToolNames } from './tools.js';
 export { clearMemoryInductionSession, createMemoryInductionSession } from './session.js';
 export { runMemoryInductionForMessages, runSleepMemoryBackfill, runSleepMemoryInduction, splitMessagesByLongGaps } from './induction.js';

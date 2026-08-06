@@ -10,7 +10,9 @@ const { StringDecoder } = await import("node:string_decoder");
 const PROXY_ENV_NAMES = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"];
 const WRAPPER_CONTAINER_DIR = "/sandbox/bin";
 const WRAPPER_HOST_DIR = path.resolve("src/contexts/bash-sandbox/wrappers");
-const PI_WORKER_CONTAINER_REVISION = "sandbox-bin-worker-v2";
+const PI_WORKER_RUNTIME_CONTAINER_DIR = "/sandbox/pi-worker";
+const PI_WORKER_RUNTIME_HOST_DIR = path.resolve("src/contexts/pi-worker/runtime");
+const PI_WORKER_CONTAINER_REVISION = "pi-worker-runtime-v1";
 const ALICE_CONTAINER_USER_REVISION = "alice-user-v1";
 const CONTAINER_MOUNT_KEY_LABEL = "com.alice.sandbox.mount-key";
 
@@ -232,6 +234,9 @@ function createContainerArgs(config: BashSandboxConfig, image: string): string[]
     args.push("-e", `PI_AGENT_TIMEZONE=${config.piWorker.timezone ?? "Asia/Singapore"}`);
     args.push("-e", `PI_SESSION_ROOT=${config.piWorker.containerDir}`);
     args.push("-v", `${path.resolve(config.piWorker.hostDir)}:${config.piWorker.containerDir}:rw`);
+    if (fs.existsSync(PI_WORKER_RUNTIME_HOST_DIR)) {
+      args.push("-v", `${PI_WORKER_RUNTIME_HOST_DIR}:${PI_WORKER_RUNTIME_CONTAINER_DIR}:ro`);
+    }
   }
   for (const mount of config.mounts) args.push("-v", `${mount.hostPath}:${mount.containerPath}:${mount.readOnly ? "ro" : "rw"}`);
   for (const mount of config.skillMounts) args.push("-v", `${mount.hostPath}:${mount.containerPath}:${mount.readOnly ? "ro" : "rw"}`);
@@ -240,7 +245,7 @@ function createContainerArgs(config: BashSandboxConfig, image: string): string[]
       image,
       "sh",
       "-lc",
-      "export NODE_PATH=\"$(npm root -g)\"; exec node /sandbox/bin/worker.mjs"
+      "export NODE_PATH=\"$(npm root -g)\"; exec node /sandbox/pi-worker/worker.mjs"
     );
   } else {
     args.push(image, "sleep", "infinity");
@@ -293,7 +298,7 @@ function containerMountKey(config: BashSandboxConfig): string {
     skills: config.skillMounts.map((mount) => [mount.hostPath, mount.containerPath, mount.readOnly]),
     mounts: config.mounts.map((mount) => [mount.hostPath, mount.containerPath, mount.readOnly]),
     wrappers: fs.existsSync(WRAPPER_HOST_DIR) ? WRAPPER_HOST_DIR : undefined,
-    piWorker: config.piWorker ? [PI_WORKER_CONTAINER_REVISION, config.piWorker.hostDir, config.piWorker.containerDir, config.piWorker.port, config.piWorker.maxConcurrency, config.piWorker.maxQueueSize, config.piWorker.taskTimeoutSeconds, config.piWorker.timezone] : undefined
+    piWorker: config.piWorker ? [PI_WORKER_CONTAINER_REVISION, config.piWorker.hostDir, config.piWorker.containerDir, config.piWorker.port, config.piWorker.maxConcurrency, config.piWorker.maxQueueSize, config.piWorker.taskTimeoutSeconds, config.piWorker.timezone, fs.existsSync(PI_WORKER_RUNTIME_HOST_DIR) ? PI_WORKER_RUNTIME_HOST_DIR : undefined] : undefined
   });
 }
 

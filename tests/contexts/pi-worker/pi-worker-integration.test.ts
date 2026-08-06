@@ -11,7 +11,7 @@ import { createPiLLMRelay } from "../../../src/contexts/llm-gateway/src/pi-llm-r
 // compatible binary (e.g. `npx -y node@22`) or run this file under Node 22.
 const workerNodeBin = process.env.PI_WORKER_NODE_BIN || process.execPath;
 const workerNodePath = process.env.PI_WORKER_NODE_PATH || process.env.NODE_PATH;
-const workerDir = path.resolve("src/contexts/bash-sandbox/wrappers");
+const workerDir = path.resolve("src/contexts/pi-worker/runtime");
 const workerEntry = path.join(workerDir, "worker.mjs");
 const workerToken = "test-worker-token";
 const relayToken = "test-relay-token";

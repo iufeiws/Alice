@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadPiModule, readPiPackageVersion, resolvePiPackageEntry } from "../../../src/contexts/bash-sandbox/wrappers/pi-module-loader.mjs";
+import { loadPiModule, readPiPackageVersion, resolvePiPackageEntry } from "../../../src/contexts/pi-worker/runtime/pi-module-loader.mjs";
 
 test("Pi module loader uses the ESM export when require has no exports main", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-module-loader-"));

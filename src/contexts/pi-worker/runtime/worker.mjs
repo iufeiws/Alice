@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import { loadPiModule, readPiPackageVersion } from "./pi-module-loader.mjs";
+import { accessVisibleMessages, projectLatestAssistantMessageAfter, projectVisibleMessages } from "./message-projection.mjs";
 
 const packageName = "@earendil-works/pi-coding-agent";
 const relayProviderId = "alice-pi-relay";
@@ -572,49 +573,11 @@ function assistantTextAfter(manager, entryId) {
 }
 
 function visibleMessages(manager) {
-  return manager.getEntries()
-    .filter((entry) => entry.type === "message" && visibleMessage(entry.message))
-    .map((entry) => ({ role: entry.message.role, content: entry.message.content }));
+  return projectVisibleMessages(manager.getEntries());
 }
 
 function latestAssistantMessageAfter(manager, entryId) {
-  const entries = manager.getEntries();
-  const index = entries.findIndex((entry) => entry.id === entryId);
-  if (index < 0) return undefined;
-  return entries.slice(index)
-    .filter((entry) => entry.type === "message" && visibleMessage(entry.message) && entry.message.role === "assistant")
-    .map((entry) => ({ role: "assistant", content: entry.message.content }))
-    .at(-1);
-}
-
-function visibleMessage(message) {
-  if (message?.role !== "user" && message?.role !== "assistant") return false;
-  if (message.role === "user") return true;
-  if (Array.isArray(message.toolCalls) && message.toolCalls.length) return false;
-  const content = Array.isArray(message.content) ? message.content : [message.content];
-  return !content.some((part) => part && typeof part === "object" && ["tool_call", "tool_use", "tool_result", "thinking", "progress", "toolCall", "toolUse", "toolResult"].includes(part.type));
-}
-
-function accessVisibleMessages(messages, access) {
-  const parsed = parseMessageAccess(access);
-  if (parsed.kind === "index") {
-    const index = parsed.index < 0 ? messages.length + parsed.index : parsed.index;
-    if (index < 0 || index >= messages.length) throw new Error("subagent_message_access_out_of_range");
-    return [messages[index]];
-  }
-  return messages.slice(parsed.start, parsed.end);
-}
-
-function parseMessageAccess(access) {
-  if (typeof access !== "string") throw new Error("invalid_subagent_message_access");
-  if (/^-?\d+$/.test(access)) return { kind: "index", index: Number(access) };
-  const match = /^(-?\d*)?:(-?\d*)?$/.exec(access);
-  if (!match) throw new Error("invalid_subagent_message_access");
-  return {
-    kind: "slice",
-    start: match[1] === "" || match[1] === undefined ? undefined : Number(match[1]),
-    end: match[2] === "" || match[2] === undefined ? undefined : Number(match[2])
-  };
+  return projectLatestAssistantMessageAfter(manager.getEntries(), entryId);
 }
 
 function finalAssistantText(manager) {

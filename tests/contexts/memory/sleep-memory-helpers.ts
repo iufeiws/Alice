@@ -134,9 +134,6 @@ export function makeMemorySandbox(root: string): MemorySandbox {
     async forkSubAgent() {
       throw new Error("subagent is not available in memory sandbox tests");
     },
-    async reconcileInvocations() {
-      return [];
-    },
     onInvocationCompleted() {
       return () => {};
     }

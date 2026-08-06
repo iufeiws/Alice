@@ -385,7 +385,7 @@ invocation 终态包括：
 2. Worker/Alice 观察到 invocation 完成；
 3. `MessageRuntime.deliverPiInvocationCompletion()` 创建或取得唯一 `both` 消息，加入 Core pending，并以 system notice 形式发送给 invocation 目标；
 4. 分别更新 `isRead`、`coreProcessedAt` 与 `sending/sent/send_failed`；
-5. Alice/Worker 重连时通过 `/reconcile` 扫描未 delivery 的 invocation 并幂等重试。
+5. host 通过 watcher 轮询 session snapshot 投递 completion；不设重连重放机制，重启后的漏投递可接受。
 
 不再单独建立 completion outbox；Pi session entries 与 Message Store `both` 消息共同提供 at-least-once delivery。
 
@@ -610,7 +610,7 @@ infra/pi-worker/
 - 不存在 Alice 自有 task registry；重启后的状态来自 Pi sessions/custom entries。
 - invocation completion 直接包含最终 assistant 输出。
 - 相同 `piSessionId + piInvocationId` 不产生重复逻辑消息。
-- 未 delivery 的 invocation 在重连后通过 `/reconcile` 幂等重试。
+- 不设重连重放机制：completion 仅由 watcher 实时投递，重启后的漏投递可接受。
 - `list/read(context|messages|tree)/send/status/wait/cancel/fork` 使用真实 Pi session 行为。
 - ChatAgent activate 后状态为 waiting。
 - queued/running invocation 存在期间状态无法离开 waiting，deadline 为 undefined。

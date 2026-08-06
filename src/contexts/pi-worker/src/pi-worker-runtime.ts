@@ -13,7 +13,6 @@ export function createPiWorkerRuntime(input: {
   refreshToolRegistry?: () => void | Promise<void>;
   /** 授权有效期; 到期后下一次 subagent 调用前重新握手。 */
   authorizationTtlMs?: number;
-  reconcileOnStart?: boolean;
   pollIntervalMs?: number;
   appendLog?(level: "info" | "warn" | "error", message: string): void;
   onInvocationCompleted?(completion: PiInvocationCompletion): Promise<void> | void;
@@ -38,7 +37,6 @@ export function createPiWorkerRuntime(input: {
         input.appendLog?.("warn", `pi worker not ready: ${error instanceof Error ? error.message : String(error)}`);
         healthSnapshot = undefined;
       }
-      if (healthSnapshot && input.reconcileOnStart !== false) await reconcileInvocations();
     },
     async stop() {
       acceptingWatches = false;
@@ -58,7 +56,6 @@ export function createPiWorkerRuntime(input: {
       }
       try {
         await input.refreshToolRegistry?.();
-        await reconcileInvocations();
       } catch (error) {
         if (!failure) failure = error;
       }
@@ -127,7 +124,6 @@ export function createPiWorkerRuntime(input: {
     async forkSubAgent(sessionId, entryId, signal) {
       return input.worker.forkSession(sessionId, entryId, signal);
     },
-    reconcileInvocations,
     onInvocationCompleted(listener) {
       completionListeners.add(listener);
       return () => completionListeners.delete(listener);
@@ -158,14 +154,6 @@ export function createPiWorkerRuntime(input: {
     const modelConfig = await input.prepareModel?.({ presetName });
     if (!modelConfig) throw new Error("pi_llm_preset_not_found");
     return modelConfig;
-  }
-
-  async function reconcileInvocations(signal?: AbortSignal): Promise<PiInvocationCompletion[]> {
-    const completions = await input.worker.reconcileInvocations(signal);
-    for (const completion of completions) {
-      await deliverCompletion(completion);
-    }
-    return completions;
   }
 
   async function deliverCompletion(completion: PiInvocationCompletion): Promise<void> {

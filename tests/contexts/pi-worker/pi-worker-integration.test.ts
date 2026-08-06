@@ -78,7 +78,7 @@ function startWorker(sessionRoot: string, relayPort: number): { child: ChildProc
   return { child, ready };
 }
 
-test("real Pi worker: start/send/fork/auth/persistent reconcile", { skip: Number(process.version.slice(1).split(".")[0]) < 22 ? "pi-coding-agent requires Node >= 22.19" : !workerNodePath ? "set PI_WORKER_NODE_PATH to a Node module path containing Pi" : false }, async () => {
+test("real Pi worker: start/send/fork/auth/persistent sessions", { skip: Number(process.version.slice(1).split(".")[0]) < 22 ? "pi-coding-agent requires Node >= 22.19" : !workerNodePath ? "set PI_WORKER_NODE_PATH to a Node module path containing Pi" : false }, async () => {
   const sessionRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-worker-integration-"));
   let requestCount = 0;
   const relay = createPiLLMRelay({
@@ -205,19 +205,19 @@ test("real Pi worker: start/send/fork/auth/persistent reconcile", { skip: Number
       const sessions = await get("/sessions");
       assert.ok(Array.isArray(sessions) && sessions.length >= 2);
 
-      // Worker restart: reconcile rebuilds every invocation with its own text.
+      // Worker restart: the persisted JSONL rebuilds every invocation with its own text.
       worker.kill("SIGTERM");
       await new Promise<void>((resolve) => worker!.once("exit", () => resolve()));
       worker = undefined;
       const second = startWorker(sessionRoot, port);
       worker = second.child;
       workerPort = await second.ready;
-      const reconciliations = await post("/reconcile") as Array<{ invocationId: string; text: string; status: string }>;
-      const reconByInvocation = new Map(reconciliations.map((entry) => [entry.invocationId, entry] as [string, { invocationId: string; text: string; status: string }]));
-      assert.equal(reconByInvocation.get(inv1)?.status, "completed");
-      assert.equal(reconByInvocation.get(inv1)?.text, "hello-1");
-      assert.equal(reconByInvocation.get(inv2)?.status, "completed");
-      assert.equal(reconByInvocation.get(inv2)?.text, "hello-2");
+      const rebuilt = await waitForIdle(base, sessionId, headers);
+      const rebuiltByInvocation = new Map((rebuilt.terminalCompletions as Array<{ invocationId: string; text: string; status: string }>).map((entry) => [entry.invocationId, entry]));
+      assert.equal(rebuiltByInvocation.get(inv1)?.status, "completed");
+      assert.equal(rebuiltByInvocation.get(inv1)?.text, "hello-1");
+      assert.equal(rebuiltByInvocation.get(inv2)?.status, "completed");
+      assert.equal(rebuiltByInvocation.get(inv2)?.text, "hello-2");
     } finally {
       await close();
     }

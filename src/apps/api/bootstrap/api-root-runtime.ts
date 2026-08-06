@@ -60,7 +60,6 @@ export function createApiRootRuntime() {
   const piWorkerRuntime = createPiWorkerRuntime({
     worker: piWorkerClient,
     refreshAuthorization: refreshPiWorkerAuthorization,
-    reconcileOnStart: true,
     refreshToolRegistry: () => refreshDefaultToolRegistry?.(),
     appendLog: foundation.appendLog,
     prepareModel: async ({ presetName }) => {
@@ -76,9 +75,14 @@ export function createApiRootRuntime() {
       };
     },
     onInvocationCompleted: async (completion) => {
-      const target = completion.messageTarget ?? {};
-      const plugin = typeof target.plugin === "string" && target.plugin ? target.plugin : "web-admin";
-      const conversationId = typeof target.sessionId === "string" && target.sessionId ? target.sessionId : "default";
+      const target = completion.messageTarget;
+      const plugin = target && typeof target.plugin === "string" && target.plugin ? target.plugin : undefined;
+      const conversationId = target && typeof target.sessionId === "string" && target.sessionId ? target.sessionId : undefined;
+      const registeredChannels = apiControlRuntime.outputRouter.listChannels();
+      if (!target || !plugin || !conversationId || !registeredChannels.includes(plugin)) {
+        foundation.appendLog("error", `pi invocation completion rejected: missing real message target session=${completion.sessionId} invocation=${completion.invocationId} plugin=${plugin ?? "(missing)"} text=${completion.text}`);
+        throw new Error("pi_invocation_completion_requires_message_target");
+      }
       await apiServerStackRuntime.apiCommunicationRuntime.messageRuntime.deliverPiInvocationCompletion({
         plugin,
         conversationId,

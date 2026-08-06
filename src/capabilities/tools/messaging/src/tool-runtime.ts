@@ -227,7 +227,12 @@ export function createToolRuntime(input: {
     resolveImagePath: (containerPath: string) => resolveSandboxHostPath(input.config.bashSandbox, containerPath, input.config.bashSandbox.defaultCwd)
   });
   const shellTools = input.piWorkerRuntime ? createShellTools({ runtime: input.piWorkerRuntime }) : undefined;
-  const subAgentTools = input.piWorkerRuntime ? createSubAgentTool({ runtime: input.piWorkerRuntime, resolveOutputTarget, agentState: input.agentState }) : undefined;
+  const subAgentTools = input.piWorkerRuntime ? createSubAgentTool({
+    runtime: input.piWorkerRuntime,
+    resolveOutputTarget,
+    agentState: input.agentState,
+    getRegisteredMessageChannels: () => input.outputRouter.listChannels()
+  }) : undefined;
   const restartTools = createRestartTools(createSystemdRestartController());
 
   const toolPlugins = [messagingTools, finishAndWaitTools, restartTools, photoTools, wardrobeTools, bookcaseTools, sleepCocoonTools, calendarTools, diceTools, locationTools, fileTools, skillsTools, shellTools, subAgentTools].filter(Boolean) as ToolPlugin[];

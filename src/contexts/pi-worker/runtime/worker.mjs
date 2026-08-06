@@ -63,7 +63,6 @@ async function route(request, body, signal) {
   if (request.method === "POST" && url.pathname === "/tools/execute") return { status: 200, body: await executeTool(body, signal) };
   if (request.method === "POST" && url.pathname === "/preview") return { status: 200, body: await previewSession(body) };
   if (request.method === "POST" && url.pathname === "/invocations") return { status: 200, body: await startInvocation(body) };
-  if (request.method === "POST" && url.pathname === "/reconcile") return { status: 200, body: await reconcileInvocations() };
   if (request.method === "GET" && url.pathname === "/sessions") return { status: 200, body: await listSessions() };
   const match = /^\/sessions\/([^/]+)(?:\/(messages|snapshot|status|send|wait|cancel|fork))?$/.exec(url.pathname);
   if (!match) return { status: 404, body: { error: "worker_route_not_found" } };
@@ -232,44 +231,6 @@ async function previewSession(input) {
   } finally {
     session?.dispose?.();
   }
-}
-
-async function reconcileInvocations() {
-  await loadPi();
-  const results = [];
-  // 1. Sessions tracked by this worker process: report terminal invocations accurately.
-  for (const record of sessions.values()) {
-    for (const invocation of record.invocations.values()) {
-      if (invocation.status === "queued" || invocation.status === "running") continue;
-      results.push(completionFrom(record, invocation));
-    }
-  }
-  // 2. Sessions unknown to this process (fresh worker after a container restart):
-  //    scan the persisted Pi JSONL sessions.
-  const known = new Set(sessions.keys());
-  for (const fileName of fs.readdirSync(sessionRoot)) {
-    if (!fileName.endsWith(".jsonl")) continue;
-    let manager;
-    try {
-      manager = piModule.SessionManager.open(path.join(sessionRoot, fileName), sessionRoot, cwd);
-    } catch {
-      continue;
-    }
-    const sessionId = manager.getSessionId();
-    if (known.has(sessionId)) continue;
-    for (const entry of manager.getEntries()) {
-      if (entry.type !== "custom" || entry.customType !== invocationCustomType) continue;
-      const text = assistantTextAfter(manager, entry.id);
-      results.push({
-        sessionId,
-        invocationId: entry.id,
-        status: text === undefined ? "interrupted" : "completed",
-        text: text ?? "pi_session_interrupted",
-        messageTarget: entry.data?.messageTarget
-      });
-    }
-  }
-  return results;
 }
 
 // ============================================================================

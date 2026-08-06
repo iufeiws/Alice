@@ -88,7 +88,7 @@ export type PiSubAgentWaitResult =
   | { status: "completed"; message: PiVisibleMessage & { role: "assistant" } }
   | { status: Exclude<PiInvocationStatus, "queued" | "running" | "completed"> };
 
-/** Completion payload produced when an invocation finishes or is reconciled. */
+/** Completion payload produced when an invocation finishes. */
 export type PiInvocationCompletion = {
   sessionId: string;
   invocationId: string;
@@ -113,7 +113,6 @@ export type PiWorkerClient = {
   cancelSession(sessionId: string, signal?: AbortSignal): Promise<"cancelled">;
   forkSession(sessionId: string, entryId?: string, signal?: AbortSignal): Promise<{ sessionId: string }>;
   previewSession(input: PiModelConfig & { signal?: AbortSignal }): Promise<{ sessionId: string; systemPrompt: string }>;
-  reconcileInvocations(signal?: AbortSignal): Promise<PiInvocationCompletion[]>;
 };
 
 export type PiInvocationStartInput = {
@@ -148,7 +147,6 @@ export type PiWorkerRuntime = {
   waitSubAgent(sessionId: string, timeoutSeconds?: number, signal?: AbortSignal): Promise<PiSubAgentWaitResult>;
   cancelSubAgent(sessionId: string, signal?: AbortSignal): Promise<"cancelled">;
   forkSubAgent(sessionId: string, entryId?: string, signal?: AbortSignal): Promise<{ sessionId: string }>;
-  reconcileInvocations(signal?: AbortSignal): Promise<PiInvocationCompletion[]>;
   onInvocationCompleted(listener: (completion: PiInvocationCompletion) => Promise<void> | void): () => void;
 };
 

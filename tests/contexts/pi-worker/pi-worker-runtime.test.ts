@@ -24,7 +24,7 @@ const health: PiWorkerHealth = {
 
 test("File tool plugin exposes static Read/Write/Edit definitions and forwards container tools with lowercased names", async () => {
   const worker = fakeWorker();
-  const runtime = createPiWorkerRuntime({ worker, reconcileOnStart: false, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
+  const runtime = createPiWorkerRuntime({ worker, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
   await runtime.start();
   const tool = createFileTools({ piWorker: runtime });
   assert.deepEqual(tool.listTools().map((definition) => definition.name), ["Read", "Write", "Edit"]);
@@ -36,7 +36,7 @@ test("File tool plugin exposes static Read/Write/Edit definitions and forwards c
 
 test("Shell tool plugin exposes the static Bash definition and forwards it with the lowercased name", async () => {
   const worker = fakeWorker();
-  const runtime = createPiWorkerRuntime({ worker, reconcileOnStart: false, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
+  const runtime = createPiWorkerRuntime({ worker, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
   await runtime.start();
   const tool = createShellTools({ runtime });
   assert.deepEqual(tool.listTools().map((definition) => definition.name), ["Bash"]);
@@ -52,7 +52,7 @@ test("File and shell text results reach the LLM as plain text", async () => {
     ok: true,
     content: [{ type: "text", text: toolName === "read" ? "test\nalice\nPI_MAX_CONCURRENCY=2" : "stdout" }]
   });
-  const runtime = createPiWorkerRuntime({ worker, reconcileOnStart: false, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
+  const runtime = createPiWorkerRuntime({ worker, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
   await runtime.start();
   const fileTool = createFileTools({ piWorker: runtime });
   const shellTool = createShellTools({ runtime });
@@ -62,17 +62,6 @@ test("File and shell text results reach the LLM as plain text", async () => {
 
   assert.equal(fileResult.output, "test\nalice\nPI_MAX_CONCURRENCY=2");
   assert.equal(shellResult.output, "stdout");
-  await runtime.stop();
-});
-
-test("SubAgent spawn returns only the session id without waiting for completion", async () => {
-  const worker = fakeWorker();
-  const runtime = createPiWorkerRuntime({ worker, reconcileOnStart: false, pollIntervalMs: 10_000, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
-  await runtime.start();
-  const tool = createSubAgentTool({ runtime });
-  const result = await tool.execute({ id: "call-2", toolName: "SubAgent", input: { action: "spawn", message: "inspect the workspace" } });
-  assert.equal(result.ok, true);
-  assert.deepEqual(result.output, { sessionId: "session-1" });
   await runtime.stop();
 });
 
@@ -99,7 +88,7 @@ test("SubAgent projects messages, status, wait, cancel and fork without internal
   worker.subAgentStatus = async () => ({ updatedAt: "2026-08-05T12:00:00.000", messages: 2, status: "completed" });
   worker.waitSession = async () => ({ status: "completed", message: { role: "assistant", content: "done" } });
   worker.cancelSession = async () => "cancelled";
-  const runtime = createPiWorkerRuntime({ worker, reconcileOnStart: false, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
+  const runtime = createPiWorkerRuntime({ worker, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
   await runtime.start();
   const tool = createSubAgentTool({ runtime });
   assert.deepEqual((await tool.execute({ id: "messages", toolName: "SubAgent", input: { action: "messages", sessionId: "session-1", access: ":3" } })).output, [
@@ -114,7 +103,7 @@ test("SubAgent projects messages, status, wait, cancel and fork without internal
 
 test("SubAgent rejects legacy actions, mode, empty entry ids and extra fields", async () => {
   const worker = fakeWorker();
-  const runtime = createPiWorkerRuntime({ worker, reconcileOnStart: false, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
+  const runtime = createPiWorkerRuntime({ worker, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
   await runtime.start();
   const tool = createSubAgentTool({ runtime });
   for (const input of [
@@ -133,7 +122,7 @@ test("SubAgent rejects legacy actions, mode, empty entry ids and extra fields", 
 test("Pi image tool results become image follow-up attachments for multimodal Chat", async () => {
   const worker = fakeWorker();
   worker.executeTool = async () => ({ ok: true, content: [{ type: "text", text: "photo" }, { type: "image", path: "/home/alice/photo.png", mime: "image/png" }] });
-  const runtime = createPiWorkerRuntime({ worker, reconcileOnStart: false, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
+  const runtime = createPiWorkerRuntime({ worker, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
   await runtime.start();
   const tool = createFileTools({ piWorker: runtime, resolveImagePath: (value) => `/host${value}` });
   const result = await tool.execute({ id: "call-image", toolName: "Read", input: {} }, { llmCapabilities: { supportsImage: true } });
@@ -147,7 +136,6 @@ test("terminal invocations notify once with final text", async () => {
   const delivered: PiInvocationCompletion[] = [];
   const runtime = createPiWorkerRuntime({
     worker,
-    reconcileOnStart: false,
     pollIntervalMs: 1,
     prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }),
     onInvocationCompleted: (completion) => { delivered.push(completion); }
@@ -156,25 +144,6 @@ test("terminal invocations notify once with final text", async () => {
   await runtime.startSubAgent({ message: "finish" });
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.deepEqual(delivered.map((entry) => entry.text), ["done"]);
-  await runtime.stop();
-});
-
-test("reconcile re-delivers terminal invocations idempotently", async () => {
-  const worker = fakeWorker();
-  worker.reconcileInvocations = async () => ([
-    { sessionId: "session-1", invocationId: "inv-1", status: "completed", text: "done", messageTarget: { plugin: "wechat", sessionId: "chat" } }
-  ]);
-  const delivered: PiInvocationCompletion[] = [];
-  const runtime = createPiWorkerRuntime({
-    worker,
-    reconcileOnStart: false,
-    prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }),
-    onInvocationCompleted: (completion) => { delivered.push(completion); }
-  });
-  await runtime.start();
-  await runtime.reconcileInvocations();
-  await runtime.reconcileInvocations();
-  assert.equal(delivered.length, 1);
   await runtime.stop();
 });
 
@@ -194,7 +163,6 @@ test("refresh refreshes the tool registry from the new worker health before reso
   let capturedDefinitions: PiToolDefinition[] = [];
   const runtime = createPiWorkerRuntime({
     worker,
-    reconcileOnStart: false,
     prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }),
     refreshAuthorization: async () => { order.push("worker"); gen = "b"; },
     refreshToolRegistry: () => { order.push("refresh"); capturedDefinitions = runtime.toolDefinitions(); }
@@ -211,7 +179,6 @@ test("refresh fails when the tool registry refresh fails", async () => {
   const worker = fakeWorker();
   const runtime = createPiWorkerRuntime({
     worker,
-    reconcileOnStart: false,
     prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }),
     refreshToolRegistry: () => { throw new Error("pi_tool_registry_refresh_failed"); }
   });
@@ -235,7 +202,6 @@ test("watch delivers every terminal invocation, not only the latest", async () =
   const delivered: PiInvocationCompletion[] = [];
   const runtime = createPiWorkerRuntime({
     worker,
-    reconcileOnStart: false,
     pollIntervalMs: 1,
     prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }),
     onInvocationCompleted: (completion) => { delivered.push(completion); }
@@ -254,55 +220,20 @@ test("watch delivers every terminal invocation, not only the latest", async () =
   await runtime.stop();
 });
 
-test("SubAgent hold pairs one-for-one with running invocations", async () => {
+test("watch delivery failures do not poison the dedup key", async () => {
   const worker = fakeWorker();
-  const holds = { acquired: 0, released: 0 };
-  const runtime = createPiWorkerRuntime({
-    worker,
-    reconcileOnStart: false,
-    pollIntervalMs: 10_000,
-    prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false })
+  worker.sessionStatus = async () => ({
+    sessionId: "session-1",
+    idle: true,
+    invocationStatus: "completed",
+    createdAt: "2026-08-05T12:00:00.000",
+    updatedAt: "2026-08-05T12:00:00.000",
+    terminalCompletions: [{ sessionId: "session-1", invocationId: "inv-1", status: "completed", text: "done" }]
   });
-  await runtime.start();
-  const tool = createSubAgentTool({
-    runtime,
-    agentState: {
-      acquireSubAgentHold() { holds.acquired += 1; },
-      releaseSubAgentHold() { holds.released += 1; }
-    }
-  });
-
-  await tool.execute({ id: "call-1", toolName: "SubAgent", input: { action: "spawn", message: "first" } });
-  assert.deepEqual(holds, { acquired: 1, released: 0 });
-  // Second invocation on the same session (send while the first is still active).
-  await tool.execute({ id: "call-2", toolName: "SubAgent", input: { action: "send", sessionId: "session-1", message: "more" } });
-  assert.deepEqual(holds, { acquired: 2, released: 0 });
-
-  // First invocation completes: exactly one hold is released, the other stays.
-  worker.reconcileInvocations = async () => ([
-    { sessionId: "session-1", invocationId: "inv-1", status: "completed", text: "first" }
-  ]);
-  await runtime.reconcileInvocations();
-  assert.deepEqual(holds, { acquired: 2, released: 1 });
-
-  // Second invocation completes: the remaining hold is released.
-  worker.reconcileInvocations = async () => ([
-    { sessionId: "session-1", invocationId: "inv-2", status: "completed", text: "second" }
-  ]);
-  await runtime.reconcileInvocations();
-  assert.deepEqual(holds, { acquired: 2, released: 2 });
-  await runtime.stop();
-});
-
-test("delivery failures do not poison the dedup key", async () => {
-  const worker = fakeWorker();
-  worker.reconcileInvocations = async () => ([
-    { sessionId: "session-1", invocationId: "inv-1", status: "completed", text: "done" }
-  ]);
   let calls = 0;
   const runtime = createPiWorkerRuntime({
     worker,
-    reconcileOnStart: false,
+    pollIntervalMs: 1,
     prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }),
     onInvocationCompleted: async () => {
       calls += 1;
@@ -310,11 +241,11 @@ test("delivery failures do not poison the dedup key", async () => {
     }
   });
   await runtime.start();
-  await assert.rejects(runtime.reconcileInvocations(), /delivery_failed/);
-  await runtime.reconcileInvocations();
-  assert.equal(calls, 2);
-  await runtime.reconcileInvocations();
-  assert.equal(calls, 2);
+  await runtime.startSubAgent({ message: "go" });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(calls, 2, "a failed delivery is retried by the next watch poll");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(calls, 2, "a successful delivery is not delivered again");
   await runtime.stop();
 });
 
@@ -325,7 +256,7 @@ test("SubAgent resolves the completion target through the output target resolver
     captured.push(body.messageTarget);
     return { invocationId: "inv-1", sessionId: "session-1", status: "running" };
   };
-  const runtime = createPiWorkerRuntime({ worker, reconcileOnStart: false, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
+  const runtime = createPiWorkerRuntime({ worker, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
   await runtime.start();
   const tool = createSubAgentTool({
     runtime,
@@ -344,7 +275,7 @@ test("SubAgent falls back to externalSession when the resolver is absent", async
     captured.push(body.messageTarget);
     return { invocationId: "inv-1", sessionId: "session-1", status: "running" };
   };
-  const runtime = createPiWorkerRuntime({ worker, reconcileOnStart: false, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
+  const runtime = createPiWorkerRuntime({ worker, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
   await runtime.start();
   const tool = createSubAgentTool({ runtime });
   await tool.execute({
@@ -396,7 +327,6 @@ function fakeWorker(): PiWorkerClient & { lastTool?: unknown } {
     },
     cancelSession: async () => "cancelled" as const,
     forkSession: async () => ({ sessionId: "session-2" }),
-    previewSession: async () => ({ sessionId: "preview-1", systemPrompt: "preview" }),
-    reconcileInvocations: async () => []
+    previewSession: async () => ({ sessionId: "preview-1", systemPrompt: "preview" })
   };
 }

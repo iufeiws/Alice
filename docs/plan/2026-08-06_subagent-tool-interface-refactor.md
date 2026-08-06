@@ -305,12 +305,11 @@ type SubAgentWaitOutput =
 
 ### 3. 内部监听 seam
 
-现有 `PiSessionSnapshot`、`PiInvocationCompletion` 和 `/reconcile` 继续作为 host 与 worker 之间的内部监听接口，服务于：
+现有 `PiSessionSnapshot` 和 `PiInvocationCompletion` 继续作为 host 与 worker 之间的内部监听接口，服务于：
 
 - completion 幂等投递；
 - 多 invocation 不漏通知；
-- activity hold 释放；
-- worker 重启后的 reconcile。
+- activity hold 释放。
 
 公开 `status` 和 `wait` 不应直接复用这个内部对象作为返回值。应新增明确的公开 projection 类型，或由 `PiWorkerRuntime` 提供面向 SubAgent 工具的窄方法，防止内部字段再次泄漏。
 
@@ -343,7 +342,7 @@ type SubAgentWaitOutput =
 ### 阶段 2：重构 worker/runtime 内部接口
 
 1. 增加窄的 messages/status/wait 返回类型。
-2. 保留 watcher/reconcile 使用的完整 snapshot，不改变 completion 投递顺序。
+2. 保留 watcher 使用的完整 snapshot，不改变 completion 投递顺序。
 3. 将 `send` 固定为一个明确语义，删除 mode 透传和 worker 对未知 mode 的默认回退。
 4. 将 cancel 公开返回压缩为 `"cancelled"`，同时继续异步观察真正终态。
 5. 保留 worker/host runtime 的 list 能力及工具层注释草案，但确保它不进入公开 schema、输入解析或执行分发；删除不再使用的 read-view 浅转发。
@@ -381,7 +380,7 @@ npm run build
 3. `spawn`/`send` 后 activity hold 正确取得并逐 invocation 释放。
 4. `wait` 返回本次完成产生的最新 assistant 消息，不返回旧消息。
 5. cancel 后 session 可再次 send。
-6. worker 重启后 reconcile 仍能投递未处理 completion。
+6. 重启后不重放历史 completion：投递只走 watcher 实时路径，漏投递可接受。
 
 ## 八、测试矩阵
 
@@ -409,6 +408,6 @@ npm run build
 2. 每个 action 在 schema 和 README 中都有一致、明确的一行具体用法；七行按固定顺序拼接进最终工具 `description`。
 3. `messages`、`status.messages`、`wait` 共用同一可见消息投影入口。
 4. 公开返回不泄漏 Pi invocation 与内部 watcher 字段。
-5. completion、reconcile、消息投递目标解析和 activity hold 行为无回归。
+5. completion 投递、消息投递目标解析和 activity hold 行为无回归。
 6. Prompt/Tool Preview 与实际 LLM request 完全一致，没有隐藏 prompt 文本或 schema 差异。
 7. typecheck、相关测试、全量测试和 build 全部通过。

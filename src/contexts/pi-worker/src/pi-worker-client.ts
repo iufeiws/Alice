@@ -1,4 +1,4 @@
-import type { PiInvocation, PiInvocationCompletion, PiSessionListEntry, PiSessionSnapshot, PiSubAgentStatus, PiSubAgentWaitResult, PiToolExecutionResult, PiVisibleMessage, PiWorkerClient, PiWorkerHealth } from "./contracts.js";
+import type { PiInvocation, PiSessionListEntry, PiSessionSnapshot, PiSubAgentStatus, PiSubAgentWaitResult, PiToolExecutionResult, PiVisibleMessage, PiWorkerClient, PiWorkerHealth } from "./contracts.js";
 
 export function createPiWorkerHttpClient(input: { baseURL: string; token?: string; fetchImpl?: typeof fetch }): PiWorkerClient {
   const fetchImpl = input.fetchImpl ?? fetch;
@@ -45,9 +45,6 @@ export function createPiWorkerHttpClient(input: { baseURL: string; token?: strin
     },
     previewSession(body) {
       return request<{ sessionId: string; systemPrompt: string }>("/preview", { method: "POST", body, signal: body.signal });
-    },
-    reconcileInvocations(signal) {
-      return request<PiInvocationCompletion[]>("/reconcile", { method: "POST", signal });
     }
   };
 

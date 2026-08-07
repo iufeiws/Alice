@@ -11,7 +11,6 @@ export function createAgentStateRuntime(input: {
   sendSleepNotice(): Promise<void>;
   triggerSleepMemoryInduction(): Promise<unknown>;
   queueMorningEvent(): void;
-  refreshPiWorkerAuthorization?(): Promise<void> | void;
   attemptDailyOutfitOnBodyGeneration?(daily: { outfit: any }): Promise<unknown> | unknown;
   appendLog(level: "info" | "warn" | "error", message: string): void;
 }) {
@@ -23,7 +22,6 @@ export function createAgentStateRuntime(input: {
     }
   });
 
-  let wakeReady = Promise.resolve();
   let previousAgentBehaviorState = agentState.getSnapshot().state;
   agentState.onChange((snapshot) => {
     if (snapshot.state === "sleeping" && previousAgentBehaviorState !== "sleeping") {
@@ -49,8 +47,7 @@ export function createAgentStateRuntime(input: {
       void input.triggerSleepMemoryInduction();
     }
     if (previousAgentBehaviorState === "sleeping" && snapshot.state === "waiting") {
-      const completeWake = () => {
-        if (snapshot.reason !== "woke") return;
+      if (snapshot.reason === "woke") {
         const now = input.time.now();
         const diaryStore = input.getDiaryStore();
         diaryStore.recordWakeBoundary({
@@ -63,16 +60,6 @@ export function createAgentStateRuntime(input: {
         void input.attemptDailyOutfitOnBodyGeneration?.(daily);
         input.appendLog("info", `daily shell switched on wake: ${daily.personality.name}/${daily.relationship.name}/${daily.outfit.name} date=${daily.date}`);
         input.queueMorningEvent();
-      };
-      const refresh = input.refreshPiWorkerAuthorization?.();
-      if (refresh && typeof (refresh as Promise<void>).then === "function") {
-        wakeReady = Promise.resolve(refresh);
-        void Promise.resolve(refresh).then(completeWake, (error) => {
-          input.appendLog("error", `pi worker authorization refresh on wake failed: ${error instanceof Error ? error.message : String(error)}`);
-        });
-      } else {
-        wakeReady = Promise.resolve();
-        completeWake();
       }
     }
     previousAgentBehaviorState = snapshot.state;
@@ -81,7 +68,8 @@ export function createAgentStateRuntime(input: {
   return {
     ...agentState,
     waitForWake() {
-      return wakeReady;
+      // worker 不在 wake 流程中; wake 立即完成。
+      return Promise.resolve();
     }
   };
 }

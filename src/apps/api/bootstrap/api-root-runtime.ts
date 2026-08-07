@@ -10,7 +10,7 @@ import { createAgentLoopRuntime } from "../../../contexts/agent-loop/src/runtime
 import { createJsonProcessRestartContinuationStore } from "../../../contexts/agent-loop/src/adapters/json-process-restart-continuation-store.js";
 import { createPiLLMRelay, type PiRelayCapability } from "../../../contexts/llm-gateway/src/pi-llm-relay.js";
 import { createPiPresetSnapshot } from "../../../contexts/llm-gateway/src/pi-preset-adapter.js";
-import { createPiWorkerRuntime, createPiWorkerHttpClient } from "../../../contexts/pi-worker/src/index.js";
+import { createPiWorkerRuntime, createPiWorkerHttpClient, type PiWorkerHealth } from "../../../contexts/pi-worker/src/index.js";
 import { ensureDockerSandboxContainer } from "../../../contexts/bash-sandbox/src/index.js";
 const path = await import("node:path");
 const crypto = await import("node:crypto");
@@ -103,7 +103,6 @@ export function createApiRootRuntime() {
     store: foundation.store,
     getChatAgent: () => apiAgentStackRuntime.chatAgent,
     triggerSleepMemoryInduction: () => apiToolingRuntime.sleepMemoryInductionRuntime.trigger(),
-    refreshPiWorkerAuthorization: () => piWorkerRuntime.refresh("wake"),
     appendLog: foundation.appendLog,
     appendMessageLog: foundation.appendMessageLog
   });
@@ -202,18 +201,23 @@ export function createApiRootRuntime() {
   /**
    * 懒授权握手(宿主侧): 保证 capability 与当前 preset 一致(指纹比对, 变更时轮换),
    * 并向容器内 worker 下发 relayUrl/relayToken。
-   * - 轮换(revoke+新建)只在无 subagent 运行时进行; worker 不可达时保守不轮换。
-   * - reason="call" 且授权未过期且 worker 并非不可用时跳过下发(纯懒检查)。
-   * - 授权有效期 8 小时: reason="wake"|"config" 强制续期。
+   * - 轮换(revoke+新建)只在无 subagent 运行时进行; worker 不可达时视为无运行(undefined)。
+   * - reason="call"|"wake" 且授权未过期且 worker 凭证指纹一致时跳过下发(纯懒检查)。
+   * - 授权有效期 8 小时; reason="config" 强制下发。
+   * - worker 在轮换/重建后仍持旧 token 时, 主进程靠 workerHealth.relayTokenFingerprint
+   *   发现失效并在此重新下发(重新注册)。
    */
-  async function refreshPiWorkerAuthorization(input: { reason: "wake" | "config" | "call"; force?: boolean }): Promise<void> {
+  async function refreshPiWorkerAuthorization(input: { reason: "wake" | "config" | "call"; force?: boolean; workerHealth?: PiWorkerHealth }): Promise<void> {
     const fingerprint = JSON.stringify(piPresetSnapshot());
     const needsRotation = piCapability !== undefined && piCapability.presetFingerprint !== fingerprint;
     if (input.reason === "wake" || needsRotation) {
-      if (await anyRunningInvocation()) {
+      const running = await anyRunningInvocation();
+      if (running === true) {
         foundation.appendLog("info", `pi worker authorization update deferred: subagent running (reason=${input.reason})`);
         return;
       }
+      // running === undefined → worker 不可达, 没有运行中的 subagent,
+      // 正常轮换/下发; worker 的旧 token 由下次调用时的指纹校验发现并重新注册。
     }
     if (needsRotation) {
       piRelay.revokeCapability(piCapability!.token);
@@ -223,7 +227,13 @@ export function createApiRootRuntime() {
       const created = piRelay.createCapability({ sandboxId: foundation.config.bashSandbox.containerName, preset: piPresetSnapshot() });
       piCapability = { ...created, presetFingerprint: fingerprint };
     }
-    if (input.reason === "call" && input.force !== true && relayGrantedAt && Date.now() - relayGrantedAt < PI_RELAY_AUTHORIZATION_TTL_MS) return;
+    const credentialCurrent = input.workerHealth?.relayTokenFingerprint !== undefined
+      && input.workerHealth.relayTokenFingerprint === sha256Hex(piCapability.token);
+    if ((input.reason === "call" || input.reason === "wake")
+      && input.force !== true
+      && credentialCurrent
+      && relayGrantedAt
+      && Date.now() - relayGrantedAt < PI_RELAY_AUTHORIZATION_TTL_MS) return;
     await ensureDockerSandboxContainer(foundation.config.bashSandbox);
     const relayHostname = foundation.config.bashSandbox.piWorker?.relayHostname ?? "172.17.0.1";
     await piWorkerClient.configure({
@@ -233,13 +243,18 @@ export function createApiRootRuntime() {
     relayGrantedAt = Date.now();
   }
 
-  async function anyRunningInvocation(): Promise<boolean> {
+  async function anyRunningInvocation(): Promise<boolean | undefined> {
     try {
       const health = await piWorkerClient.health();
       return health.activeRuns > 0;
     } catch {
-      return true; // worker 不可达时保守处理: 不轮换
+      // worker 不可达: 没有运行中的 subagent(不可达 = 进程不在), 返回 undefined。
+      return undefined;
     }
+  }
+
+  function sha256Hex(value: string): string {
+    return crypto.createHash("sha256").update(value).digest("hex");
   }
 
   function readOrCreateWorkerToken(): string {

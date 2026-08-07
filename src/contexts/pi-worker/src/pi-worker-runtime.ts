@@ -5,22 +5,29 @@ export function createPiWorkerRuntime(input: {
   worker: PiWorkerClient;
   /**
    * 宿主侧授权握手: 确保 capability 有效并按需向 worker 下发 relay 配置。
-   * reason="call" 由懒授权检查触发(仅在不一致/过期时下发);
-   * reason="wake"|"config" 由 refresh() 触发(强制下发, 轮换受 0-running 守护)。
+   * 由 ensureGranted/wakeIfNeeded 触发; workerHealth 携带 worker 上报的凭证指纹,
+   * 宿主据此判断是否需重新下发(失效凭证 → 重新注册)。
    */
-  refreshAuthorization?(input: { reason: "wake" | "config" | "call"; force?: boolean }): Promise<void>;
+  refreshAuthorization?(input: { reason: "wake" | "config" | "call"; force?: boolean; workerHealth?: PiWorkerHealth }): Promise<void>;
   prepareModel?(input: { presetName?: string }): Promise<PiModelConfig> | PiModelConfig;
   refreshToolRegistry?: () => void | Promise<void>;
-  /** 授权有效期; 到期后下一次 subagent 调用前重新握手。 */
-  authorizationTtlMs?: number;
   pollIntervalMs?: number;
+  /** 调用路径上"确保 ready"的有界重试预算与间隔。 */
+  handshakeRetryTimeoutMs?: number;
+  handshakeRetryIntervalMs?: number;
+  /** 后台唤起(wakeIfNeeded)的最小间隔。 */
+  wakeIntervalMs?: number;
   appendLog?(level: "info" | "warn" | "error", message: string): void;
   onInvocationCompleted?(completion: PiInvocationCompletion): Promise<void> | void;
 }): PiWorkerRuntime {
-  const authorizationTtlMs = input.authorizationTtlMs ?? 8 * 60 * 60 * 1000;
+  const handshakeRetryTimeoutMs = input.handshakeRetryTimeoutMs ?? 20_000;
+  const handshakeRetryIntervalMs = input.handshakeRetryIntervalMs ?? 500;
+  const wakeIntervalMs = input.wakeIntervalMs ?? 30_000;
   let healthSnapshot: PiWorkerHealth | undefined;
   /** 本进程上次成功握手的时刻; 0 = 尚未握手, 视为已过期。 */
   let lastGrantedAt = 0;
+  let lastWakeAttemptAt = 0;
+  let waking = false;
   const completionListeners = new Set<(completion: PiInvocationCompletion) => Promise<void> | void>();
   const deliveredInvocations = new Set<string>();
   const deliveringInvocations = new Map<string, Promise<void>>();
@@ -30,13 +37,9 @@ export function createPiWorkerRuntime(input: {
 
   return {
     async start() {
+      // 不再做启动期握手: worker 由 heartbeat 后台唤起 + 真实调用时的
+      // ensureGranted 懒拉起, 启动不触碰容器。
       acceptingWatches = true;
-      try {
-        healthSnapshot = await ensureGranted();
-      } catch (error) {
-        input.appendLog?.("warn", `pi worker not ready: ${error instanceof Error ? error.message : String(error)}`);
-        healthSnapshot = undefined;
-      }
     },
     async stop() {
       acceptingWatches = false;
@@ -60,7 +63,32 @@ export function createPiWorkerRuntime(input: {
         if (!failure) failure = error;
       }
       await this.start();
-      if (failure) throw failure;
+      if (failure) {
+        // pi worker 层级消化错误: 不向调用方(admin 主流程)抛出,
+        // 授权会在下一次 subagent 调用前由 ensureGranted 懒握手重试。
+        input.appendLog?.("warn", `pi worker refresh failed (reason=${reason}): ${failure instanceof Error ? failure.message : String(failure)}`);
+      }
+    },
+    async wakeIfNeeded() {
+      const now = Date.now();
+      if (now - lastWakeAttemptAt < wakeIntervalMs) return;
+      lastWakeAttemptAt = now;
+      if (waking) return;
+      waking = true;
+      try {
+        let health: PiWorkerHealth | undefined;
+        try {
+          health = await input.worker.health();
+        } catch {
+          health = undefined;
+        }
+        // 单次尝试: 已授权且凭证一致时宿主直接快路径返回; 失败留到下一个 heartbeat。
+        await handshakeOnce({ reason: "wake", force: !health?.ready, workerHealth: health });
+      } catch (error) {
+        input.appendLog?.("warn", `pi worker wake failed: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        waking = false;
+      }
     },
     async health() {
       healthSnapshot = await input.worker.health();
@@ -77,7 +105,7 @@ export function createPiWorkerRuntime(input: {
     async executeTool(toolInput) {
       const signal = toolInput.context?.signal;
       if (signal?.aborted) throw new Error("pi_tool_cancelled");
-      if (!healthSnapshot) await this.health();
+      healthSnapshot = await ensureGranted();
       return input.worker.executeTool({ ...toolInput, signal });
     },
     async startSubAgent(subInput) {
@@ -131,23 +159,39 @@ export function createPiWorkerRuntime(input: {
   };
 
   /**
-   * 懒授权: subagent 调用前的单次握手。
-   * worker 健康且授权未过期 → 直接放行; 否则触发宿主握手(不一致时更新容器内授权),
-   * 然后以一次 health 确认结果。不重试 —— 失败由调用方重试整个调用。
+   * 单次握手: 向宿主发起授权握手(由宿主根据 worker 凭证指纹/授权有效期决定是否
+   * 重新下发), 然后以一次 health 确认。失败由调用方决定是否重试。
    */
-  async function ensureGranted(): Promise<PiWorkerHealth> {
-    let health: PiWorkerHealth | undefined;
-    try {
-      health = await input.worker.health();
-    } catch {
-      health = undefined; // worker 未就绪: 进入握手路径
-    }
-    if (health?.ready && Date.now() - lastGrantedAt < authorizationTtlMs) return health;
-    await input.refreshAuthorization?.({ reason: "call", force: !health?.ready });
+  async function handshakeOnce(handshakeInput: { reason: "wake" | "config" | "call"; force: boolean; workerHealth?: PiWorkerHealth }): Promise<PiWorkerHealth> {
+    await input.refreshAuthorization?.({ ...handshakeInput });
     lastGrantedAt = Date.now();
-    health = await input.worker.health();
+    const health = await input.worker.health();
     if (!health?.ready) throw new Error("pi_worker_relay_not_ready");
     return health;
+  }
+
+  /**
+   * 调用前确保 worker 已唤起且就绪: 总是向宿主发起授权握手, 然后以一次 health 确认。
+   * 容器刚拉起时 worker 需 ~1s 才监听, 因此做有界重试(默认 20s/500ms)。
+   */
+  async function ensureGranted(): Promise<PiWorkerHealth> {
+    const deadline = Date.now() + handshakeRetryTimeoutMs;
+    let lastError: unknown;
+    for (;;) {
+      let health: PiWorkerHealth | undefined;
+      try {
+        health = await input.worker.health();
+      } catch {
+        health = undefined; // worker 未就绪: 进入握手路径
+      }
+      try {
+        return await handshakeOnce({ reason: "call", force: !health?.ready, workerHealth: health });
+      } catch (error) {
+        lastError = error;
+        if (Date.now() >= deadline) throw lastError;
+        await new Promise((resolve) => setTimeout(resolve, handshakeRetryIntervalMs));
+      }
+    }
   }
 
   async function resolveModelConfig(presetName?: string): Promise<PiModelConfig> {

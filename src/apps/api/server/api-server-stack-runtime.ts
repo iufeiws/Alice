@@ -57,7 +57,8 @@ export function createApiServerStackRuntime(input: {
     appendLog: input.appendLog,
     appendMessageLog: input.appendMessageLog,
     processRestartContinuationStore: input.processRestartContinuationStore,
-    recognizeImage: input.apiToolingRuntime.recognizeImage
+    recognizeImage: input.apiToolingRuntime.recognizeImage,
+    piWorkerRuntime: input.piWorkerRuntime
   });
   input.agentRunIndicatorRuntime?.setDelegate(apiCommunicationRuntime.agentRunIndicator);
   const apiAdminRuntime = createApiAdminRuntime({

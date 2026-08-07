@@ -569,7 +569,7 @@ test("admin Pi plugin saves project presets with project extra params", async ()
         async health() {
           return { ready: true };
         },
-        async refresh(reason: "wake" | "config") {
+        async refresh(reason: "config") {
           restartReason = reason;
         }
       }

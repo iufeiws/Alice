@@ -26,6 +26,8 @@ export type PiWorkerHealth = {
   toolDefinitionGeneration: string;
   cwd: string;
   relayReachable: boolean;
+  /** sha256(relayToken) 指纹; 未配置过 relay 时为空。宿主用它判断 worker 凭证是否已失效。 */
+  relayTokenFingerprint?: string;
   toolDefinitions: PiToolDefinition[];
 };
 
@@ -131,10 +133,12 @@ export type PiWorkerRuntime = {
   start(): Promise<void>;
   stop(): Promise<void>;
   /**
-   * 更新 worker 授权: 状态切换(wake)或配置变更(config)时调用。
-   * 由宿主 refreshAuthorization 执行一次握手; 容器重建不是本运行时职责。
+   * 配置变更时调用, 由宿主 refreshAuthorization 执行一次握手。
+   * 容器重建不是本运行时职责; worker 只在真实调用时被唤起(见 wakeIfNeeded)。
    */
-  refresh(reason: "wake" | "config"): Promise<void>;
+  refresh(reason: "config"): Promise<void>;
+  /** heartbeat 每轮后台非阻塞唤起: 30s 节流 + 去重, 失败留到下一轮。 */
+  wakeIfNeeded(): Promise<void>;
   health(): Promise<PiWorkerHealth>;
   previewPrompt(input?: { presetName?: string; signal?: AbortSignal }): Promise<{ sessionId: string; systemPrompt: string }>;
   toolDefinitions(): PiToolDefinition[];

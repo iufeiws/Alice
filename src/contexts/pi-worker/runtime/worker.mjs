@@ -1,7 +1,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { timingSafeEqual } from "node:crypto";
+import { timingSafeEqual, createHash } from "node:crypto";
 import { loadPiModule, readPiPackageVersion } from "./pi-module-loader.mjs";
 import { accessVisibleMessages, projectLatestAssistantMessageAfter, projectVisibleMessages } from "./message-projection.mjs";
 
@@ -96,6 +96,8 @@ async function health() {
     toolDefinitionGeneration: hash(JSON.stringify(toolDefinitions)),
     cwd,
     relayReachable,
+    // 凭证指纹供宿主校验: worker 被轮换/重建后仍持旧 token 时, 宿主据此发现失效并重新下发。
+    relayTokenFingerprint: relayToken ? createHash("sha256").update(relayToken).digest("hex") : undefined,
     toolDefinitions
   };
 }

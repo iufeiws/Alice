@@ -29,6 +29,7 @@ export function createMessageRuntimeRuntime(input: {
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: Omit<StoredMessageLog, "id" | "time" | "timeUtc">): StoredMessageLog;
   processRestartContinuationStore?: any;
+  piWorkerRuntime?: { wakeIfNeeded(): Promise<void> };
 }) {
   return createMessageRuntime({
     getDelayMs: () => input.config.core.inboundDebounceMs,
@@ -71,6 +72,8 @@ export function createMessageRuntimeRuntime(input: {
     },
     onHeartbeatTick() {
       input.initiatedBehaviorRunStore.finalizeExpiredResponses(input.time.now().date);
+      // 后台非阻塞唤起 pi worker: 失败留到下一个 heartbeat 重试。
+      void input.piWorkerRuntime?.wakeIfNeeded?.();
     },
     async onIdleTimerTransition(transitionInput) {
       const result = await input.worldWandererRuntime?.runIdleTransition(transitionInput);

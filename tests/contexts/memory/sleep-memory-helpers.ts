@@ -73,6 +73,7 @@ export function makeMemorySandbox(root: string): MemorySandbox {
     async start() {},
     async stop() {},
     async refresh() {},
+    async wakeIfNeeded() {},
     async health() {
       throw new Error("health is not available in memory sandbox tests");
     },

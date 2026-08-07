@@ -168,21 +168,78 @@ test("refresh refreshes the tool registry from the new worker health before reso
     refreshToolRegistry: () => { order.push("refresh"); capturedDefinitions = runtime.toolDefinitions(); }
   });
   await runtime.start();
-  await runtime.refresh("wake");
+  await runtime.refresh("config");
   assert.equal(capturedDefinitions[0].inputSchema.gen, "b");
-  // start() 先做一次初始握手, refresh("wake") 再做一次强制握手。
-  assert.deepEqual(order, ["worker", "worker", "refresh"]);
+  // start() 不再握手; refresh("config") 做一次握手 + 一次工具注册表刷新。
+  assert.deepEqual(order, ["worker", "refresh"]);
   await runtime.stop();
 });
 
-test("refresh fails when the tool registry refresh fails", async () => {
+test("refresh failure is contained at the runtime level: resolves, degrades health and logs", async () => {
   const worker = fakeWorker();
+  const logged: string[] = [];
   const runtime = createPiWorkerRuntime({
     worker,
     prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }),
-    refreshToolRegistry: () => { throw new Error("pi_tool_registry_refresh_failed"); }
+    refreshAuthorization: async () => { throw new Error("fetch failed"); },
+    appendLog: (level, message) => { logged.push(`${level}:${message}`); }
   });
-  await assert.rejects(runtime.refresh("wake"), /pi_tool_registry_refresh_failed/);
+  await runtime.start();
+  await runtime.refresh("config");
+  // 不向调用方(admin 主流程)抛错; worker 不可达时 pi 工具降级为空。
+  assert.deepEqual(runtime.toolDefinitions(), []);
+  assert.equal(logged.some((entry) => entry.includes("pi worker refresh failed")), true);
+  await runtime.stop();
+});
+
+test("refresh tool registry failure is contained and logged, never rejected", async () => {
+  const worker = fakeWorker();
+  const logged: string[] = [];
+  const runtime = createPiWorkerRuntime({
+    worker,
+    prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }),
+    refreshToolRegistry: () => { throw new Error("pi_tool_registry_refresh_failed"); },
+    appendLog: (level, message) => { logged.push(`${level}:${message}`); }
+  });
+  await runtime.start();
+  await runtime.refresh("config");
+  assert.equal(logged.some((entry) => entry.includes("pi worker refresh failed")), true);
+  await runtime.stop();
+});
+
+test("wakeIfNeeded does a single background handshake and swallows failures for the next heartbeat", async () => {
+  const worker = fakeWorker();
+  const logged: string[] = [];
+  let handshakes = 0;
+  const runtime = createPiWorkerRuntime({
+    worker,
+    wakeIntervalMs: 0,
+    prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }),
+    refreshAuthorization: async () => { handshakes += 1; throw new Error("fetch failed"); },
+    appendLog: (level, message) => { logged.push(`${level}:${message}`); }
+  });
+  await runtime.start();
+  await runtime.wakeIfNeeded();
+  // 单次尝试、失败不抛给 heartbeat 主流程。
+  assert.equal(handshakes, 1);
+  assert.equal(logged.some((entry) => entry.includes("pi worker wake failed")), true);
+  await runtime.stop();
+});
+
+test("wakeIfNeeded is throttled by wakeIntervalMs", async () => {
+  const worker = fakeWorker();
+  let handshakes = 0;
+  const runtime = createPiWorkerRuntime({
+    worker,
+    wakeIntervalMs: 60_000,
+    prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }),
+    refreshAuthorization: async () => { handshakes += 1; }
+  });
+  await runtime.start();
+  await runtime.wakeIfNeeded();
+  await runtime.wakeIfNeeded();
+  // 间隔内的第二次调用被节流跳过。
+  assert.equal(handshakes, 1);
   await runtime.stop();
 });
 

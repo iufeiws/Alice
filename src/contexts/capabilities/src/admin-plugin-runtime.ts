@@ -238,11 +238,7 @@ function piWorkerPluginEntry(): AdminPluginRegistryEntry {
         context.config.piWorkerConfig = next;
         const runtime = context.piWorker?.runtime;
         if (!runtime) return { config: next, restartRequired: true };
-        try {
-          await runtime.refresh("config");
-        } catch (error) {
-          return { error: `pi_worker_runtime_refresh_failed:${error instanceof Error ? error.message : String(error)}` };
-        }
+        await runtime.refresh("config");
         return { config: next, restartRequired: false };
       } catch (error) {
         return { error: error instanceof Error ? error.message : "invalid_pi_worker_config" };

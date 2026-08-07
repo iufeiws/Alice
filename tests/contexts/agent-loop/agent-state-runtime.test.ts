@@ -51,21 +51,6 @@ test("waking from sleeping queues morning work", () => {
   assert.equal(calls.morningEvents, 1);
 });
 
-test("waking waits for the sandbox restart before queuing morning work", async () => {
-  const root = makeTempDir("agent-state-runtime-wake-restart");
-  writePersistedState(root, "sleeping");
-  const calls = createCalls();
-  let resolveRestart!: () => void;
-  const restart = new Promise<void>((resolve) => { resolveRestart = resolve; });
-  const agentState = createRuntime(root, calls, () => restart);
-
-  agentState.setState("waiting", { reason: "woke" });
-  assert.equal(calls.morningEvents, 0);
-  resolveRestart();
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(calls.morningEvents, 1);
-});
-
 test("entering sleeping records sleep time", () => {
   const root = makeTempDir("agent-state-runtime-sleep");
   const calls = createCalls();
@@ -139,7 +124,7 @@ const dailyShell = {
   date: "2026-05-26"
 };
 
-function createRuntime(root: string, calls: ReturnType<typeof createCalls>, refreshPiWorkerAuthorization?: () => Promise<void>) {
+function createRuntime(root: string, calls: ReturnType<typeof createCalls>) {
   return createAgentStateRuntime({
     config: { memoryFiles: { root } },
     time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T00:00:00.000Z")),
@@ -172,7 +157,6 @@ function createRuntime(root: string, calls: ReturnType<typeof createCalls>, refr
     queueMorningEvent() {
       calls.morningEvents += 1;
     },
-    refreshPiWorkerAuthorization,
     attemptDailyOutfitOnBodyGeneration(daily) {
       calls.onBodyDailies.push(daily);
     },

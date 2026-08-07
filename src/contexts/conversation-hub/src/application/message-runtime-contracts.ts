@@ -113,6 +113,9 @@ export type SendSystemNoticeInput = {
  * Deliver a Pi invocation completion as one logical `both` message: it enters
  * the Alice conversation/Core pending queue as an Albert user message and is
  * also sent to the invocation's original message target as a system notice.
+ * The full invocation result is never written to Core nor sent to the user;
+ * the Albert side only carries `alertText` (interrupt-layer-style Alert) and
+ * the user side only carries `noticeText` (a short terminal-status notice).
  * `accountId`/`channelId`/`userId` come from the invocation-saved target and
  * are required for channel senders (e.g. Feishu) to resolve the receive id.
  */
@@ -121,7 +124,10 @@ export type DeliverPiInvocationCompletionInput = {
   conversationId: string;
   piSessionId: string;
   piInvocationId: string;
-  text: string;
+  /** Albert 侧消息正文：进入 Core 队列的 Alert 文本，如 `<Alert info="SubAgent(s)-COMPLETED" />`。 */
+  alertText: string;
+  /** 用户侧 system notice 原文：短句，发送时按规则化输出包裹，如 `SubAgent(s)-COMPLETED`。 */
+  noticeText: string;
   senderName?: string;
   senderId?: string;
   accountId?: string;

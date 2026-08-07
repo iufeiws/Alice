@@ -83,12 +83,16 @@ export function createApiRootRuntime() {
         foundation.appendLog("error", `pi invocation completion rejected: missing real message target session=${completion.sessionId} invocation=${completion.invocationId} plugin=${plugin ?? "(missing)"} text=${completion.text}`);
         throw new Error("pi_invocation_completion_requires_message_target");
       }
+      // 完成投送只带终态短句：Albert 侧走 interrupt-layer 风格的 Alert，
+      // 用户侧走 system notice；完整返回文本不进 Core、不投送，需要时由 SubAgent 工具拉取。
+      const statusLabel = completion.status.toUpperCase();
       await apiServerStackRuntime.apiCommunicationRuntime.messageRuntime.deliverPiInvocationCompletion({
         plugin,
         conversationId,
         piSessionId: completion.sessionId,
         piInvocationId: completion.invocationId,
-        text: completion.text,
+        alertText: `<Alert info="SubAgent(${completion.sessionId})-${statusLabel}" />`,
+        noticeText: `SubAgent(${completion.sessionId})-${statusLabel}`,
         senderName: foundation.config.project.username,
         senderId: typeof target.userId === "string" ? target.userId : undefined,
         accountId: typeof target.accountId === "string" ? target.accountId : undefined,

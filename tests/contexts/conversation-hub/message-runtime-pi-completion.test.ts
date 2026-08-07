@@ -47,7 +47,7 @@ function createRuntime(input: { store: AliceStore; sent: AgentOutput[]; noteInbo
   return { runtime, noteInbound };
 }
 
-test("pi completion creates one both message, sends to the full invocation target, and enters Core pending", async () => {
+test("pi completion creates one both message with the alert text, sends the short status notice, and enters Core pending", async () => {
   const store = createAliceStore(path.join(makeTempDir("pi-completion-deliver"), "alice.sqlite"));
   const sent: AgentOutput[] = [];
   const { runtime, noteInbound } = createRuntime({ store, sent });
@@ -57,7 +57,8 @@ test("pi completion creates one both message, sends to the full invocation targe
     conversationId: "oc_chat_1",
     piSessionId: "pi-session-1",
     piInvocationId: "pi-inv-1",
-    text: "subagent finished",
+    alertText: '<Alert info="SubAgent(pi-session-1)-COMPLETED" />',
+    noticeText: "SubAgent(pi-session-1)-COMPLETED",
     senderName: "Alice",
     accountId: "main",
     channelId: "oc_chat_1",
@@ -68,12 +69,12 @@ test("pi completion creates one both message, sends to the full invocation targe
   assert.equal(messages.length, 1);
   assert.equal(messages[0].direction, "both");
   assert.equal(messages[0].senderRole, "user");
-  assert.equal(messages[0].contentText, "subagent finished");
+  assert.equal(messages[0].contentText, '<Alert info="SubAgent(pi-session-1)-COMPLETED" />');
   assert.equal(messages[0].status, "sent");
 
   assert.equal(sent.length, 1);
   assert.equal(sent[0].content.kind, "text");
-  assert.equal(sent[0].content.text, "<-subagent finished->");
+  assert.equal(sent[0].content.text, "<-SubAgent(pi-session-1)-COMPLETED->");
   assert.deepEqual(sent[0].target, {
     plugin: "feishu",
     accountId: "main",
@@ -98,7 +99,8 @@ test("re-delivering the same pi invocation is a no-op for both message and send"
     conversationId: "oc_chat_1",
     piSessionId: "pi-session-1",
     piInvocationId: "pi-inv-1",
-    text: "subagent finished"
+    alertText: '<Alert info="SubAgent(pi-session-1)-COMPLETED" />',
+    noticeText: "SubAgent(pi-session-1)-COMPLETED"
   };
   await runtime.deliverPiInvocationCompletion(input);
   await runtime.deliverPiInvocationCompletion(input);
@@ -151,7 +153,8 @@ test("pi completion send failure marks the both message send_failed without bloc
     conversationId: "oc_chat_1",
     piSessionId: "pi-session-1",
     piInvocationId: "pi-inv-1",
-    text: "subagent finished",
+    alertText: '<Alert info="SubAgent(pi-session-1)-COMPLETED" />',
+    noticeText: "SubAgent(pi-session-1)-COMPLETED",
     channelId: "oc_chat_1"
   });
 
@@ -172,7 +175,8 @@ test("pi completion without a message target still lands in Core pending", async
     conversationId: "default",
     piSessionId: "pi-session-1",
     piInvocationId: "pi-inv-1",
-    text: "background work done"
+    alertText: '<Alert info="SubAgent(pi-session-1)-COMPLETED" />',
+    noticeText: "SubAgent(pi-session-1)-COMPLETED"
   });
 
   assert.equal(sent.length, 1);

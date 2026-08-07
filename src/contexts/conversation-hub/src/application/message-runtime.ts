@@ -670,8 +670,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       senderId: input.senderId,
       senderName: input.senderName,
       contentType: "text",
-      contentText: input.text,
-      contentJson: safeJson({ kind: "text", text: input.text }),
+      contentText: input.alertText,
+      contentJson: safeJson({ kind: "text", text: input.alertText }),
       createdAt: receivedTime.iso,
       createdAtUtc: receivedTime.date.toISOString()
     });
@@ -685,7 +685,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     // User-facing system notice delivery, reusing the existing notice send path
     // without inserting a second outbound/system message.
     if (message.status === "sending") {
-      const text = normalizeSystemNoticeText(input.text);
+      const text = normalizeSystemNoticeText(input.noticeText);
       if (text) {
         const output: AgentOutput = {
           id: createId("out"),
@@ -747,7 +747,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       rawMessageId: `pi:${input.piSessionId}:${input.piInvocationId}`,
       externalEventId: `pi:${input.piSessionId}:${input.piInvocationId}`,
       status: "received",
-      summary: input.text
+      summary: input.noticeText
     });
   }
 

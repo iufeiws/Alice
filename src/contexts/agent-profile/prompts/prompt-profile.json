@@ -142,7 +142,7 @@
           "enabled": true
         },
         "role": "user",
-        "content": "<Alert info=\"have a new message\" />",
+        "content": "<Alert info=\"have a new user message\" />",
         "name": "Alert"
       }
     ]

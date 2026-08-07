@@ -42,7 +42,7 @@ export function createApiAdminRuntime(input: {
     getCurrentTalkLLMSession: () => input.getActiveMainLLMSession()?.agentId === "talk" ? input.getCurrentLLMSessionSnapshot() : undefined,
     getClearedLLMSessions: input.adminLLMSessionRuntime.llmSessionListRuntime.getClearedLLMSessions,
     getTalkLLMSessions: input.adminLLMSessionRuntime.llmSessionListRuntime.getTalkLLMSessions,
-    getMemoryLLMSessions: input.adminLLMSessionRuntime.llmSessionBrowserRuntime.getMemoryLLMSessions,
+    getMemoryLLMSessions: input.adminLLMSessionRuntime.llmSessionListRuntime.getMemoryLLMSessions,
     getLLMSession: input.adminLLMSessionRuntime.llmSessionBrowserRuntime.getLLMSession,
     store: input.store,
     getLLMRequestPreview: input.adminLLMSessionRuntime.getLLMRequestPreview,

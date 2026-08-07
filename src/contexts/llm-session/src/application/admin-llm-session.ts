@@ -28,8 +28,7 @@ export function createAdminLLMSessionRuntime(input: {
     relativePath: input.archive.relativePath
   });
   const llmSessionListRuntime = createLLMSessionListRuntime({
-    archive: input.archive,
-    getActiveSession: input.getActiveSession
+    archive: input.archive
   });
   const llmSessionBrowserRuntime = createLLMSessionBrowserRuntime({
     sessionRoot: input.sessionRoot,

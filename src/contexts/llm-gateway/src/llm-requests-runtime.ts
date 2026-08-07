@@ -72,6 +72,9 @@ export function createLLMRequestsRuntime(input: {
 
   function createSubagentSession(requestInput: object, agentId: string, metadata: Record<string, unknown> | undefined): ReturnType<typeof createLLMSessionTranscriptLogger> | undefined {
     if (!input.subagentSessionRoot) return undefined;
+    // 记忆归纳(memorize)已有自己的 llm-sessions/memorize 会话转录,
+    // 不重复写入 sub_agent/memorize, 避免同一轮记忆整理产生两份存档。
+    if (agentId === "memorize") return undefined;
     const existing = subagentRequestSessions.get(requestInput);
     if (existing) return existing;
     const started = input.time.now();

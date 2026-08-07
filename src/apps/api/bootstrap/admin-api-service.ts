@@ -302,6 +302,15 @@ export async function handleAdminApiServiceRoute(context: AdminRoutesContext, re
     return;
   }
 
+  if (request.method === "GET" && request.url === "/admin/api/llm-active-session") {
+    // 终端下栏专用: 只返回激活中的会话(内存快照), 不触发任何会话文件扫描。
+    writeJson(response, 200, {
+      activeSession: context.getCurrentLLMSession(),
+      talkActiveSession: context.getCurrentTalkLLMSession?.()
+    });
+    return;
+  }
+
   if (request.method === "GET" && request.url === "/admin/api/llm-requests") {
     writeJson(response, 200, {
       activeSession: context.getCurrentLLMSession(),

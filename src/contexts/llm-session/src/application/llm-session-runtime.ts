@@ -31,7 +31,6 @@ export function createLLMSessionRuntime(input: {
     clearCurrentLLMSession,
     getCurrentLLMSessionSnapshot,
     loadCurrentLLMSessionTranscript,
-    readLatestLLMSessionSnapshot,
     restorePersistedCurrentLLMSession
   };
 
@@ -93,9 +92,9 @@ export function createLLMSessionRuntime(input: {
   }
 
   function noteLLMResponse(entry: LLMResponseLogEntry): void {
-    const currentSession = entry.sessionId === undefined
-      ? input.archive.readCurrent()
-      : readLatestLLMSessionSnapshot(entry.sessionId, entry.agentId);
+    // agent loop 串行执行, 响应永远属于当前指针指向的会话,
+    // 只读当前单个会话文件即可, 不要全量扫描(readAll)所有会话。
+    const currentSession = input.archive.readCurrent();
     if (!currentSession) return;
     if (entry.sessionId !== undefined && currentSession.id !== entry.sessionId) {
       input.appendLog("warn", `llm response skipped: session mismatch response_session=${entry.sessionId} current_session=${currentSession.id}`);
@@ -336,11 +335,6 @@ export function createLLMSessionRuntime(input: {
     };
   }
 
-  function readLatestLLMSessionSnapshot(id: number, agentId?: "chat" | "talk"): LLMSessionRecord | undefined {
-    return selectLatestSessionSnapshot(input.archive.readAll()
-      .filter((session: LLMSessionRecord) => session.id === id && (!agentId || (session.agentId ?? "chat") === agentId)));
-  }
-
   function restorePersistedCurrentLLMSession(): LLMSessionRecord | undefined {
     const session = input.archive.restorePersistedActive();
     if (session) nextSessionId = Math.max(nextSessionId, session.id + 1);
@@ -367,21 +361,6 @@ export function createLLMSessionRuntime(input: {
       requestTimestamps: []
     };
   }
-}
-
-function selectLatestSessionSnapshot(sessions: LLMSessionRecord[]): LLMSessionRecord | undefined {
-  return sessions
-    .sort((left, right) => sessionSnapshotRank(left) - sessionSnapshotRank(right))
-    .at(-1);
-}
-
-function sessionSnapshotRank(session: LLMSessionRecord): number {
-  const updatedAt = Date.parse(session.updatedAtUtc ?? session.updatedAt);
-  return (Number.isFinite(updatedAt) ? updatedAt : 0)
-    + (session.latestResponseInfo ? 4 : 0)
-    + (session.latestRequestInfo ? 2 : 0)
-    + (session.currentRound ? 1 : 0)
-    + session.messages.length / 1_000_000;
 }
 
 function archiveRequestEntry(entry: LLMRequestLogEntry): LLMRequestLogEntry {

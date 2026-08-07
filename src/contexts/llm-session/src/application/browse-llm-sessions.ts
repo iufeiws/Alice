@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { readLLMSessionJsonl } from "../adapters/jsonl-llm-session-log.js";
+import { readLLMSessionJsonl, readLLMSessionJsonlMetadata } from "../adapters/jsonl-llm-session-log.js";
 import { cloneLLMMessages } from "../adapters/jsonl-llm-session-log.js";
 import type { LLMSessionRecord } from "../domain/llm-session.js";
 import {
@@ -45,12 +45,32 @@ export function createLLMSessionBrowserRuntime(input: {
     if (activeSession && String(activeSession.id) === id) {
       return buildActiveSessionDetail(activeSession);
     }
+    // 路径式查找(llm-chain 列表的 id 即相对路径): 只读取目标文件, 不做全量扫描。
+    const resolved = resolveWithinRoot(id);
+    if (resolved) {
+      for (const source of input.sources) {
+        const sourceRoot = source.subdir ? path.join(input.sessionRoot(), source.subdir) : input.sessionRoot();
+        if (resolved === sourceRoot || resolved.startsWith(sourceRoot + path.sep)) {
+          const session = readSourceSessionFile(resolved, source, true);
+          if (session) return session;
+        }
+      }
+    }
+    // 兜底: 按会话 id 全量扫描(保留历史行为)。
     for (const source of input.sources) {
       for (const session of collectSourceSessions(source, true)) {
         if ((session as any)?.id === id) return session;
       }
     }
     return undefined;
+  }
+
+  function resolveWithinRoot(id: string): string | undefined {
+    if (!id || id.includes("..")) return undefined;
+    const resolved = path.resolve(input.sessionRoot(), id);
+    const root = path.resolve(input.sessionRoot());
+    if (resolved !== root && !resolved.startsWith(root + path.sep)) return undefined;
+    return resolved;
   }
 
   function collectSourceSessions(source: LLMSessionBrowserSource, includeMessages: boolean): unknown[] {
@@ -69,11 +89,15 @@ export function createLLMSessionBrowserRuntime(input: {
     includeMessages: boolean
   ): unknown | undefined {
     try {
-      const parsed = readLLMSessionJsonl(filePath);
+      // 列表场景(includeMessages=false)只读 metadata 首行, 避免全量解析消息。
+      const parsed = includeMessages
+        ? readLLMSessionJsonl(filePath)
+        : readLLMSessionJsonlMetadata(filePath);
       if (!parsed || parsed.metadata.type !== "llm_session" || !source.accept(parsed.metadata)) {
         return undefined;
       }
       const metadata = parsed.metadata;
+      const messages = parsed.messages;
       const relativePath = input.relativePath(filePath);
       const session = {
         id: source.id({ filePath, metadata, relativePath }),
@@ -90,7 +114,7 @@ export function createLLMSessionBrowserRuntime(input: {
           typeof (metadata.latestRequest as any)?.round === "number" ? (metadata.latestRequest as any).round + 1 : 0,
           typeof (metadata.latestResponse as any)?.round === "number" ? (metadata.latestResponse as any).round + 1 : 0
         ),
-        messageCount: parsed.messages.length,
+        messageCount: includeMessages ? messages.length : (typeof metadata.messageCount === "number" ? metadata.messageCount : 0),
         agentLoopRunSeq: typeof metadata.agentLoopRunSeq === "number" && Number.isFinite(metadata.agentLoopRunSeq) ? metadata.agentLoopRunSeq : undefined,
         currentRound: parseRoundInfo(metadata.currentRound),
         latestRequest: parseRequestInfo(metadata.latestRequest),
@@ -98,16 +122,16 @@ export function createLLMSessionBrowserRuntime(input: {
         mode: source.mode?.(metadata) ?? (typeof metadata.mode === "string" ? metadata.mode : metadata.agent),
         archiveFilePath: filePath,
         archiveMetadata: metadata,
-        messages: includeMessages ? parsed.messages : undefined
+        messages: includeMessages ? messages : undefined
       };
       return includeMessages ? {
         ...session,
-        jsonlEntries: [metadata, ...parsed.messages],
+        jsonlEntries: [metadata, ...messages],
         turns: [{
           round: 0,
           latestRequest: session.latestRequest,
           latestResponse: session.latestResponse,
-          messages: parsed.messages
+          messages
         }]
       } : session;
     } catch {

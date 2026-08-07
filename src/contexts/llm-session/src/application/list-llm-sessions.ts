@@ -1,39 +1,45 @@
-import type { LLMSessionRecord } from "../domain/llm-session.js";
-import { summarizeLLMSession } from "./llm-session-view.js";
+import type { SessionFileEntry } from "./archive-llm-session.js";
 
 export function createLLMSessionListRuntime(input: {
-  archive: { readAll(): LLMSessionRecord[] };
-  getActiveSession(): LLMSessionRecord | undefined;
+  archive: { listSessionFiles(): SessionFileEntry[] };
 }) {
   return {
     getClearedLLMSessions,
-    getTalkLLMSessions
+    getTalkLLMSessions,
+    getMemoryLLMSessions
   };
 
+  /**
+   * 纯文件名列表: 会话文件路径 {agentType}/{date}/{clock}.jsonl 自带时间与 agent 类型,
+   * 标题行只展示这两项; 详情在用户展开时按路径按需读取。
+   */
   function getClearedLLMSessions(): unknown[] {
-    const latestById = new Map<number, LLMSessionRecord>();
-    for (const session of input.archive.readAll()) {
-      if ((session.agentId ?? "chat") !== "chat") continue;
-      latestById.set(session.id, session);
-    }
-    return [...latestById.values()]
-      .filter((session) => Boolean(session.clearedAt))
-      .sort((left, right) => String(left.startedAt || "").localeCompare(String(right.startedAt || "")))
-      .slice(-50)
-      .map(summarizeLLMSession);
+    return listByAgentType("chat");
   }
 
   function getTalkLLMSessions(): unknown[] {
-    const latestById = new Map<number, LLMSessionRecord>();
-    for (const session of input.archive.readAll()) {
-      if (session.agentId !== "talk") continue;
-      latestById.set(session.id, session);
-    }
-    const activeSession = input.getActiveSession();
-    return [...latestById.values()]
-      .filter((session) => session.id !== activeSession?.id)
-      .sort((left, right) => String(left.startedAt || "").localeCompare(String(right.startedAt || "")))
+    return listByAgentType("talk");
+  }
+
+  function getMemoryLLMSessions(): unknown[] {
+    return listByAgentType("memorize");
+  }
+
+  function listByAgentType(agentType: string): unknown[] {
+    return input.archive.listSessionFiles()
+      .filter((entry) => entry.agentType === agentType)
+      .sort((left, right) => `${left.date}T${left.clock}`.localeCompare(`${right.date}T${right.clock}`))
       .slice(-50)
-      .map(summarizeLLMSession);
+      .map(sessionFileListItem);
+  }
+
+  function sessionFileListItem(entry: SessionFileEntry): unknown {
+    const relativePath = `${entry.agentType}/${entry.date}/${entry.clock}.jsonl`;
+    return {
+      id: relativePath,
+      agentId: entry.agentType,
+      startedAt: `${entry.date}T${entry.clock}`,
+      archiveFilePath: entry.filePath
+    };
   }
 }

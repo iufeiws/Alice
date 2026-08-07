@@ -74,7 +74,7 @@ ${renderPromptsScript()}
         if (button.dataset.terminalTab === "active-session") await refreshActiveSessionTerminal();
       }));
       $("terminalRefresh").addEventListener("click", async () => {
-        await refreshTerminal();
+        await refreshTerminal(true);
       });
       $("terminalCollapse").addEventListener("click", toggleTerminalAutoRefreshPaused);
       document.querySelector(".admin-terminal-head").addEventListener("click", (event) => {

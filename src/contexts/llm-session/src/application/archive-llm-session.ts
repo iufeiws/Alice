@@ -26,6 +26,13 @@ const path = await import("node:path");
 
 type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
 
+export type SessionFileEntry = {
+  agentType: string;
+  date: string;
+  clock: string;
+  filePath: string;
+};
+
 export function createLLMSessionArchive(input: {
   memoryRoot: string;
   time: CurrentTimeProvider;
@@ -46,6 +53,7 @@ export function createLLMSessionArchive(input: {
     readCurrent,
     restorePersistedActive,
     readAll,
+    listSessionFiles,
     collectFiles,
     readFile
   };
@@ -197,73 +205,104 @@ export function createLLMSessionArchive(input: {
     if (!fs.existsSync(sessionRoot)) return [];
     const files: string[] = [];
     collectFiles(sessionRoot, files);
-    return files
-      .map((filePath) => readFile(filePath))
-      .filter((session): session is LLMSessionRecord => Boolean(session));
+    const sessions: LLMSessionRecord[] = [];
+    for (const filePath of files) {
+      const session = readFile(filePath);
+      if (session) sessions.push(session);
+    }
+    return sessions;
   }
 
   function collectFiles(dir: string, files: string[]): void {
-    collectLLMSessionJsonlFiles(dir, files);
+    // sub_agent 目录是 pi/subagent LLM 会话转录(llm_subagent_session),
+    // 主会话列表从不展示它们, 全量扫描纯属浪费, 直接跳过。
+    collectLLMSessionJsonlFiles(dir, files, { skipDirs: ["sub_agent"] });
+  }
+
+  /**
+   * 纯文件名/路径扫描: 只枚举会话文件, 不读取任何内容。
+   * 路径结构为 {agentType}/{date}/{clock}.jsonl, 列表据此展示时间与 agent 类型。
+   */
+  function listSessionFiles(): SessionFileEntry[] {
+    const sessionRoot = root();
+    if (!fs.existsSync(sessionRoot)) return [];
+    const files: string[] = [];
+    collectFiles(sessionRoot, files);
+    return files.map((filePath) => {
+      const relative = path.relative(sessionRoot, filePath).split(path.sep);
+      return {
+        agentType: relative[0] ?? "",
+        date: relative[1] ?? "",
+        clock: (relative[2] ?? "").replace(/\.jsonl$/, ""),
+        filePath
+      };
+    });
   }
 
   function readFile(filePath: string): LLMSessionRecord | undefined {
     try {
       const parsed = readLLMSessionJsonl(filePath);
       if (!parsed) return undefined;
-      const metadata = parsed.metadata;
-      if (metadata.agent === "memorize") return undefined;
-      if (metadata.type !== "llm_session" || typeof metadata.sessionId !== "number") return undefined;
-      const agentId = metadata.agent === "talk" ? "talk" : "chat";
-      const messages = parsed.messages;
-      const staticPromptMessageCount = messageCountFromMetadata(metadata.staticPromptMessageCount, messages.length);
-      const modeStaticMessages = modeStaticMessagesFromMetadata(metadata, messages);
-      return {
-        id: metadata.sessionId,
-        agentId,
-        startedAt: typeof metadata.startedAt === "string" ? metadata.startedAt : "",
-        startedAtUtc: typeof metadata.startedAtUtc === "string" ? metadata.startedAtUtc : undefined,
-        updatedAt: typeof metadata.updatedAt === "string" ? metadata.updatedAt : "",
-        updatedAtUtc: typeof metadata.updatedAtUtc === "string" ? metadata.updatedAtUtc : undefined,
-        archiveFilePath: filePath,
-        archiveMetadata: metadata,
-        requestIds: numberArray(metadata.requestIds),
-        responseIds: numberArray(metadata.responseIds),
-        messages: cloneLLMMessages(messages),
-        latestRequest: undefined,
-        staticPromptFingerprint: staticPromptFingerprintFromMetadata(metadata, messages, staticPromptMessageCount),
-        staticPromptMessageCount,
-        requestTimestamps: stringArray(metadata.requestTimestamps),
-        agentLoopRunSeq: typeof metadata.agentLoopRunSeq === "number" && Number.isFinite(metadata.agentLoopRunSeq) ? metadata.agentLoopRunSeq : undefined,
-        lastTotalTokens: typeof metadata.lastTotalTokens === "number" && Number.isFinite(metadata.lastTotalTokens) ? metadata.lastTotalTokens : undefined,
-        lastInputTokens: typeof metadata.lastInputTokens === "number" && Number.isFinite(metadata.lastInputTokens) ? metadata.lastInputTokens : undefined,
-        lastUsageModel: typeof metadata.lastUsageModel === "string" ? metadata.lastUsageModel : undefined,
-        tokenPressurePreviewBaselines: parseTokenPressurePreviewBaselines(metadata.tokenPressurePreviewBaselines),
-        mode: typeof metadata.mode === "string" ? metadata.mode : "normal",
-        modeStaticMessages,
-        modeStaticTokenEstimate: typeof metadata.modeStaticTokenEstimate === "number" && Number.isFinite(metadata.modeStaticTokenEstimate) ? metadata.modeStaticTokenEstimate : 0,
-        modeStartedAt: typeof metadata.modeStartedAt === "string" ? metadata.modeStartedAt : undefined,
-        modeExpiresAt: typeof metadata.modeExpiresAt === "string" ? metadata.modeExpiresAt : undefined,
-        fixedPrefixKind: typeof metadata.fixedPrefixKind === "string" ? metadata.fixedPrefixKind : undefined,
-        fixedPrefixStartedAt: typeof metadata.fixedPrefixStartedAt === "string" ? metadata.fixedPrefixStartedAt : undefined,
-        loopStartedAt: typeof metadata.loopStartedAt === "string" ? metadata.loopStartedAt : undefined,
-        waitChatStartedAt: typeof metadata.waitChatStartedAt === "string" ? metadata.waitChatStartedAt : undefined,
-        waitChatMode: metadata.waitChatMode === "wait" ? metadata.waitChatMode : undefined,
-        waitChatUntil: typeof metadata.waitChatUntil === "string" ? metadata.waitChatUntil : undefined,
-        waitChatTarget: parseWaitChatTarget(metadata.waitChatTarget),
-        skipNextAppendLayers: metadata.skipNextAppendLayers === true ? true : undefined,
-        currentRound: parseRoundInfo(metadata.currentRound),
-        latestRequestInfo: parseRequestInfo(metadata.latestRequest),
-        latestResponseInfo: parseResponseInfo(metadata.latestResponse),
-        clearedAt: typeof metadata.clearedAt === "string" ? metadata.clearedAt : undefined,
-        clearedAtUtc: typeof metadata.clearedAtUtc === "string" ? metadata.clearedAtUtc : undefined,
-        reason: typeof metadata.clearReason === "string" ? metadata.clearReason : undefined,
-        requests: [],
-        responses: []
-      };
+      return buildSessionRecord(filePath, parsed.metadata, parsed.messages);
     } catch {
       input.appendLog("warn", `llm session file parse failed: ${filePath}`);
       return undefined;
     }
+  }
+
+  function buildSessionRecord(
+    filePath: string,
+    metadata: Record<string, unknown>,
+    messages: LLMChatInput["messages"]
+  ): LLMSessionRecord | undefined {
+    if (metadata.agent === "memorize") return undefined;
+    if (metadata.type !== "llm_session" || typeof metadata.sessionId !== "number") return undefined;
+    const agentId = metadata.agent === "talk" ? "talk" : "chat";
+    const staticPromptMessageCount = messageCountFromMetadata(metadata.staticPromptMessageCount, messages.length);
+    const modeStaticMessages = modeStaticMessagesFromMetadata(metadata, messages);
+    return {
+      id: metadata.sessionId,
+      agentId,
+      startedAt: typeof metadata.startedAt === "string" ? metadata.startedAt : "",
+      startedAtUtc: typeof metadata.startedAtUtc === "string" ? metadata.startedAtUtc : undefined,
+      updatedAt: typeof metadata.updatedAt === "string" ? metadata.updatedAt : "",
+      updatedAtUtc: typeof metadata.updatedAtUtc === "string" ? metadata.updatedAtUtc : undefined,
+      archiveFilePath: filePath,
+      archiveMetadata: metadata,
+      requestIds: numberArray(metadata.requestIds),
+      responseIds: numberArray(metadata.responseIds),
+      messages,
+      latestRequest: undefined,
+      staticPromptFingerprint: staticPromptFingerprintFromMetadata(metadata, messages, staticPromptMessageCount),
+      staticPromptMessageCount,
+      requestTimestamps: stringArray(metadata.requestTimestamps),
+      agentLoopRunSeq: typeof metadata.agentLoopRunSeq === "number" && Number.isFinite(metadata.agentLoopRunSeq) ? metadata.agentLoopRunSeq : undefined,
+      lastTotalTokens: typeof metadata.lastTotalTokens === "number" && Number.isFinite(metadata.lastTotalTokens) ? metadata.lastTotalTokens : undefined,
+      lastInputTokens: typeof metadata.lastInputTokens === "number" && Number.isFinite(metadata.lastInputTokens) ? metadata.lastInputTokens : undefined,
+      lastUsageModel: typeof metadata.lastUsageModel === "string" ? metadata.lastUsageModel : undefined,
+      tokenPressurePreviewBaselines: parseTokenPressurePreviewBaselines(metadata.tokenPressurePreviewBaselines),
+      mode: typeof metadata.mode === "string" ? metadata.mode : "normal",
+      modeStaticMessages,
+      modeStaticTokenEstimate: typeof metadata.modeStaticTokenEstimate === "number" && Number.isFinite(metadata.modeStaticTokenEstimate) ? metadata.modeStaticTokenEstimate : 0,
+      modeStartedAt: typeof metadata.modeStartedAt === "string" ? metadata.modeStartedAt : undefined,
+      modeExpiresAt: typeof metadata.modeExpiresAt === "string" ? metadata.modeExpiresAt : undefined,
+      fixedPrefixKind: typeof metadata.fixedPrefixKind === "string" ? metadata.fixedPrefixKind : undefined,
+      fixedPrefixStartedAt: typeof metadata.fixedPrefixStartedAt === "string" ? metadata.fixedPrefixStartedAt : undefined,
+      loopStartedAt: typeof metadata.loopStartedAt === "string" ? metadata.loopStartedAt : undefined,
+      waitChatStartedAt: typeof metadata.waitChatStartedAt === "string" ? metadata.waitChatStartedAt : undefined,
+      waitChatMode: metadata.waitChatMode === "wait" ? metadata.waitChatMode : undefined,
+      waitChatUntil: typeof metadata.waitChatUntil === "string" ? metadata.waitChatUntil : undefined,
+      waitChatTarget: parseWaitChatTarget(metadata.waitChatTarget),
+      skipNextAppendLayers: metadata.skipNextAppendLayers === true ? true : undefined,
+      currentRound: parseRoundInfo(metadata.currentRound),
+      latestRequestInfo: parseRequestInfo(metadata.latestRequest),
+      latestResponseInfo: parseResponseInfo(metadata.latestResponse),
+      clearedAt: typeof metadata.clearedAt === "string" ? metadata.clearedAt : undefined,
+      clearedAtUtc: typeof metadata.clearedAtUtc === "string" ? metadata.clearedAtUtc : undefined,
+      reason: typeof metadata.clearReason === "string" ? metadata.clearReason : undefined,
+      requests: [],
+      responses: []
+    };
   }
 }
 

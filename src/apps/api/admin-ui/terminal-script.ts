@@ -19,19 +19,33 @@ export function renderAdminTerminalScript(): string {
         terminalAutoRefreshPaused = !terminalAutoRefreshPaused;
         updateTerminalAutoRefreshButton();
       }
-      async function refreshTerminal() {
+      async function refreshTerminal(fullRefresh) {
         if (terminalRefreshInFlight) return;
         terminalRefreshInFlight = true;
         try {
-          await refreshLogs();
-          await refreshActiveSessionTerminal();
+          // 只刷新当前可见的面板: 终端折叠或对应 tab 未激活时不下发对应请求,
+          // 避免后台每秒全量轮询(llm-requests 读取全部会话文件, 会占满事件循环)。
+          const panes = fullRefresh ? ["active-session", "system", "messages", "events"] : visibleTerminalPanes();
+          if (panes.includes("system")) await refreshSystemLogs();
+          if (panes.includes("messages")) await refreshMessageLogs();
+          if (panes.includes("events")) await refreshEventLogs();
+          if (panes.includes("active-session")) await refreshActiveSessionTerminal();
         } finally {
           terminalRefreshInFlight = false;
         }
-      }      async function refreshLogs() {
+      }
+      function visibleTerminalPanes() {
+        if ($("adminTerminal").classList.contains("collapsed")) return [];
+        return ["active-session", "system", "messages", "events"].filter((name) =>
+          document.querySelector("#terminal-" + name)?.classList.contains("active")
+        );
+      }
+      async function refreshSystemLogs() {
         const system = await fetch("/admin/api/logs").then((res) => res.json());
         $("logs").innerHTML = system.logs.map((entry) => \`<div class="log-line log-\${entry.level}">[\${entry.time}\${entry.utcTime ? " utc=" + entry.utcTime : ""}] [\${entry.level.toUpperCase()}] \${escapeHtml(entry.message)}</div>\`).join("");
         $("logs").scrollTop = $("logs").scrollHeight;
+      }
+      async function refreshMessageLogs() {
         const messages = await fetch("/admin/api/message-logs").then((res) => res.json());
         $("messageLogs").innerHTML = messages.logs.map((entry) => {
           const time = entry.createdAt || entry.time;
@@ -44,6 +58,8 @@ export function renderAdminTerminalScript(): string {
           return \`<div class="log-line">[\${time}\${utc ? " utc=" + utc : ""}] [\${entry.direction}\${state}] [\${entry.plugin}/\${kind}] \${escapeHtml(target)}\${flags ? " · " + escapeHtml(flags) : ""} · \${escapeHtml(summary)}</div>\`;
         }).join("");
         $("messageLogs").scrollTop = $("messageLogs").scrollHeight;
+      }
+      async function refreshEventLogs() {
         const events = await fetch("/admin/api/message-event-logs").then((res) => res.json());
         $("eventLogs").innerHTML = events.logs.map((entry) => {
           const status = entry.status ? " " + entry.status : "";

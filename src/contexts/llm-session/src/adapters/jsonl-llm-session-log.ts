@@ -34,14 +34,50 @@ export function absoluteLLMSessionPath(root: string, relativePath: string): stri
   return resolved;
 }
 
-export function collectLLMSessionFiles(dir: string, files: string[]): void {
+export function collectLLMSessionFiles(dir: string, files: string[], options?: { skipDirs?: string[] }): void {
   for (const entry of (fs.readdirSync as any)(dir, { withFileTypes: true })) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      collectLLMSessionFiles(fullPath, files);
+      if (options?.skipDirs?.includes(entry.name)) continue;
+      collectLLMSessionFiles(fullPath, files, options);
     } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
       files.push(fullPath);
     }
+  }
+}
+
+/** metadata 行最大字节数; 超过即视为异常文件, 放弃解析。 */
+const MAX_METADATA_LINE_BYTES = 256 * 1024;
+
+/**
+ * 只读取 JSONL 首行(metadata), 不解析/克隆消息体(返回空 messages)。
+ * 用于管理后台列表等仅需会话元数据的场景, 避免每次轮询全量读取全部会话文件。
+ */
+export function readLLMSessionJsonlMetadata(filePath: string): LLMSessionJsonl | undefined {
+  const fd = fs.openSync(filePath, "r");
+  try {
+    const chunks: Buffer[] = [];
+    let offset = 0;
+    let total = 0;
+    const buffer = Buffer.alloc(64 * 1024);
+    for (;;) {
+      const read = fs.readSync(fd, buffer, 0, buffer.length, offset);
+      if (read <= 0) break;
+      const newlineIndex = buffer.subarray(0, read).indexOf(0x0a);
+      if (newlineIndex >= 0) {
+        chunks.push(Buffer.from(buffer.subarray(0, newlineIndex)));
+        break;
+      }
+      chunks.push(Buffer.from(buffer.subarray(0, read)));
+      offset += read;
+      total += read;
+      if (total > MAX_METADATA_LINE_BYTES) break;
+    }
+    const line = Buffer.concat(chunks).toString("utf8").replace(/\r$/, "");
+    if (!line.trim()) return undefined;
+    return { metadata: JSON.parse(line) as Record<string, unknown>, messages: [] };
+  } finally {
+    fs.closeSync(fd);
   }
 }
 

@@ -18,7 +18,8 @@ export function renderLlmChainScript(): string {
       }
 
       async function refreshActiveSessionTerminal() {
-        const payload = await fetch("/admin/api/llm-requests").then((res) => res.json());
+        // 终端下栏只关心激活中的会话, 走轻量端点(内存快照), 不触发会话文件扫描。
+        const payload = await fetch("/admin/api/llm-active-session").then((res) => res.json());
         $("activeSessionLogs").innerHTML = renderActiveSessionTerminalRows(payload.activeSession);
         $("activeSessionLogs").scrollTop = $("activeSessionLogs").scrollHeight;
       }
@@ -102,9 +103,11 @@ export function renderLlmChainScript(): string {
       }
 
       function renderLLMSessionShell(session, title) {
-        const reason = session.reason ? \` · reason=\${escapeHtml(session.reason)}\` : "";
-        const counts = \`\${escapeHtml(session.roundCount ?? session.requestCount ?? 0)} round(s) · \${escapeHtml(session.messageCount ?? 0)} message(s)\`;
-        return \`<details class="log-line llm-session-detail" data-session-id="\${escapeAttr(session.id || "")}"><summary>\${escapeHtml(title)} \${escapeHtml(session.id || "")} · \${counts} · mode=\${escapeHtml(session.mode || "normal")} · \${escapeHtml(session.startedAt || "")}\${reason}</summary><div class="llm-session-body">Expand to load.</div></details>\`;
+        // 纯文件名列表: 标题只显示时间与 agent 类型(均来自文件路径), 详情展开时按需加载。
+        const startedAt = session.startedAt || "";
+        const agent = session.agentId || session.agent || "";
+        const timeLine = [startedAt, agent].filter(Boolean).join(" · ");
+        return \`<details class="log-line llm-session-detail" data-session-id="\${escapeAttr(session.id || "")}"><summary>\${escapeHtml(title)}\${timeLine ? " · " + escapeHtml(timeLine) : ""}</summary><div class="llm-session-body">Expand to load.</div></details>\`;
       }
 
       function bindLLMSessionDetails(containerId) {

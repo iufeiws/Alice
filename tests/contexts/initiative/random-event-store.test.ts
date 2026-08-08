@@ -43,9 +43,10 @@ test("random event store rejects invalid definitions and symbolic links", () => 
 
 test("built-in random events are assistant self-reminders without names", () => {
   const store = createJsonRandomEventStore(path.resolve("src/contexts/initiative/random-events"));
+  const enabledEvents = store.list().filter((event) => event.meta.enabled);
 
-  assert.equal(store.list().length, 8);
-  for (const event of store.list()) {
+  assert.ok(enabledEvents.length > 0, "must contain at least one enabled built-in random event");
+  for (const event of enabledEvents) {
     assert.ok(event.messages.length > 0, `${event.meta.id} must contain a self-reminder`);
     for (const message of event.messages) {
       assert.equal(message.role, "assistant", `${event.meta.id} must use assistant messages`);

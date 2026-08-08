@@ -7,6 +7,18 @@ import { idleTransitionState, makeTempDir, randomQueue, textEvent, textEventAt, 
 
 const path = await import("node:path");
 
+const randomizedPlans = [
+  {
+    id: "test_randomized",
+    kind: "randomized" as const,
+    enabled: true,
+    weight: 1,
+    priority: 0,
+    promptProfilePath: "src/contexts/initiative/random-events/care.json",
+    steps: [{ kind: "llm_instruction" as const, promptProfilePath: "src/contexts/initiative/random-events/care.json" }]
+  }
+];
+
 test("messageRuntime_eligibleIdleTimerTransition_triggersRandomizedInitiatedBehavior", async () => {
   const store = createAliceStore(path.join(makeTempDir("runtime-randomized-idle-hit"), "alice.sqlite"));
   const coreInputs: AgentEvent[] = [];
@@ -29,6 +41,7 @@ test("messageRuntime_eligibleIdleTimerTransition_triggersRandomizedInitiatedBeha
     startHeartbeatPaused: true,
     now: () => current,
     random: randomQueue([0.49, 0]),
+    getAgentInitiatedBehaviorPlans: () => randomizedPlans,
     getProcessNowTarget: () => ({
       plugin: "feishu",
       accountId: "main",
@@ -245,6 +258,7 @@ test("messageRuntime_sameIdleTimerTransition_evaluatesRandomizedInitiatedBehavio
     startHeartbeatPaused: true,
     now: () => current,
     random: randomQueue([0, 0, 0, 0]),
+    getAgentInitiatedBehaviorPlans: () => randomizedPlans,
     getProcessNowTarget: () => ({ plugin: "feishu", channelId: "chat", userId: "user", sessionId: "session-1" }),
     agentState: idleTransitionState(() => state, (next) => { state = next; }, () => current),
     store,

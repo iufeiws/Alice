@@ -241,15 +241,13 @@ test("world wanderer retries failed link through google streetview then changes 
   assert.equal(badCalls, 1);
 });
 
-test("world wanderer probes nearby instead of backtracking at recent dead end", async () => {
+test("world wanderer backtracks from a recent dead end", async () => {
   const { configPath, dbPath } = worldWandererPaths();
   writeWorldWandererConfig(configPath, worldWandererConfig());
 
   const graph = new Map([
     ["a", pano("a", 41, 29, [{ panoId: "b", heading: 90, text: "Road" }])],
-    ["b", pano("b", 41, 29.001, [{ panoId: "a", heading: 270, text: "Road" }])],
-    ["escape", pano("escape", 41.001, 29.001, [{ panoId: "c", heading: 90, text: "Road" }])],
-    ["c", pano("c", 41.001, 29.002, [])]
+    ["b", pano("b", 41, 29.001, [{ panoId: "a", heading: 270, text: "Road" }])]
   ]);
   writeWorldWandererState(dbPath, {
     location: graph.get("b")!.location,
@@ -265,21 +263,12 @@ test("world wanderer probes nearby instead of backtracking at recent dead end", 
     dbPath,
     now: () => new Date("2026-06-17T00:01:00.000Z"),
     random: () => 0,
-    googleStreetView: {
-      async getPanoGraphByCoordinates() {
-        return graph.get("escape")!;
-      },
-      async getPanoGraphByPanoId(input) {
-        const result = graph.get(input.panoId);
-        if (!result) throw new Error("missing pano");
-        return result;
-      }
-    }
+    googleStreetView: graphGoogleStreetView(graph)
   });
 
   const state = await runtime.runIdleTransition({ delayMs: 1 });
 
   assert.ok(state);
-  assert.equal(state.panoId, "c");
-  assert.deepEqual(pathPanoIds(state), ["escape", "c"]);
+  assert.equal(state.panoId, "a");
+  assert.deepEqual(pathPanoIds(state), ["a", "b", "a"]);
 });

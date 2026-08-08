@@ -45,3 +45,15 @@ test("adminSidebar_initialRender_omitsDeprecatedTtsControls", () => {
     "/admin/api/tts/generate"
   ]);
 });
+
+test("feishu account editor converts the API account record into rows", () => {
+  const html = renderAdminHtml();
+
+  assertIncludesAll(html, [
+    "Array.isArray(accounts)",
+    "Object.entries(accounts).map(([id, account])",
+    "Account ID<input",
+    "App Secret<input",
+    ".feishu-account-row { display: grid;"
+  ]);
+});

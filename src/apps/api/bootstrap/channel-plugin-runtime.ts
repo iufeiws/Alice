@@ -11,6 +11,7 @@ export function createChannelPluginRuntime(input: {
   asrPlugin: any;
   getMessageRuntime(): any;
   onFeishuCardAction?(event: any): Promise<unknown>;
+  onFeishuActiveAccountChanged?(accountId: string): void | Promise<void>;
   recognizeImage(filePath: string): Promise<any>;
 }) {
   const feishu = createFeishuPlugin(input.config.plugins.feishu, {
@@ -18,6 +19,7 @@ export function createChannelPluginRuntime(input: {
     pairingStore: input.feishuPairingStore,
     time: input.time,
     asr: input.asrPlugin,
+    onActiveAccountChanged: input.onFeishuActiveAccountChanged,
     async onEvent(event) {
       await input.getMessageRuntime().ingestEvent(event);
     },

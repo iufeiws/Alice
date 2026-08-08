@@ -11,6 +11,7 @@ const TYPING_STATE_LABEL = "正在输入中...";
 const FAILED_STATE_LABEL = "失败";
 
 export type FeishuAgentRunIndicatorCardRecord = {
+  accountId?: string;
   messageId?: string;
   cardId?: string;
   layoutVersion?: number;
@@ -33,6 +34,8 @@ export type FeishuAgentRunIndicatorInput = {
   client: FeishuDynamicCardClient;
   pairingStore: FeishuPairingStore;
   cardStore: FeishuAgentRunIndicatorCardStore;
+  /** 无显式账户上下文时解析默认账户（当前账户指针）。 */
+  resolveAccount?(): string | undefined;
   time?: CurrentTimeProvider;
   throttleMs?: number;
   getState?(): unknown;
@@ -40,6 +43,7 @@ export type FeishuAgentRunIndicatorInput = {
 };
 
 type ActiveCard = {
+  accountId?: string;
   messageId: string;
   cardId: string;
   nextSequence: number;
@@ -61,6 +65,7 @@ export function createJsonFeishuAgentRunIndicatorCardStore(filePath: string): Fe
       const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as FeishuAgentRunIndicatorCardRecord;
       if (!parsed.messageId && !parsed.cardId) return undefined;
       return {
+        accountId: parsed.accountId,
         messageId: parsed.messageId,
         cardId: parsed.cardId,
         layoutVersion: parsed.layoutVersion,
@@ -89,29 +94,29 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
   return {
     async ensureReady() {
       if (!input.enabled() || !input.client.isStarted()) return;
-      const receiveId = pairedFeishuUserId();
-      if (!receiveId) return;
-      await ensureCard(receiveId, { ...blocksFromRecord(input.cardStore.read() ?? {}), state: stateLabel(input.getState?.()) });
+      const contact = pairedFeishuContact(input.resolveAccount?.());
+      if (!contact?.userId) return;
+      await ensureCard(contact.userId, contact.accountId, { ...blocksFromRecord(input.cardStore.read() ?? {}), state: stateLabel(input.getState?.()) });
     },
     async createFreshCard() {
       if (!input.enabled() || !input.client.isStarted()) return;
-      const receiveId = pairedFeishuUserId();
-      if (!receiveId) return;
-      await createCard(receiveId, { ...blocksFromRecord(input.cardStore.read() ?? {}), state: stateLabel(input.getState?.()) });
+      const contact = pairedFeishuContact(input.resolveAccount?.());
+      if (!contact?.userId) return;
+      await createCard(contact.userId, contact.accountId, { ...blocksFromRecord(input.cardStore.read() ?? {}), state: stateLabel(input.getState?.()) });
     },
-    async begin() {
+    async begin(beginInput) {
       if (!input.enabled() || !input.client.isStarted()) return undefined;
-      const receiveId = pairedFeishuUserId();
-      if (!receiveId) return undefined;
+      const contact = pairedFeishuContact(beginInput.accountId ?? input.resolveAccount?.());
+      if (!contact?.userId) return undefined;
 
-      let card = await ensureCard(receiveId);
+      let card = await ensureCard(contact.userId, contact.accountId);
       try {
         await updateStreaming(card, true);
         await updateState(card, TYPING_STATE_LABEL);
       } catch (error) {
         if (!isMissingCardError(error)) throw error;
         input.log?.("warn", "[agent-run-indicator] persisted Feishu card is unavailable; creating a new indicator card");
-        card = await createCard(receiveId);
+        card = await createCard(contact.userId, contact.accountId);
         await updateStreaming(card, true);
         await updateState(card, TYPING_STATE_LABEL);
       }
@@ -119,10 +124,11 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
     },
     async setTyping(typingInput) {
       if (!input.enabled() || !input.client.isStarted()) return;
-      const receiveId = pairedFeishuUserId();
-      if (!receiveId) return;
+      const contact = pairedFeishuContact(input.resolveAccount?.());
+      if (!contact?.userId) return;
+      const receiveId = contact.userId;
       const state = typingInput.typing ? TYPING_STATE_LABEL : stateLabel(input.getState?.());
-      let card = typingInput.typing ? await ensureCard(receiveId, { ...emptyBlocks(), state }, { ...emptyBlocks(), state }) : await loadStoredCard();
+      let card = typingInput.typing ? await ensureCard(receiveId, contact.accountId, { ...emptyBlocks(), state }, { ...emptyBlocks(), state }) : await loadStoredCard(contact.accountId);
       if (!card) return;
       try {
         await updateState(card, state);
@@ -130,15 +136,15 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
         if (!isMissingCardError(error)) throw error;
         input.cardStore.delete();
         if (!typingInput.typing) return;
-        card = await createCard(receiveId, { ...emptyBlocks(), state }, { ...emptyBlocks(), state });
+        card = await createCard(receiveId, contact.accountId, { ...emptyBlocks(), state }, { ...emptyBlocks(), state });
         await updateState(card, state);
       }
     },
     async fail(error) {
       if (!input.enabled() || !input.client.isStarted()) return;
-      const receiveId = pairedFeishuUserId();
-      if (!receiveId) return;
-      const card = await loadStoredCard();
+      const contact = pairedFeishuContact(input.resolveAccount?.());
+      if (!contact?.userId) return;
+      const card = await loadStoredCard(contact.accountId);
       if (!card) return;
       input.log?.("warn", `[agent-run-indicator] Feishu indicator card marked failed: ${errorMessage(error)}`);
       try {
@@ -231,18 +237,18 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
     };
   }
 
-  function pairedFeishuUserId(): string | undefined {
+  function pairedFeishuContact(accountId?: string) {
     const contacts = input.pairingStore.list();
-    if (contacts.length !== 1) return undefined;
-    return contacts[0].userId || undefined;
+    if (contacts.length === 0) return undefined;
+    return input.pairingStore.getPaired(accountId) ?? contacts[0];
   }
 
-  async function ensureCard(receiveId: string, initialBlocks = runningBlocks("", ""), savedBlocks = initialBlocks): Promise<ActiveCard> {
+  async function ensureCard(receiveId: string, accountId: string | undefined, initialBlocks = runningBlocks("", ""), savedBlocks = initialBlocks): Promise<ActiveCard> {
     const stored = input.cardStore.read();
-    const card = await loadStoredCard(stored);
+    const card = await loadStoredCard(accountId, stored);
     if (card) return card;
     const storedBlocks = stored ? blocksFromRecord(stored) : emptyBlocks();
-    return await createCard(receiveId, {
+    return await createCard(receiveId, accountId, {
       ...storedBlocks,
       state: initialBlocks.state
     }, {
@@ -251,11 +257,12 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
     });
   }
 
-  async function loadStoredCard(stored = input.cardStore.read()): Promise<ActiveCard | undefined> {
+  async function loadStoredCard(accountId: string | undefined, stored = input.cardStore.read()): Promise<ActiveCard | undefined> {
     if (stored && stored.layoutVersion !== CARD_LAYOUT_VERSION) return undefined;
     if (stored?.cardId) {
       const blocks = blocksFromRecord(stored);
       return {
+        accountId: stored.accountId ?? accountId,
         messageId: stored.messageId ?? "",
         cardId: stored.cardId,
         nextSequence: stored.nextSequence,
@@ -265,10 +272,11 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
     }
 
     if (stored?.messageId) {
-      const converted = await input.client.resolveAgentRunCardId({ messageId: stored.messageId });
+      const converted = await input.client.resolveAgentRunCardId({ messageId: stored.messageId, accountId: stored.accountId ?? accountId });
       if (converted.cardId) {
         const blocks = blocksFromRecord(stored);
         const record = {
+          accountId: stored.accountId ?? accountId,
           messageId: stored.messageId,
           cardId: converted.cardId,
           layoutVersion: CARD_LAYOUT_VERSION,
@@ -278,6 +286,7 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
         };
         input.cardStore.write(record);
         return {
+          accountId: record.accountId,
           messageId: record.messageId,
           cardId: record.cardId,
           nextSequence: record.nextSequence,
@@ -290,13 +299,15 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
     return undefined;
   }
 
-  async function createCard(receiveId: string, blocks = runningBlocks("", ""), savedBlocks = blocks): Promise<ActiveCard> {
+  async function createCard(receiveId: string, accountId: string | undefined, blocks = runningBlocks("", ""), savedBlocks = blocks): Promise<ActiveCard> {
     const created = await input.client.createAgentRunCard({
       receiveIdType: "open_id",
       receiveId,
-      blocks
+      blocks,
+      accountId
     });
     const card = {
+      accountId,
       messageId: created.messageId,
       cardId: created.cardId,
       nextSequence: 1,
@@ -311,7 +322,8 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
     await callCardOperation(card, () => input.client.setAgentRunCardStreaming({
       cardId: card.cardId,
       enabled,
-      sequence: card.nextSequence
+      sequence: card.nextSequence,
+      accountId: card.accountId
     }));
   }
 
@@ -319,7 +331,8 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
     await callCardOperation(card, () => input.client.updateAgentRunCardBlocks({
       cardId: card.cardId,
       blocks: { [block]: content },
-      sequence: card.nextSequence
+      sequence: card.nextSequence,
+      accountId: card.accountId
     }), nextBlocks, nextSavedBlocks);
   }
 
@@ -353,14 +366,16 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
   }
 
   function persistCard(card: ActiveCard): void {
-    input.cardStore.write({
+    const record: FeishuAgentRunIndicatorCardRecord = {
       messageId: card.messageId,
       cardId: card.cardId,
       layoutVersion: CARD_LAYOUT_VERSION,
       nextSequence: card.nextSequence,
       updatedAt: time.now().date.toISOString(),
       ...card.savedBlocks
-    });
+    };
+    if (card.accountId) record.accountId = card.accountId;
+    input.cardStore.write(record);
   }
 }
 

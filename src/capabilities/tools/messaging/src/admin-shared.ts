@@ -24,12 +24,13 @@ export function resolveAdminMessagingTarget(context: AdminRoutesContext, plugin:
 export function resolveFeishuTestTarget(context: AdminRoutesContext, body: Record<string, unknown>) {
   const channelId = optionalString(body.channelId);
   const userId = optionalString(body.userId);
+  const accountId = optionalString(body.accountId);
   const firstContact = context.feishuPairingStore.list()[0];
   const receiveChannelId = channelId ?? firstContact?.channelId;
   const receiveUserId = receiveChannelId ? undefined : userId ?? firstContact?.userId;
   const sessionId = optionalString(body.sessionId) ?? firstContact?.sessionId ?? "admin-test";
   if (!receiveChannelId && !receiveUserId) return undefined;
-  return { plugin: "feishu", accountId: "main", channelId: receiveChannelId, userId: receiveUserId, sessionId };
+  return { plugin: "feishu", accountId: accountId ?? firstContact?.accountId ?? "main", channelId: receiveChannelId, userId: receiveUserId, sessionId };
 }
 
 export function formatToolMessageContent(result: { ok: boolean; output?: unknown; error?: string }, renderer: PromptContextRuntime): string {

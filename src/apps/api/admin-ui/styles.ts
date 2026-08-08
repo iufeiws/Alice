@@ -34,6 +34,10 @@ export function renderAdminStyles(): string {
       .item { border-bottom: 1px solid #e4e7eb; padding: 10px 0; }
       .item strong { display: block; font-size: 13px; }
       .row { display: grid; grid-template-columns: 1fr 120px 90px; gap: 8px; align-items: end; }
+      .feishu-account-row { display: grid; gap: 8px; margin: 12px 0; padding: 12px; border: 1px solid #d7dce3; border-radius: 8px; background: #f8fafc; }
+      .feishu-account-row .feishu-account-field { min-width: 0; margin: 0; }
+      .feishu-account-row input { margin: 5px 0 0; }
+      .feishu-account-row button { justify-self: start; margin: 0; white-space: nowrap; }
       .prompt-layer { border-bottom: 1px solid #e4e7eb; padding: 12px 0; }
       .prompt-layer summary { cursor: pointer; font-weight: 800; padding: 6px 0; }
       .prompt-layer summary span { color: #667085; font-weight: 700; margin-left: 8px; }

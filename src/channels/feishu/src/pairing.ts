@@ -22,6 +22,7 @@ export type PairingFileIO = {
 
 export interface FeishuPairingStore {
   list(): FeishuPairedContact[];
+  getPaired(accountId?: string): FeishuPairedContact | undefined;
   isPaired(event: AgentEvent): boolean;
   pairFromEvent(event: AgentEvent): { ok: true; contact: FeishuPairedContact } | { ok: false; reason: "already_bound"; contact: FeishuPairedContact };
 }
@@ -34,12 +35,22 @@ export function createFeishuPairingStore(path: string, io: PairingFileIO, option
     io.write(path, `${JSON.stringify({ contacts }, null, 2)}\n`);
   }
 
+  // 配对按账户隔离：事件缺少 accountId 时按 "main" 处理。
+  function contactsForAccount(accountId: string | undefined): FeishuPairedContact[] {
+    const scopeId = accountId ?? "main";
+    return contacts.filter((contact) => (contact.accountId ?? "main") === scopeId);
+  }
+
   return {
     list() {
       return contacts;
     },
+    getPaired(accountId) {
+      if (accountId) return contactsForAccount(accountId)[0];
+      return contacts[0];
+    },
     isPaired(event) {
-      return contacts.slice(0, 1).some((contact) => {
+      return contactsForAccount(event.source.accountId).slice(0, 1).some((contact) => {
         if (event.externalSession.scope === "dm") {
           return contact.scope === "dm" && contact.userId === event.source.userId;
         }
@@ -49,11 +60,13 @@ export function createFeishuPairingStore(path: string, io: PairingFileIO, option
     },
     pairFromEvent(event) {
       const now = time.now().iso;
+      const accountId = event.source.accountId;
       const id = event.externalSession.scope === "dm"
         ? `feishu:dm:${event.source.userId ?? event.source.channelId ?? event.externalSession.sessionId}`
         : `feishu:group:${event.source.channelId ?? event.externalSession.sessionId}`;
-      const existing = contacts.find((contact) => contact.id === id);
-      const boundContact = contacts[0];
+      const accountContacts = contactsForAccount(accountId);
+      const existing = accountContacts.find((contact) => contact.id === id);
+      const boundContact = accountContacts[0];
 
       if (boundContact && boundContact.id !== id) {
         return { ok: false, reason: "already_bound", contact: boundContact };
@@ -61,6 +74,7 @@ export function createFeishuPairingStore(path: string, io: PairingFileIO, option
 
       if (existing) {
         existing.lastSeenAt = now;
+        existing.accountId = accountId;
         existing.channelId = event.source.channelId ?? existing.channelId;
         existing.userId = event.source.userId ?? existing.userId;
         existing.sessionId = event.externalSession.sessionId;
@@ -71,7 +85,7 @@ export function createFeishuPairingStore(path: string, io: PairingFileIO, option
       const contact: FeishuPairedContact = {
         id,
         plugin: "feishu",
-        accountId: event.source.accountId,
+        accountId,
         userId: event.source.userId,
         channelId: event.source.channelId,
         sessionId: event.externalSession.sessionId,
@@ -80,7 +94,7 @@ export function createFeishuPairingStore(path: string, io: PairingFileIO, option
         lastSeenAt: now,
         canInitiate: true
       };
-      contacts = [contact];
+      contacts = [...contacts.filter((candidate) => (candidate.accountId ?? "main") !== (accountId ?? "main")), contact];
       save();
       return { ok: true, contact };
     }

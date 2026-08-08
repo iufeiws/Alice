@@ -7,6 +7,7 @@ import { setLLMToolExecutionReporter } from "../../../contexts/llm-gateway/src/l
 import { isFeishuConfigured } from "../../../channels/feishu/src/config.js";
 import type { StoredMessageLog } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import { createFeishuApprovalService } from "../../../contexts/approval/src/index.js";
+import { updateEnvFile } from "../server/env-file.js";
 
 const path = await import("node:path");
 
@@ -40,6 +41,16 @@ export function createApiCommunicationRuntime(input: {
 }) {
   let messageRuntime: any;
   let approvalService: ReturnType<typeof createFeishuApprovalService>;
+  // 当前账户指针防抖持久化：写 .env 的 FEISHU_ACTIVE_ACCOUNT（与账户配置同处）。
+  let feishuActiveAccountTimer: ReturnType<typeof setTimeout> | undefined;
+  function saveFeishuActiveAccount(accountId: string): void {
+    input.config.plugins.feishu.activeAccount = accountId;
+    if (feishuActiveAccountTimer) clearTimeout(feishuActiveAccountTimer);
+    feishuActiveAccountTimer = setTimeout(() => {
+      feishuActiveAccountTimer = undefined;
+      updateEnvFile(".env", { FEISHU_ACTIVE_ACCOUNT: accountId });
+    }, 500);
+  }
   const webRtcVoiceRuntime = createWebRtcVoiceRuntime({
     config: input.config,
     time: input.time,
@@ -59,11 +70,13 @@ export function createApiCommunicationRuntime(input: {
     asrPlugin: input.asrPlugin,
     getMessageRuntime: () => messageRuntime,
     onFeishuCardAction: async (event) => await approvalService.handleCardAction(event),
+    onFeishuActiveAccountChanged: saveFeishuActiveAccount,
     recognizeImage: input.recognizeImage
   });
   approvalService = createFeishuApprovalService({
     client: feishu.agentRunCardClient,
-    pairingStore: input.apiContextRuntime.feishuPairingStore
+    pairingStore: input.apiContextRuntime.feishuPairingStore,
+    resolveAccount: () => feishu.getDefaultAccountId?.()
   });
   const agentRunIndicator = createFeishuDynamicCardAgentRunIndicator({
     enabled: () => isFeishuConfigured(input.config.plugins.feishu),
@@ -72,6 +85,7 @@ export function createApiCommunicationRuntime(input: {
     cardStore: createJsonFeishuAgentRunIndicatorCardStore(path.join(input.config.memoryFiles.root, "indexes", "feishu-agent-run-indicator-card.json")),
     time: input.time,
     getState: () => input.agentState.getSnapshot(),
+    resolveAccount: () => feishu.getDefaultAccountId?.(),
     log: input.appendLog
   });
   void agentRunIndicator.ensureReady?.().catch((error: unknown) => {
@@ -80,6 +94,7 @@ export function createApiCommunicationRuntime(input: {
   const toolExecutionReporter = createFeishuToolExecutionReporter({
     client: feishu.agentRunCardClient,
     pairingStore: input.apiContextRuntime.feishuPairingStore,
+    resolveAccount: () => feishu.getDefaultAccountId?.(),
     log: input.appendLog
   });
   input.outputRouter.onSent(async (output: { target: { plugin: string } }) => {

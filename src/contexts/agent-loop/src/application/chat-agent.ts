@@ -650,6 +650,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
             onLLMRequestPrepared: deps.onLLMRequestPrepared,
             onLLMResponseReceived: deps.onLLMResponseReceived,
             agentRunIndicator: deps.agentRunIndicator,
+            runAccountId: event.source.accountId,
             onAgentRunIndicatorError: deps.onAgentRunIndicatorError,
             onLLMLog: deps.onLLMLog
           });

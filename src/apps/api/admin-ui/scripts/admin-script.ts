@@ -104,8 +104,8 @@ ${renderPromptsScript()}
         await refreshAgentState();
         $("feishuEnabled").checked = Boolean(config.plugins.feishu.enabled);
         $("feishuConnectionMode").value = config.plugins.feishu.connectionMode || "";
-        $("feishuAppId").value = config.plugins.feishu.appId || "";
         $("feishuRequireMention").checked = Boolean(config.plugins.feishu.requireMention);
+        renderFeishuAccounts(config.plugins.feishu.accounts);
         $("feishu-status").textContent = config.plugins.feishu.runtimeStarted ? "Feishu runtime started." : "Feishu runtime stopped.";
         $("wechatEnabled").checked = Boolean(config.plugins.wechat && config.plugins.wechat.enabled);
         $("wechatBaseURL").value = (config.plugins.wechat && config.plugins.wechat.baseURL) || "";

@@ -1,8 +1,8 @@
 import type { FeishuConfig } from "./types.js";
 import { createFeishuClient, type FeishuClientDeps } from "./client.js";
 
-export function createFeishuMonitor(config: FeishuConfig, deps: FeishuClientDeps) {
-  const client = createFeishuClient(config, deps);
+export function createFeishuMonitor(config: FeishuConfig, accountId: string, deps: FeishuClientDeps) {
+  const client = createFeishuClient(config, accountId, deps);
 
   return {
     isStarted: client.isStarted,

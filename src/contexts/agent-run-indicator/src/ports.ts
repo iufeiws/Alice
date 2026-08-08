@@ -1,6 +1,8 @@
 export type AgentRunIndicatorBeginInput = {
   agentId?: string;
   round: number;
+  /** 触发该 run 的消息来源账户；无账户上下文（如心跳触发）时为空。 */
+  accountId?: string;
 };
 
 export type AgentRunIndicatorTypingInput = {

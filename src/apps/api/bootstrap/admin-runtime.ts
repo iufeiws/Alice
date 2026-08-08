@@ -83,9 +83,6 @@ export async function handleAdminRuntimeApi(context: AdminRoutesContext, request
 
 export async function saveFeishuConfig(context: AdminRoutesContext, request: any, response: any): Promise<void> {
   const body = await readJsonBody(request);
-  const appId = requiredString(body.appId);
-  const appSecret = optionalString(body.appSecret);
-  const effectiveAppSecret = appSecret ?? context.config.plugins.feishu.accounts.main?.appSecret;
   const enabled = booleanFromUnknown(body.enabled);
   const requireMention = booleanFromUnknown(body.requireMention);
   const requestedConnectionMode = requiredString(body.connectionMode);
@@ -98,20 +95,62 @@ export async function saveFeishuConfig(context: AdminRoutesContext, request: any
     return;
   }
 
+  if (!Array.isArray(body.accounts)) {
+    writeJson(response, 400, { ok: false, error: "missing_accounts" });
+    return;
+  }
+  const accounts: typeof context.config.plugins.feishu.accounts = {};
+  const seenIds = new Set<string>();
+  for (const raw of body.accounts) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      writeJson(response, 400, { ok: false, error: "invalid_account" });
+      return;
+    }
+    const record = raw as Record<string, unknown>;
+    const id = optionalString(record.id);
+    const appId = optionalString(record.appId);
+    if (!id || !appId) {
+      writeJson(response, 400, { ok: false, error: "account_requires_id_and_app_id" });
+      return;
+    }
+    if (seenIds.has(id)) {
+      writeJson(response, 400, { ok: false, error: "duplicate_account_id" });
+      return;
+    }
+    seenIds.add(id);
+    const name = optionalString(record.name);
+    const submittedSecret = optionalString(record.appSecret);
+    const existingSecret = context.config.plugins.feishu.accounts[id]?.appSecret;
+    const appSecret = submittedSecret ?? existingSecret;
+    if (!appSecret) {
+      writeJson(response, 400, { ok: false, error: "account_missing_app_secret", accountId: id });
+      return;
+    }
+    accounts[id] = { appId, appSecret, name };
+  }
+
   updateEnvFile(".env", {
     FEISHU_ENABLED: String(enabled),
     FEISHU_CONNECTION_MODE: requestedConnectionMode,
-    FEISHU_APP_ID: appId,
-    FEISHU_APP_SECRET: appSecret,
-    FEISHU_REQUIRE_MENTION: String(requireMention)
+    FEISHU_REQUIRE_MENTION: String(requireMention),
+    FEISHU_ACCOUNTS: JSON.stringify(accounts),
+    FEISHU_APP_ID: null,
+    FEISHU_APP_SECRET: null
   });
   context.config.plugins.feishu.enabled = enabled;
   context.config.plugins.feishu.connectionMode = requestedConnectionMode;
   context.config.plugins.feishu.requireMention = requireMention;
-  context.config.plugins.feishu.accounts = appId && effectiveAppSecret
-    ? { main: { appId, appSecret: effectiveAppSecret, name: "Agent" } }
-    : {};
-  context.appendLog("info", `feishu config saved: enabled=${enabled} mode=${requestedConnectionMode} appId=${appId ? maskValue(appId) : "(empty)"}`);
+  context.config.plugins.feishu.accounts = accounts;
+  if (context.runtime.feishuStarted) {
+    // 运行中时应用配置变更：启用则重新 reconcile 账户连接，停用则停止运行时。
+    if (enabled) {
+      await context.feishu.start();
+    } else {
+      await context.feishu.stop();
+      context.runtime.feishuStarted = false;
+    }
+  }
+  context.appendLog("info", `feishu config saved: enabled=${enabled} mode=${requestedConnectionMode} accounts=${Object.keys(accounts).join(",")}`);
   writeJson(response, 200, { ok: true, restartRequired: false, config: getAdminConfig(context) });
 }
 
@@ -369,9 +408,12 @@ export function getAdminConfig(context: AdminRoutesContext): unknown {
       feishu: {
         enabled: context.config.plugins.feishu.enabled,
         connectionMode: context.config.plugins.feishu.connectionMode,
-        accountIds: Object.keys(context.config.plugins.feishu.accounts),
-        appId: context.config.plugins.feishu.accounts.main?.appId,
-        appSecretConfigured: Boolean(context.config.plugins.feishu.accounts.main?.appSecret),
+        accounts: Object.entries(context.config.plugins.feishu.accounts).map(([accountId, account]) => ({
+          id: accountId,
+          name: account.name,
+          appId: account.appId,
+          appSecretConfigured: Boolean(account.appSecret)
+        })),
         runtimeStarted: context.runtime.feishuStarted,
         dmPolicy: context.config.plugins.feishu.dmPolicy,
         groupPolicy: context.config.plugins.feishu.groupPolicy,
@@ -396,7 +438,8 @@ export function getFeishuRuntimeStatus(context: AdminRoutesContext): unknown {
     configured: Object.keys(context.config.plugins.feishu.accounts).length > 0,
     runtimeStarted: context.runtime.feishuStarted,
     connectionMode: context.config.plugins.feishu.connectionMode,
-    accountIds: Object.keys(context.config.plugins.feishu.accounts),
+    activeAccount: context.config.plugins.feishu.activeAccount,
+    accounts: context.feishu.getAccountStatuses?.() ?? Object.keys(context.config.plugins.feishu.accounts).map((accountId) => ({ accountId, configured: true, started: false })),
     requireMention: context.config.plugins.feishu.requireMention
   };
 }

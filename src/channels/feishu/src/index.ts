@@ -24,36 +24,89 @@ type FeishuTypingSessionState = {
   typingMessageId?: string;
   typingReactionId?: string;
   emojiType: string;
+  accountId?: string;
 };
 
+type FeishuMonitor = ReturnType<typeof createFeishuMonitor>;
+
 export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps): ChannelPlugin & {
-  ingestTextMessage(raw: FeishuTextMessageEvent): Promise<void>;
-  ingestAudioMessage(raw: FeishuAudioMessageEvent): Promise<void>;
+  ingestTextMessage(raw: FeishuTextMessageEvent, accountId?: string): Promise<void>;
+  ingestAudioMessage(raw: FeishuAudioMessageEvent, accountId?: string): Promise<void>;
   downloadInboundAttachment(input: { event: Awaited<ReturnType<typeof textMessageEventToAgentEvent>>; filePath: string }): Promise<{ filename?: string; mime?: string } | void>;
   setTyping(input: { userId?: string; channelId?: string; sessionId?: string; typing: boolean }): Promise<void>;
   agentRunCardClient: FeishuDynamicCardClient;
+  getAccountStatuses(): Array<{ accountId: string; configured: boolean; started: boolean }>;
+  getDefaultAccountId(): string | undefined;
 } {
   const time = deps.time ?? createCurrentTimeProvider("UTC");
   const bindings = createInMemoryFeishuBindingStore();
   const deduper = createRecentMessageDeduper();
   const typingSessions = new Map<string, FeishuTypingSessionState>();
-  const monitor = createFeishuMonitor(config, {
-    log: deps.log,
-    time,
-    async onMessage(raw) {
-      if (isFeishuAudioMessage(raw)) {
-        await receiveAudioMessage(raw);
-        return;
-      }
-      await receiveTextMessage(raw as FeishuTextMessageEvent);
-    },
-    async onLifecycle(kind, raw) {
-      await receiveLifecycleEvent(kind, raw);
-    },
-    async onCardAction(event) {
-      return await deps.onCardAction?.(event);
+  const monitors = new Map<string, FeishuMonitor>();
+
+  function getDefaultAccountId(): string | undefined {
+    if (config.activeAccount && config.accounts[config.activeAccount]) return config.activeAccount;
+    const ids = Object.keys(config.accounts);
+    return ids.includes("main") ? "main" : ids[0];
+  }
+
+  // 当前账户指针：最后收到消息的账户。变化时回调宿主持久化到账户配置处。
+  function updateActiveAccount(accountId: string): void {
+    if (config.activeAccount === accountId) return;
+    config.activeAccount = accountId;
+    void Promise.resolve(deps.onActiveAccountChanged?.(accountId)).catch((error) => {
+      deps.log?.("warn", `[feishu] failed to persist active account: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
+
+  function ensureMonitor(accountId: string): FeishuMonitor {
+    const existing = monitors.get(accountId);
+    if (existing) return existing;
+    if (!config.accounts[accountId]) {
+      throw new Error(`Feishu account "${accountId}" is not configured`);
     }
-  });
+    const monitor = createFeishuMonitor(config, accountId, {
+      log: deps.log,
+      time,
+      async onMessage(raw) {
+        if (isFeishuAudioMessage(raw)) {
+          await receiveAudioMessage(raw, accountId);
+          return;
+        }
+        await receiveTextMessage(raw as FeishuTextMessageEvent, accountId);
+      },
+      async onLifecycle(kind, raw) {
+        await receiveLifecycleEvent(kind, raw);
+      },
+      async onCardAction(event) {
+        return await deps.onCardAction?.({ ...event, accountId });
+      }
+    });
+    monitors.set(accountId, monitor);
+    return monitor;
+  }
+
+  // 出站路由规则：目标 accountId 已配置时使用它；未指定时使用默认账户（main 或第一个账户）；
+  // 指定了未配置的账户则显式报错，不做静默回退。
+  function resolveMonitorFor(accountId?: string): FeishuMonitor {
+    const resolvedId = accountId ?? getDefaultAccountId();
+    if (!resolvedId) throw new Error("Feishu has no configured account");
+    return ensureMonitor(resolvedId);
+  }
+
+  const agentRunCardClient: FeishuDynamicCardClient = {
+    isStarted: () => [...monitors.values()].some((monitor) => monitor.isStarted()),
+    createApprovalCard: (input) => resolveMonitorFor(input.accountId).createApprovalCard(input),
+    deleteMessage: (input) => resolveMonitorFor(input.accountId).deleteMessage(input),
+    createAgentRunCard: (input) => resolveMonitorFor(input.accountId).createAgentRunCard(input),
+    updateAgentRunCardBlocks: (input) => resolveMonitorFor(input.accountId).updateAgentRunCardBlocks(input),
+    setAgentRunCardStreaming: (input) => resolveMonitorFor(input.accountId).setAgentRunCardStreaming(input),
+    resolveAgentRunCardId: (input) => resolveMonitorFor(input.accountId).resolveAgentRunCardId(input),
+    createToolExecutionCard: (input) => resolveMonitorFor(input.accountId).createToolExecutionCard(input),
+    groupToolExecutionCard: (input) => resolveMonitorFor(input.accountId).groupToolExecutionCard(input),
+    updateToolExecutionCard: (input) => resolveMonitorFor(input.accountId).updateToolExecutionCard(input),
+    setToolExecutionCardStreaming: (input) => resolveMonitorFor(input.accountId).setToolExecutionCardStreaming(input)
+  };
 
   const plugin = {
     id: "feishu",
@@ -62,20 +115,30 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
         deps.log?.("warn", "[feishu] disabled or missing credentials");
         return;
       }
-      await monitor.start();
+      for (const [accountId, monitor] of [...monitors.entries()]) {
+        if (!config.accounts[accountId]) {
+          await monitor.stop();
+          monitors.delete(accountId);
+        }
+      }
+      for (const accountId of Object.keys(config.accounts)) {
+        await ensureMonitor(accountId).start();
+      }
     },
     async stop() {
       await clearTypingIndicators();
-      await monitor.stop();
+      await Promise.all([...monitors.values()].map((monitor) => monitor.stop()));
     },
     async send(output: AgentOutput) {
       const plan = renderForFeishu(output);
       let result: void | { messageId?: string };
       if (deps.outbound) {
         result = await deps.outbound.send(plan);
-        noteOutboundMessage(output.target.sessionId, result?.messageId);
+        noteOutboundMessage(output.target.sessionId, result?.messageId, output.target.accountId);
         return result;
       }
+
+      const monitor = resolveMonitorFor(output.target.accountId);
 
       if (plan.kind === "text") {
         result = await monitor.sendText({
@@ -83,7 +146,7 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
           receiveId: plan.receiveId,
           text: plan.text
         });
-        noteOutboundMessage(output.target.sessionId, result.messageId);
+        noteOutboundMessage(output.target.sessionId, result.messageId, output.target.accountId);
         return result;
       }
 
@@ -93,7 +156,7 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
           receiveId: plan.receiveId,
           markdown: plan.markdown
         });
-        noteOutboundMessage(output.target.sessionId, result.messageId);
+        noteOutboundMessage(output.target.sessionId, result.messageId, output.target.accountId);
         return result;
       }
 
@@ -103,7 +166,7 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
           receiveId: plan.receiveId,
           assetId: plan.assetId
         });
-        noteOutboundMessage(output.target.sessionId, result.messageId);
+        noteOutboundMessage(output.target.sessionId, result.messageId, output.target.accountId);
         return result;
       }
 
@@ -115,7 +178,7 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
           duration: plan.duration,
           filename: plan.filename
         });
-        noteOutboundMessage(output.target.sessionId, result.messageId);
+        noteOutboundMessage(output.target.sessionId, result.messageId, output.target.accountId);
         return result;
       }
 
@@ -125,21 +188,23 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
         assetId: plan.assetId,
         filename: plan.filename
       });
-      noteOutboundMessage(output.target.sessionId, result.messageId);
+      noteOutboundMessage(output.target.sessionId, result.messageId, output.target.accountId);
       return result;
     },
-    async ingestTextMessage(raw: FeishuTextMessageEvent) {
-      await receiveTextMessage(raw);
+    async ingestTextMessage(raw: FeishuTextMessageEvent, accountId = getDefaultAccountId()) {
+      if (!accountId) return;
+      await receiveTextMessage(raw, accountId);
     },
-    async ingestAudioMessage(raw: FeishuAudioMessageEvent) {
-      await receiveAudioMessage(raw);
+    async ingestAudioMessage(raw: FeishuAudioMessageEvent, accountId = getDefaultAccountId()) {
+      if (!accountId) return;
+      await receiveAudioMessage(raw, accountId);
     },
     async downloadInboundAttachment(input: { event: Awaited<ReturnType<typeof textMessageEventToAgentEvent>>; filePath: string }) {
       const type = input.event.payload.kind;
       if (type !== "image" && type !== "file") throw new Error("inbound attachment must be image or file");
       const resource = input.event.payload.resource;
       if (!resource?.id) throw new Error("missing inbound attachment resource");
-      await monitor.downloadMessageResource({
+      await resolveMonitorFor(input.event.source.accountId).downloadMessageResource({
         messageId: input.event.source.rawMessageId ?? input.event.id,
         fileKey: resource.id,
         type,
@@ -153,7 +218,17 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
     async setTyping(input: { userId?: string; channelId?: string; sessionId?: string; typing: boolean }) {
       await setTyping(input);
     },
-    agentRunCardClient: monitor
+    getAccountStatuses() {
+      return Object.keys(config.accounts).map((accountId) => ({
+        accountId,
+        configured: true,
+        started: monitors.get(accountId)?.isStarted() ?? false
+      }));
+    },
+    getDefaultAccountId() {
+      return getDefaultAccountId();
+    },
+    agentRunCardClient
   };
 
   async function receiveLifecycleEvent(
@@ -173,30 +248,32 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
     }
   }
 
-  async function receiveTextMessage(raw: FeishuTextMessageEvent): Promise<void> {
+  async function receiveTextMessage(raw: FeishuTextMessageEvent, accountId: string): Promise<void> {
     try {
-      const event = await textMessageEventToAgentEvent(raw, bindings, "main", time);
-      deps.log?.("info", `[feishu] normalized message ${event.source.rawMessageId ?? event.id}: ${event.payload.kind}`);
+      const event = await textMessageEventToAgentEvent(raw, bindings, accountId, time);
+      deps.log?.("info", `[feishu] normalized message ${event.source.rawMessageId ?? event.id}: ${event.payload.kind} (account=${accountId})`);
       const dedupeKey = event.source.rawMessageId ?? event.id;
       if (!deduper.remember(dedupeKey)) {
         deps.log?.("warn", `[feishu] duplicate message ignored: ${dedupeKey}`);
         return;
       }
-      noteInboundMessage(event.externalSession.sessionId, event.source.rawMessageId);
+      updateActiveAccount(accountId);
+      noteInboundMessage(event.externalSession.sessionId, event.source.rawMessageId, accountId);
       queueTextMessage(event);
     } catch (error) {
       deps.log?.("error", `[feishu] failed to receive message: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  async function receiveAudioMessage(raw: FeishuAudioMessageEvent): Promise<void> {
+  async function receiveAudioMessage(raw: FeishuAudioMessageEvent, accountId: string): Promise<void> {
     try {
       const messageId = raw.event.message.message_id;
       if (!deduper.remember(messageId)) {
         deps.log?.("warn", `[feishu] duplicate message ignored: ${messageId}`);
         return;
       }
-      queueAudioMessage(raw);
+      updateActiveAccount(accountId);
+      queueAudioMessage(raw, accountId);
     } catch (error) {
       deps.log?.("error", `[feishu] failed to receive audio message: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -210,9 +287,9 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
       });
   }
 
-  function queueAudioMessage(raw: FeishuAudioMessageEvent): void {
+  function queueAudioMessage(raw: FeishuAudioMessageEvent, accountId: string): void {
     Promise.resolve()
-      .then(() => handleAudioMessage(raw))
+      .then(() => handleAudioMessage(raw, accountId))
       .catch((error) => {
         deps.log?.("error", `[feishu] failed to process audio message ${raw.event.message.message_id}: ${error instanceof Error ? error.message : String(error)}`);
       });
@@ -284,7 +361,7 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
       await deps.onEvent(event);
   }
 
-  async function handleAudioMessage(raw: FeishuAudioMessageEvent): Promise<void> {
+  async function handleAudioMessage(raw: FeishuAudioMessageEvent, accountId: string): Promise<void> {
     if (!deps.asr) {
       deps.log?.("warn", `[feishu] ignored audio ${raw.event.message.message_id}: asr is not configured`);
       return;
@@ -302,7 +379,7 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
         messageId: raw.event.message.message_id,
         raw
       })
-      : await monitor.downloadAudioResource({
+      : await resolveMonitorFor(accountId).downloadAudioResource({
         fileKey: content.fileKey,
         messageId: raw.event.message.message_id
       });
@@ -327,8 +404,8 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
       return;
     }
 
-    const event = await audioMessageEventToAgentEvent(raw, stored.assetId, transcript, bindings, time);
-    noteInboundMessage(event.externalSession.sessionId, event.source.rawMessageId);
+    const event = await audioMessageEventToAgentEvent(raw, stored.assetId, transcript, bindings, time, accountId);
+    noteInboundMessage(event.externalSession.sessionId, event.source.rawMessageId, accountId);
     const decision = checkFeishuEventPolicy(config, event);
     if (decision.allowed && config.dmPolicy === "pairing" && event.externalSession.scope === "dm" && !deps.pairingStore?.isPaired(event)) {
       deps.log?.("warn", `[feishu] ignored event: pairing required, command=${getPairingCommand()}`);
@@ -349,14 +426,18 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
     return created;
   }
 
-  function noteInboundMessage(sessionId: string, messageId: string | undefined): void {
+  function noteInboundMessage(sessionId: string, messageId: string | undefined, accountId: string): void {
     if (!messageId) return;
-    getTypingState(sessionId).latestMessageId = messageId;
+    const state = getTypingState(sessionId);
+    state.latestMessageId = messageId;
+    state.accountId = accountId;
   }
 
-  function noteOutboundMessage(sessionId: string | undefined, messageId: string | undefined): void {
+  function noteOutboundMessage(sessionId: string | undefined, messageId: string | undefined, accountId?: string): void {
     if (!sessionId || !messageId) return;
-    getTypingState(sessionId).latestMessageId = messageId;
+    const state = getTypingState(sessionId);
+    state.latestMessageId = messageId;
+    if (accountId) state.accountId = accountId;
   }
 
   async function setTyping(input: { sessionId?: string; typing: boolean }): Promise<void> {
@@ -380,7 +461,7 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
       await clearTypingIndicator(input.sessionId, state);
     }
     try {
-      const result = await reactionClient().addReaction({
+      const result = await reactionClient(state.accountId).addReaction({
         messageId: state.latestMessageId,
         emojiType: state.emojiType
       });
@@ -407,22 +488,25 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
     state.typingReactionId = undefined;
     if (!messageId || !reactionId) return;
     try {
-      await removeTypingReactionWithRetry({ messageId, reactionId });
+      await removeTypingReactionWithRetry({ messageId, reactionId, accountId: state.accountId });
       deps.log?.("info", `[feishu] typing stopped: ${sessionId}`);
     } catch (error) {
       deps.log?.("warn", `[feishu] typing stop failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  function reactionClient() {
-    return deps.reactionClient ?? monitor;
+  function reactionClient(accountId?: string) {
+    return deps.reactionClient ?? resolveMonitorFor(accountId);
   }
 
-  async function removeTypingReactionWithRetry(input: { messageId: string; reactionId: string }): Promise<void> {
+  async function removeTypingReactionWithRetry(input: { messageId: string; reactionId: string; accountId?: string }): Promise<void> {
     let lastError: unknown;
     for (let attempt = 1; attempt <= REMOVE_TYPING_REACTION_ATTEMPTS; attempt += 1) {
       try {
-        await reactionClient().removeReaction(input);
+        await reactionClient(input.accountId).removeReaction({
+          messageId: input.messageId,
+          reactionId: input.reactionId
+        });
         return;
       } catch (error) {
         lastError = error;
@@ -447,7 +531,8 @@ async function audioMessageEventToAgentEvent(
   assetId: string,
   transcript: string,
   bindings: FeishuBindingStore,
-  time: CurrentTimeProvider
+  time: CurrentTimeProvider,
+  accountId: string
 ) {
   const message = raw.event.message;
   const sender = raw.event.sender.sender_id;
@@ -465,7 +550,7 @@ async function audioMessageEventToAgentEvent(
     id: raw.header?.event_id ?? createId("evt"),
     source: {
       plugin: "feishu",
-      accountId: "main",
+      accountId,
       channelId: message.chat_id,
       userId,
       rawMessageId: message.message_id

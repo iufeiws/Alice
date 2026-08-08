@@ -127,6 +127,37 @@ function normalizeDefaultTargetPlugin(value: string | undefined): "auto" | "wech
   return value === "wechat" || value === "feishu" ? value : "auto";
 }
 
+function parseFeishuAccounts(value: string | undefined): FeishuConfig["accounts"] {
+  if (!value) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error(`FEISHU_ACCOUNTS is not valid JSON: ${value.slice(0, 80)}`);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("FEISHU_ACCOUNTS must be a JSON object of accounts");
+  }
+  const accounts: FeishuConfig["accounts"] = {};
+  for (const [id, entry] of Object.entries(parsed)) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`FEISHU_ACCOUNTS account "${id}" must be an object`);
+    }
+    const record = entry as Record<string, unknown>;
+    const appId = typeof record.appId === "string" && record.appId ? record.appId : undefined;
+    const appSecret = typeof record.appSecret === "string" && record.appSecret ? record.appSecret : undefined;
+    if (!appId || !appSecret) {
+      throw new Error(`FEISHU_ACCOUNTS account "${id}" requires appId and appSecret`);
+    }
+    accounts[id] = {
+      appId,
+      appSecret,
+      name: typeof record.name === "string" && record.name ? record.name : undefined
+    };
+  }
+  return accounts;
+}
+
 function normalizeTTSBackend(value: string | undefined): "genie-tts" | "moss-onnx" {
   return value === "moss-onnx" ? "moss-onnx" : "genie-tts";
 }
@@ -138,8 +169,6 @@ function referenceTextPath(referenceAudio: string): string {
 export function loadConfig(env: Env = process.env): AppConfig {
   const llmBaseURL = trimTrailingSlashes(env.LLM_BASE_URL);
   const llmApiKey = env.LLM_API_KEY;
-  const feishuAppId = env.FEISHU_APP_ID;
-  const feishuAppSecret = env.FEISHU_APP_SECRET;
   const wechatBaseURL = (env.WECHAT_ILINK_BASE_URL ?? "https://ilinkai.weixin.qq.com").replace(/\/+$/, "");
   const skillsRoot = env.SKILLS_ROOT ?? "src/capabilities/skills";
   const installedSkillsRoot = env.INSTALLED_SKILLS_ROOT ?? ".agents/skills";
@@ -200,10 +229,8 @@ export function loadConfig(env: Env = process.env): AppConfig {
       feishu: {
         enabled: envBool(env.FEISHU_ENABLED, false),
         connectionMode: env.FEISHU_CONNECTION_MODE === "webhook" ? "webhook" : "websocket",
-        accounts:
-          feishuAppId && feishuAppSecret
-            ? { main: { appId: feishuAppId, appSecret: feishuAppSecret, name: "Agent" } }
-            : {},
+        accounts: parseFeishuAccounts(env.FEISHU_ACCOUNTS),
+        activeAccount: env.FEISHU_ACTIVE_ACCOUNT || undefined,
         dmPolicy: "pairing",
         dmAllowFrom: [],
         groupPolicy: "allowlist",

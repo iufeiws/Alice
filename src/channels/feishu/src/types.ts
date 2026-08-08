@@ -6,6 +6,8 @@ export type FeishuConfig = {
   enabled: boolean;
   connectionMode: "websocket" | "webhook";
   accounts: Record<string, { appId: string; appSecret: string; name?: string }>;
+  /** 当前账户指针：最后收到消息的账户 id，持久化在账户配置处；无消息历史时为空。 */
+  activeAccount?: string;
   dmPolicy: "pairing" | "allowlist" | "open" | "disabled";
   dmAllowFrom: string[];
   groupPolicy: "allowlist" | "open" | "disabled";
@@ -151,6 +153,7 @@ export type FeishuReactionClient = {
 };
 
 export type FeishuCardActionEvent = {
+  accountId?: string;
   messageId: string;
   chatId?: string;
   operatorOpenId: string;
@@ -173,16 +176,16 @@ export type FeishuToolExecutionPanel = {
 
 export type FeishuDynamicCardClient = {
   isStarted(): boolean;
-  createApprovalCard(input: { receiveIdType: "open_id"; receiveId: string; requestId: string; title: string; content: string }): Promise<{ messageId: string; cardId: string }>;
-  deleteMessage(input: { messageId: string }): Promise<void>;
-  createAgentRunCard(input: { receiveIdType: "open_id"; receiveId: string; blocks: FeishuAgentRunCardBlocks }): Promise<{ messageId: string; cardId: string }>;
-  updateAgentRunCardBlocks(input: { cardId: string; blocks: Partial<FeishuAgentRunCardBlocks>; sequence: number }): Promise<void>;
-  setAgentRunCardStreaming(input: { cardId: string; enabled: boolean; sequence: number }): Promise<void>;
-  resolveAgentRunCardId(input: { messageId: string }): Promise<{ cardId?: string }>;
-  createToolExecutionCard(input: { receiveIdType: "open_id"; receiveId: string; toolName: string; call: string; result: string; titleElementId?: string; callElementId?: string; resultElementId?: string }): Promise<{ messageId: string; cardId: string }>;
-  groupToolExecutionCard(input: { cardId: string; rootElementId: string; panels: FeishuToolExecutionPanel[]; sequence: number }): Promise<void>;
-  updateToolExecutionCard(input: { cardId: string; block: FeishuToolExecutionCardBlock; elementId: string; content: string; sequence: number }): Promise<void>;
-  setToolExecutionCardStreaming(input: { cardId: string; enabled: boolean; sequence: number }): Promise<void>;
+  createApprovalCard(input: { accountId?: string; receiveIdType: "open_id"; receiveId: string; requestId: string; title: string; content: string }): Promise<{ messageId: string; cardId: string }>;
+  deleteMessage(input: { accountId?: string; messageId: string }): Promise<void>;
+  createAgentRunCard(input: { accountId?: string; receiveIdType: "open_id"; receiveId: string; blocks: FeishuAgentRunCardBlocks }): Promise<{ messageId: string; cardId: string }>;
+  updateAgentRunCardBlocks(input: { accountId?: string; cardId: string; blocks: Partial<FeishuAgentRunCardBlocks>; sequence: number }): Promise<void>;
+  setAgentRunCardStreaming(input: { accountId?: string; cardId: string; enabled: boolean; sequence: number }): Promise<void>;
+  resolveAgentRunCardId(input: { accountId?: string; messageId: string }): Promise<{ cardId?: string }>;
+  createToolExecutionCard(input: { accountId?: string; receiveIdType: "open_id"; receiveId: string; toolName: string; call: string; result: string; titleElementId?: string; callElementId?: string; resultElementId?: string }): Promise<{ messageId: string; cardId: string }>;
+  groupToolExecutionCard(input: { accountId?: string; cardId: string; rootElementId: string; panels: FeishuToolExecutionPanel[]; sequence: number }): Promise<void>;
+  updateToolExecutionCard(input: { accountId?: string; cardId: string; block: FeishuToolExecutionCardBlock; elementId: string; content: string; sequence: number }): Promise<void>;
+  setToolExecutionCardStreaming(input: { accountId?: string; cardId: string; enabled: boolean; sequence: number }): Promise<void>;
 };
 
 export type FeishuStoredAudioAsset = {
@@ -226,6 +229,8 @@ export type FeishuPluginDeps = {
   onEvent(event: AgentEvent): Promise<void>;
   onLifecycleEvent?(event: FeishuMessageLifecycleEvent): Promise<void>;
   onCardAction?(event: FeishuCardActionEvent): Promise<unknown>;
+  /** 当前账户指针变化时回调（消息入站触发），由宿主负责持久化到账户配置处。 */
+  onActiveAccountChanged?(accountId: string): void | Promise<void>;
   log?(level: "info" | "warn" | "error", message: string): void;
   outbound?: FeishuOutboundClient;
   reactionClient?: FeishuReactionClient;

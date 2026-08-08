@@ -58,13 +58,27 @@ WebSocket client 也订阅消息生命周期回调：
 
 实际命令可通过 `FEISHU_PAIRING_COMMAND` 覆盖；默认是 `/pair alice`。
 
-第一次成功绑定会成为唯一用户/联系人。绑定保存到：
+配对按账户隔离：每个飞书账户（appId/appSecret）各自维护一个唯一联系人。第一次成功绑定会成为该账户下的唯一用户/联系人。绑定保存到：
 
 ```text
 memory-files/indexes/feishu-paired-contacts.json
 ```
 
-唯一绑定存在后，其他用户会被拒绝。
+同一账户下唯一绑定存在后，该账户下其他用户会被拒绝；不同账户互不影响。
+
+## 多账户
+
+`config.accounts` 支持多个账户，每个账户独立 WebSocket 连接、独立入站标准化（`event.source.accountId`）与独立配对。出站 `AgentOutput.target.accountId` 决定回复走哪个账户；未指定时使用当前账户指针（最后收到消息的账户），为空时用 `main`（无 `main` 时用第一个账户），指定了未配置的账户会显式报错。账户配置从 `FEISHU_ACCOUNTS`（JSON 对象，key 为账户 id）读取，也可在管理后台增删。
+
+## 当前账户指针与卡片路由
+
+收到消息时会更新"当前账户指针"，持久化在与账户配置同处的 `FEISHU_ACTIVE_ACCOUNT`（防抖写入，重启后从配置恢复）。无显式账户上下文的功能用该指针选择账户：
+
+- agent-run 指示卡：按触发该 run 的消息账户路由；无消息账户（心跳/主动行为）用指针。
+- tool 执行卡：按 tool call 的 `requester.accountId` 路由；无 requester 用指针。
+- 审批卡片：按请求传入的 `accountId` 路由；未传用指针。
+
+目标账户没有配对联系人时跳过或报错。
 
 ## 出站支持
 

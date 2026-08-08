@@ -47,8 +47,9 @@ type LarkModule = {
   Domain?: Record<string, unknown>;
 };
 
-export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps): FeishuClient {
+export function createFeishuClient(config: FeishuConfig, accountId: string, deps: FeishuClientDeps): FeishuClient {
   const time = deps.time ?? createCurrentTimeProvider("UTC");
+  const tag = `feishu:${accountId}`;
   let client: any;
   let wsClient: any;
   let lark: LarkModule | undefined;
@@ -61,16 +62,16 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
     async start() {
       if (!config.enabled) return;
       if (started) {
-        deps.log?.("info", "[feishu] websocket client already started");
+        deps.log?.("info", `[${tag}] websocket client already started`);
         return;
       }
       if (config.connectionMode !== "websocket") {
         throw new Error("Only Feishu websocket mode is planned for the first implementation");
       }
 
-      const account = config.accounts.main ?? Object.values(config.accounts)[0];
+      const account = config.accounts[accountId];
       if (!account?.appId || !account.appSecret) {
-        throw new Error("Feishu appId/appSecret are required");
+        throw new Error(`Feishu account "${accountId}" requires appId/appSecret`);
       }
 
       lark = await import("@larksuiteoapi/node-sdk") as unknown as LarkModule;
@@ -88,40 +89,40 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
 
       const eventDispatcher = new lark.EventDispatcher({}).register({
         "im.message.receive_v1": async (data: any) => {
-          deps.log?.("info", `[feishu] received im.message.receive_v1 ${data?.message?.message_id ?? ""}`);
+          deps.log?.("info", `[${tag}] received im.message.receive_v1 ${data?.message?.message_id ?? ""}`);
           await deps.onMessage(wrapLarkMessageEvent(data, time));
         },
         "im.message.reaction.created_v1": async (data: any) => {
-          deps.log?.("info", `[feishu] received im.message.reaction.created_v1 ${data?.message_id ?? data?.message?.message_id ?? ""}`);
+          deps.log?.("info", `[${tag}] received im.message.reaction.created_v1 ${data?.message_id ?? data?.message?.message_id ?? ""}`);
           await deps.onLifecycle?.("reaction.created", data);
         },
         "im.message.reaction.deleted_v1": async (data: any) => {
-          deps.log?.("info", `[feishu] received im.message.reaction.deleted_v1 ${data?.message_id ?? data?.message?.message_id ?? ""}`);
+          deps.log?.("info", `[${tag}] received im.message.reaction.deleted_v1 ${data?.message_id ?? data?.message?.message_id ?? ""}`);
           await deps.onLifecycle?.("reaction.deleted", data);
         },
         "im.message.message_read_v1": async (data: any) => {
-          deps.log?.("info", `[feishu] received im.message.message_read_v1 ${data?.message_id ?? data?.message?.message_id ?? ""}`);
+          deps.log?.("info", `[${tag}] received im.message.message_read_v1 ${data?.message_id ?? data?.message?.message_id ?? ""}`);
           await deps.onLifecycle?.("message.read", data);
         },
         "im.message.recalled_v1": async (data: any) => {
-          deps.log?.("info", `[feishu] received im.message.recalled_v1 ${data?.message_id ?? data?.message?.message_id ?? ""}`);
+          deps.log?.("info", `[${tag}] received im.message.recalled_v1 ${data?.message_id ?? data?.message?.message_id ?? ""}`);
           await deps.onLifecycle?.("message.recalled", data);
         },
         "card.action.trigger": async (data: any) => {
           const event = normalizeFeishuCardActionEvent(data);
-          deps.log?.("info", `[feishu] received card.action.trigger ${event.messageId}`);
+          deps.log?.("info", `[${tag}] received card.action.trigger ${event.messageId}`);
           return await deps.onCardAction?.(event);
         }
       });
 
       wsClient.start({ eventDispatcher });
       started = true;
-      deps.log?.("info", "[feishu] websocket client started");
+      deps.log?.("info", `[${tag}] websocket client started`);
     },
     async stop() {
       if (!config.enabled) return;
       if (!started) {
-        deps.log?.("info", "[feishu] websocket client already stopped");
+        deps.log?.("info", `[${tag}] websocket client already stopped`);
         return;
       }
       if (wsClient?.close) {
@@ -129,7 +130,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
       }
       wsClient = undefined;
       started = false;
-      deps.log?.("info", "[feishu] websocket client stopped");
+      deps.log?.("info", `[${tag}] websocket client stopped`);
     },
     async sendText(input) {
       const result = await sendMessage(client, {
@@ -138,7 +139,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         msgType: "text",
         content: { text: input.text }
       }, time);
-      deps.log?.("info", `[feishu] sent text to ${input.receiveIdType}:${input.receiveId}`);
+      deps.log?.("info", `[${tag}] sent text to ${input.receiveIdType}:${input.receiveId}`);
       return result;
     },
     async sendMarkdown(input) {
@@ -148,7 +149,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         msgType: "interactive",
         content: buildMarkdownCard(input.markdown)
       }, time);
-      deps.log?.("info", `[feishu] sent markdown card to ${input.receiveIdType}:${input.receiveId}`);
+      deps.log?.("info", `[${tag}] sent markdown card to ${input.receiveIdType}:${input.receiveId}`);
       return result;
     },
     async sendImage(input) {
@@ -169,7 +170,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         msgType: "image",
         content: { image_key: imageKey }
       }, time);
-      deps.log?.("info", `[feishu] sent image ${path.basename(imagePath)} to ${input.receiveIdType}:${input.receiveId}`);
+      deps.log?.("info", `[${tag}] sent image ${path.basename(imagePath)} to ${input.receiveIdType}:${input.receiveId}`);
       return result;
     },
     async sendAudio(input) {
@@ -187,7 +188,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         msgType: "audio",
         content: { file_key: uploaded }
       }, time);
-      deps.log?.("info", `[feishu] sent audio ${path.basename(audioPath)} to ${input.receiveIdType}:${input.receiveId}`);
+      deps.log?.("info", `[${tag}] sent audio ${path.basename(audioPath)} to ${input.receiveIdType}:${input.receiveId}`);
       return result;
     },
     async sendFile(input) {
@@ -204,7 +205,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         msgType: "file",
         content: { file_key: uploaded }
       }, time);
-      deps.log?.("info", `[feishu] sent file ${input.filename} to ${input.receiveIdType}:${input.receiveId}`);
+      deps.log?.("info", `[${tag}] sent file ${input.filename} to ${input.receiveIdType}:${input.receiveId}`);
       return result;
     },
     async downloadAudioResource(input) {
@@ -224,7 +225,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
       });
       if (!resource?.writeFile) throw new Error("Feishu audio resource download did not return writeFile");
       await resource.writeFile(filePath);
-      deps.log?.("info", `[feishu] downloaded audio ${input.messageId} to ${assetId}`);
+      deps.log?.("info", `[${tag}] downloaded audio ${input.messageId} to ${assetId}`);
       return {
         assetId,
         filePath,
@@ -246,7 +247,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
       });
       if (!resource?.writeFile) throw new Error(`Feishu ${input.type} resource download did not return writeFile`);
       await resource.writeFile(input.filePath);
-      deps.log?.("info", `[feishu] downloaded ${input.type} ${input.messageId} to ${input.filePath}`);
+      deps.log?.("info", `[${tag}] downloaded ${input.type} ${input.messageId} to ${input.filePath}`);
     },
     async addReaction(input) {
       assertStarted(client);
@@ -261,7 +262,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         }
       });
       const reactionId = result?.reaction_id ?? result?.data?.reaction_id;
-      deps.log?.("info", `[feishu] added ${input.emojiType} reaction to ${input.messageId}`);
+      deps.log?.("info", `[${tag}] added ${input.emojiType} reaction to ${input.messageId}`);
       return { reactionId };
     },
     async removeReaction(input) {
@@ -272,7 +273,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
           reaction_id: input.reactionId
         }
       });
-      deps.log?.("info", `[feishu] removed reaction ${input.reactionId} from ${input.messageId}`);
+      deps.log?.("info", `[${tag}] removed reaction ${input.reactionId} from ${input.messageId}`);
     },
     async createApprovalCard(input) {
       assertStarted(client);
@@ -288,14 +289,14 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         content: { type: "card", data: { card_id: cardId } }
       }, time);
       if (!message.messageId) throw new Error("Feishu approval card message create did not return message_id");
-      deps.log?.("info", `[feishu] created approval card ${cardId} for ${input.receiveIdType}:${input.receiveId}`);
+      deps.log?.("info", `[${tag}] created approval card ${cardId} for ${input.receiveIdType}:${input.receiveId}`);
       return { messageId: message.messageId, cardId };
     },
     async deleteMessage(input) {
       assertStarted(client);
       const result = await client.im.v1.message.delete({ path: { message_id: input.messageId } });
       if (result?.code && result.code !== 0) throw new Error(`Feishu message delete failed (code=${result.code} msg=${result.msg ?? "unknown"})`);
-      deps.log?.("info", `[feishu] deleted message ${input.messageId}`);
+      deps.log?.("info", `[${tag}] deleted message ${input.messageId}`);
     },
     async createAgentRunCard(input) {
       assertStarted(client);
@@ -316,7 +317,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         }
       }, time);
       if (!message.messageId) throw new Error("Feishu agent run card message create did not return message_id");
-      deps.log?.("info", `[feishu] created agent run card ${cardId} for ${input.receiveIdType}:${input.receiveId}`);
+      deps.log?.("info", `[${tag}] created agent run card ${cardId} for ${input.receiveIdType}:${input.receiveId}`);
       return {
         messageId: message.messageId,
         cardId
@@ -341,7 +342,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
           uuid: `agent_run_blocks_${input.cardId}_${input.sequence}`
         }
       });
-      deps.log?.("info", `[feishu] batch updated agent run card ${input.cardId} blocks=${Object.keys(input.blocks).join(",")} sequence=${input.sequence}`);
+      deps.log?.("info", `[${tag}] batch updated agent run card ${input.cardId} blocks=${Object.keys(input.blocks).join(",")} sequence=${input.sequence}`);
     },
     async setAgentRunCardStreaming(input) {
       assertStarted(client);
@@ -355,7 +356,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
           uuid: `agent_run_streaming_${input.cardId}_${input.sequence}`
         }
       });
-      deps.log?.("info", `[feishu] set agent run card ${input.cardId} streaming=${input.enabled} sequence=${input.sequence}`);
+      deps.log?.("info", `[${tag}] set agent run card ${input.cardId} streaming=${input.enabled} sequence=${input.sequence}`);
     },
     async resolveAgentRunCardId(input) {
       assertStarted(client);
@@ -391,7 +392,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
         }
       }, time);
       if (!message.messageId) throw new Error("Feishu tool execution card message create did not return message_id");
-      deps.log?.("info", `[feishu] created tool execution card ${cardId} for ${input.receiveIdType}:${input.receiveId}`);
+      deps.log?.("info", `[${tag}] created tool execution card ${cardId} for ${input.receiveIdType}:${input.receiveId}`);
       return {
         messageId: message.messageId,
         cardId
@@ -410,7 +411,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
           uuid: `tool_execution_group_${input.cardId}_${input.sequence}`
         }
       });
-      deps.log?.("info", `[feishu] grouped ${input.panels.length} tool execution panels ${input.cardId} sequence=${input.sequence}`);
+      deps.log?.("info", `[${tag}] grouped ${input.panels.length} tool execution panels ${input.cardId} sequence=${input.sequence}`);
     },
     async updateToolExecutionCard(input) {
       assertStarted(client);
@@ -446,7 +447,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
           }
         });
       }
-      deps.log?.("info", `[feishu] updated tool execution card ${input.cardId} block=${input.block} sequence=${input.sequence}`);
+      deps.log?.("info", `[${tag}] updated tool execution card ${input.cardId} block=${input.block} sequence=${input.sequence}`);
     },
     async setToolExecutionCardStreaming(input) {
       assertStarted(client);
@@ -460,7 +461,7 @@ export function createFeishuClient(config: FeishuConfig, deps: FeishuClientDeps)
           uuid: `tool_execution_streaming_${input.cardId}_${input.sequence}`
         }
       });
-      deps.log?.("info", `[feishu] set tool execution card ${input.cardId} streaming=${input.enabled} sequence=${input.sequence}`);
+      deps.log?.("info", `[${tag}] set tool execution card ${input.cardId} streaming=${input.enabled} sequence=${input.sequence}`);
     }
   };
 }

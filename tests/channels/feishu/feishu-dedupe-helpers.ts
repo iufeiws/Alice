@@ -1,5 +1,5 @@
 import type { AgentOutput } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
-import type { FeishuPairingStore } from "../../../src/channels/feishu/src/pairing.js";
+import type { FeishuPairingStore, FeishuPairedContact } from "../../../src/channels/feishu/src/pairing.js";
 import type { FeishuAudioMessageEvent, FeishuConfig, FeishuTextMessageEvent } from "../../../src/channels/feishu/src/types.js";
 
 export function feishuConfig(): FeishuConfig {
@@ -90,18 +90,20 @@ export function textOutput(sessionId: string, text: string): AgentOutput {
 }
 
 export function pairedStore(): FeishuPairingStore {
+  const contacts: FeishuPairedContact[] = [{
+    id: "feishu:dm:ou_user",
+    plugin: "feishu" as const,
+    userId: "ou_user",
+    channelId: "oc_chat",
+    sessionId: "feishu:dm:ou_user",
+    scope: "dm" as const,
+    pairedAt: "2026-05-24T00:00:00.000Z",
+    lastSeenAt: "2026-05-24T00:00:00.000Z",
+    canInitiate: true
+  }];
   return {
-    list: () => [{
-      id: "feishu:dm:ou_user",
-      plugin: "feishu",
-      userId: "ou_user",
-      channelId: "oc_chat",
-      sessionId: "feishu:dm:ou_user",
-      scope: "dm",
-      pairedAt: "2026-05-24T00:00:00.000Z",
-      lastSeenAt: "2026-05-24T00:00:00.000Z",
-      canInitiate: true
-    }],
+    list: () => contacts,
+    getPaired: (accountId) => accountId ? contacts.find((contact) => contact.accountId === accountId) : contacts[0],
     isPaired: () => true,
     pairFromEvent: () => {
       throw new Error("not expected");

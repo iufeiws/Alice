@@ -77,7 +77,7 @@ createFeishuClient(config, deps): FeishuClient
 createFeishuPairingStore(path, io): FeishuPairingStore
 ```
 
-只允许绑定一个联系人。`pairFromEvent()` 接受第一个联系人，刷新同一联系人，并拒绝所有其他联系人。
+配对按账户隔离：`pairFromEvent()` 接受某账户下的第一个联系人，刷新该账户下的同一联系人，并拒绝该账户下其他联系人；不同账户互不影响。
 
 ```ts
 isPairingCommand(event, config): boolean

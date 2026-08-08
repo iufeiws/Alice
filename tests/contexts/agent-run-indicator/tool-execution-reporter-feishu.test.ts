@@ -46,7 +46,7 @@ test("Feishu tool execution reporter streams progress then writes the result", a
   const client = fakeFeishuCardClient();
   const reporter = createFeishuToolExecutionReporter({
     client,
-    pairingStore: { list: () => [{ userId: "ou_user" }] } as any,
+    pairingStore: { list: () => [{ userId: "ou_user" }], getPaired: () => ({ userId: "ou_user" }) } as any,
     throttleMs: 1000
   });
   const session = await reporter.begin({ id: "bash", toolName: "Bash", input: { command: "npm test" } });
@@ -72,7 +72,7 @@ test("Feishu tool execution reporter recursively formats nested objects with ind
   const client = fakeFeishuCardClient();
   const reporter = createFeishuToolExecutionReporter({
     client,
-    pairingStore: { list: () => [{ userId: "ou_user" }] } as any
+    pairingStore: { list: () => [{ userId: "ou_user" }], getPaired: () => ({ userId: "ou_user" }) } as any
   });
   const session = await reporter.begin({
     id: "nested",
@@ -97,7 +97,7 @@ test("Feishu tool execution reporter selects output or error from ok state", asy
   const client = fakeFeishuCardClient();
   const reporter = createFeishuToolExecutionReporter({
     client,
-    pairingStore: { list: () => [{ userId: "ou_user" }] } as any
+    pairingStore: { list: () => [{ userId: "ou_user" }], getPaired: () => ({ userId: "ou_user" }) } as any
   });
   const session = await reporter.begin({ id: "failed", toolName: "Read", input: {} });
 
@@ -120,7 +120,7 @@ test("Feishu tool execution reporter keeps markdown fences inside progress", asy
   const client = fakeFeishuCardClient();
   const reporter = createFeishuToolExecutionReporter({
     client,
-    pairingStore: { list: () => [{ userId: "ou_user" }] } as any,
+    pairingStore: { list: () => [{ userId: "ou_user" }], getPaired: () => ({ userId: "ou_user" }) } as any,
     throttleMs: 1000
   });
   const session = await reporter.begin({ id: "ticks", toolName: "Bash", input: {} });
@@ -136,7 +136,7 @@ test("Feishu tool execution reporter groups only multiple consecutive tools and 
   const client = fakeFeishuCardClient();
   const reporter = createFeishuToolExecutionReporter({
     client,
-    pairingStore: { list: () => [{ userId: "ou_user" }] } as any,
+    pairingStore: { list: () => [{ userId: "ou_user" }], getPaired: () => ({ userId: "ou_user" }) } as any,
     throttleMs: 1000
   });
 
@@ -161,7 +161,7 @@ test("Feishu tool execution reporter starts a new card after the sequence ends",
   const client = fakeFeishuCardClient();
   const reporter = createFeishuToolExecutionReporter({
     client,
-    pairingStore: { list: () => [{ userId: "ou_user" }] } as any
+    pairingStore: { list: () => [{ userId: "ou_user" }], getPaired: () => ({ userId: "ou_user" }) } as any
   });
 
   const first = await reporter.begin({ id: "one", toolName: "Bash", input: {} });
@@ -173,4 +173,54 @@ test("Feishu tool execution reporter starts a new card after the sequence ends",
 
   assert.equal(client.calls.filter((call) => call.kind === "create").length, 2);
   assert.equal(client.calls.some((call) => call.kind === "group"), false);
+});
+
+test("Feishu tool execution reporter routes by the tool call requester account", async () => {
+  const client = fakeFeishuCardClient();
+  const reporter = createFeishuToolExecutionReporter({
+    client,
+    pairingStore: {
+      list: () => [
+        { userId: "ou_main", accountId: "main" },
+        { userId: "ou_work", accountId: "work" }
+      ],
+      getPaired: (accountId?: string) => accountId === "work" ? { userId: "ou_work", accountId: "work" } : { userId: "ou_main", accountId: "main" }
+    } as any,
+    throttleMs: 1000
+  });
+
+  const session = await reporter.begin({
+    id: "bash",
+    toolName: "Bash",
+    input: { command: "npm test" },
+    requester: { plugin: "feishu", accountId: "work" }
+  } as any);
+  assert.ok(session);
+
+  const created = client.calls.find((call) => call.kind === "create");
+  assert.ok(created?.kind === "create");
+  assert.equal(created.receiveId, "ou_work", "tool card must go to the requester account's paired user");
+});
+
+test("Feishu tool execution reporter uses the resolved default account without a requester", async () => {
+  const client = fakeFeishuCardClient();
+  const reporter = createFeishuToolExecutionReporter({
+    client,
+    pairingStore: {
+      list: () => [
+        { userId: "ou_main", accountId: "main" },
+        { userId: "ou_work", accountId: "work" }
+      ],
+      getPaired: (accountId?: string) => accountId === "work" ? { userId: "ou_work", accountId: "work" } : { userId: "ou_main", accountId: "main" }
+    } as any,
+    resolveAccount: () => "work",
+    throttleMs: 1000
+  });
+
+  const session = await reporter.begin({ id: "bash", toolName: "Bash", input: {} } as any);
+  assert.ok(session);
+
+  const created = client.calls.find((call) => call.kind === "create");
+  assert.ok(created?.kind === "create");
+  assert.equal(created.receiveId, "ou_work", "tool card without a requester must use the resolved default account");
 });

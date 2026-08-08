@@ -500,3 +500,46 @@ test("Feishu agent run indicator is unavailable without a unique paired open_id 
   assert.equal(await indicator.begin({ round: 0 }), undefined);
   assert.deepEqual(client.calls, []);
 });
+
+test("Feishu agent run indicator routes by the triggering event account", async () => {
+  const store = memoryCardStore();
+  const client = fakeCardClient();
+  const indicator = createTestFeishuIndicator({
+    client,
+    cardStore: store,
+    throttleMs: 10_000,
+    getState: () => ({ state: "waiting" }),
+    pairingStore: pairedStore({ contacts: [
+      { id: "feishu:dm:ou_main", plugin: "feishu", accountId: "main", userId: "ou_main", channelId: "oc_main", sessionId: "feishu:dm:ou_main", scope: "dm", pairedAt: fixedNow, lastSeenAt: fixedNow, canInitiate: true },
+      { id: "feishu:dm:ou_work", plugin: "feishu", accountId: "work", userId: "ou_work", channelId: "oc_work", sessionId: "feishu:dm:ou_work", scope: "dm", pairedAt: fixedNow, lastSeenAt: fixedNow, canInitiate: true }
+    ] })
+  });
+
+  const session = await indicator.begin({ round: 0, accountId: "work" });
+  assert.ok(session);
+  const create = client.calls.find((call) => call.kind === "create");
+  assert.ok(create?.kind === "create");
+  assert.equal(create.receiveId, "ou_work", "indicator card must go to the triggering account's paired user");
+});
+
+test("Feishu agent run indicator uses the resolved default account when no event account", async () => {
+  const store = memoryCardStore();
+  const client = fakeCardClient();
+  const indicator = createTestFeishuIndicator({
+    client,
+    cardStore: store,
+    throttleMs: 10_000,
+    getState: () => ({ state: "waiting" }),
+    resolveAccount: () => "work",
+    pairingStore: pairedStore({ contacts: [
+      { id: "feishu:dm:ou_main", plugin: "feishu", accountId: "main", userId: "ou_main", channelId: "oc_main", sessionId: "feishu:dm:ou_main", scope: "dm", pairedAt: fixedNow, lastSeenAt: fixedNow, canInitiate: true },
+      { id: "feishu:dm:ou_work", plugin: "feishu", accountId: "work", userId: "ou_work", channelId: "oc_work", sessionId: "feishu:dm:ou_work", scope: "dm", pairedAt: fixedNow, lastSeenAt: fixedNow, canInitiate: true }
+    ] })
+  });
+
+  const session = await indicator.begin({ round: 0 });
+  assert.ok(session);
+  const create = client.calls.find((call) => call.kind === "create");
+  assert.ok(create?.kind === "create");
+  assert.equal(create.receiveId, "ou_work", "indicator card without an event account must use the resolved default account");
+});

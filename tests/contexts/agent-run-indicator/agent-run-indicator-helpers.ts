@@ -169,6 +169,7 @@ export function pairedStore(input: { contacts?: ReturnType<FeishuPairingStore["l
   }];
   return {
     list: () => contacts,
+    getPaired: (accountId) => accountId ? contacts.find((contact) => contact.accountId === accountId) : contacts[0],
     isPaired: () => true,
     pairFromEvent() {
       throw new Error("not expected");
@@ -182,6 +183,7 @@ export function createTestFeishuIndicator(input: {
   pairingStore?: FeishuPairingStore;
   cardStore: FeishuAgentRunIndicatorCardStore;
   throttleMs?: number;
+  resolveAccount?: () => string | undefined;
   getState?: () => { state: string; last?: string };
 }) {
   return createFeishuDynamicCardAgentRunIndicator({
@@ -191,6 +193,7 @@ export function createTestFeishuIndicator(input: {
     cardStore: input.cardStore,
     time: createCurrentTimeProvider("UTC", () => new Date(fixedNow)),
     throttleMs: input.throttleMs,
+    resolveAccount: input.resolveAccount,
     getState: input.getState ?? (() => ({ state: "waiting" }))
   });
 }

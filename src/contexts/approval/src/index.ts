@@ -5,6 +5,8 @@ import type { FeishuPairingStore } from "../../../channels/feishu/src/pairing.js
 export type ApprovalRequest = {
   title: string;
   content: string;
+  /** 审批请求来源账户；未提供时用当前账户指针（默认账户）。 */
+  accountId?: string;
 };
 
 export type ApprovalDecision =
@@ -17,6 +19,7 @@ export type ApprovalService = {
 
 type PendingApproval = ApprovalRequest & {
   approverOpenId: string;
+  accountId?: string;
   messageId?: string;
   resolve(decision: ApprovalDecision): void;
 };
@@ -24,6 +27,8 @@ type PendingApproval = ApprovalRequest & {
 export function createFeishuApprovalService(input: {
   client: Pick<FeishuDynamicCardClient, "isStarted" | "createApprovalCard" | "deleteMessage">;
   pairingStore: FeishuPairingStore;
+  /** 无显式账户上下文时解析默认账户（当前账户指针）。 */
+  resolveAccount?(): string | undefined;
 }): ApprovalService & { handleCardAction(event: FeishuCardActionEvent): Promise<unknown> } {
   const pending = new Map<string, PendingApproval>();
 
@@ -38,13 +43,15 @@ export function createFeishuApprovalService(input: {
     if (!title) throw new Error("Approval title is required");
     if (!content) throw new Error("Approval content is required");
     if (!input.client.isStarted()) throw new Error("Feishu client is not started");
-    const approverOpenId = input.pairingStore.list()[0]?.userId;
+    const accountId = request.accountId ?? input.resolveAccount?.();
+    const contact = input.pairingStore.getPaired(accountId) ?? input.pairingStore.getPaired();
+    const approverOpenId = contact?.userId;
     if (!approverOpenId) throw new Error("Feishu approval requires a paired user with open_id");
 
     const requestId = randomUUID();
     let resolve!: (decision: ApprovalDecision) => void;
     const decision = new Promise<ApprovalDecision>((done) => { resolve = done; });
-    const approval: PendingApproval = { title, content, approverOpenId, resolve };
+    const approval: PendingApproval = { title, content, approverOpenId, accountId: contact.accountId, resolve };
     pending.set(requestId, approval);
     try {
       const card = await input.client.createApprovalCard({
@@ -52,7 +59,8 @@ export function createFeishuApprovalService(input: {
         receiveId: approverOpenId,
         requestId,
         title,
-        content
+        content,
+        ...(contact.accountId ? { accountId: contact.accountId } : {})
       });
       approval.messageId = card.messageId;
     } catch (error) {
@@ -67,6 +75,7 @@ export function createFeishuApprovalService(input: {
     if (!action) return toast("无效的审批操作", "error");
     const approval = pending.get(action.requestId);
     if (!approval) return toast("审批已失效", "error");
+    if (approval.accountId && event.accountId && event.accountId !== approval.accountId) return toast("审批账户不匹配", "error");
     if (event.operatorOpenId !== approval.approverOpenId) return toast("你不是该请求的审批人", "error");
     if (!event.messageId || event.messageId !== approval.messageId) return toast("审批卡片与请求不匹配", "error");
 
@@ -74,7 +83,10 @@ export function createFeishuApprovalService(input: {
     const decision: ApprovalDecision = { status: action.decision, comment };
     pending.delete(action.requestId);
     try {
-      await input.client.deleteMessage({ messageId: event.messageId });
+      await input.client.deleteMessage({
+        messageId: event.messageId,
+        ...(approval.accountId ? { accountId: approval.accountId } : {})
+      });
     } catch (error) {
       pending.set(action.requestId, approval);
       throw error;

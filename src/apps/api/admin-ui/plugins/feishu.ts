@@ -5,11 +5,10 @@ export function renderFeishuPluginPanel(): string {
                 <label><input id="feishuEnabled" name="enabled" type="checkbox" /> Enabled</label>
                 <label for="feishuConnectionMode">Connection Mode</label>
                 <input id="feishuConnectionMode" name="connectionMode" autocomplete="off" />
-                <label for="feishuAppId">App ID</label>
-                <input id="feishuAppId" name="appId" autocomplete="off" />
-                <label for="feishuAppSecret">App Secret</label>
-                <input id="feishuAppSecret" name="appSecret" type="password" placeholder="Leave blank to keep unchanged" autocomplete="new-password" />
                 <label><input id="feishuRequireMention" name="requireMention" type="checkbox" /> Require mention in groups</label>
+                <h3>Accounts</h3>
+                <div id="feishu-accounts"></div>
+                <button type="button" id="feishu-add-account">Add Account</button>
                 <button type="submit">Save</button>
                 <button type="button" id="feishu-start">Start</button>
                 <button type="button" id="feishu-stop" class="secondary">Stop</button>

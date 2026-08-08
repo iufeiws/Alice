@@ -65,7 +65,7 @@ export type AdminRuntimeContext = {
   cancelActiveLLMRun(): { ok: true; hadActiveRequest: boolean };
   clearMemoryInductionSession(): void;
   outputRouter: { listChannels(): string[] };
-  feishuPairingStore: { list(): Array<{ channelId?: string; userId?: string; sessionId?: string }> };
+  feishuPairingStore: { list(): Array<{ accountId?: string; channelId?: string; userId?: string; sessionId?: string }> };
   coreProfileStore: CoreProfileStore;
   promptProfileStore: PromptProfileStore;
   talkPromptProfileStore: PromptProfileStore;
@@ -103,6 +103,7 @@ export type AdminRuntimeContext = {
     start(): Promise<void>;
     stop(): Promise<void>;
     send(output: any): Promise<unknown>;
+    getAccountStatuses?(): Array<{ accountId: string; configured: boolean; started: boolean }>;
   };
   wechat: {
     start(): Promise<void>;

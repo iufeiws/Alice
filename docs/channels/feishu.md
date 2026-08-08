@@ -13,7 +13,7 @@
 - reaction/read/recall 生命周期事件。
 - 近期消息去重。
 - DM/群聊访问策略。
-- 唯一联系人配对。
+- 按账户隔离的唯一联系人配对（多账户同时在线）。
 
 生命周期事件只更新已有消息状态，不作为独立 Core 消息。
 
@@ -44,12 +44,15 @@
 - `src/channels/feishu/src/handlers/message.ts`：文本消息规范化。
 - `src/channels/feishu/src/handlers/lifecycle.ts`：生命周期事件规范化。
 - `src/channels/feishu/src/renderer.ts`：`AgentOutput` 到飞书发送计划。
-- `src/channels/feishu/src/pairing.ts`：唯一联系人绑定。
+- `src/channels/feishu/src/pairing.ts`：按账户隔离的联系人绑定。
 - `src/channels/feishu/src/policy.ts`：访问策略。
 
 ## 配置与持久化
 
-- 唯一联系人绑定保存到 `memory-files/indexes/feishu-paired-contacts.json`。
+- 多账户配置保存在 `FEISHU_ACCOUNTS`（JSON 对象，key 为账户 id），可在管理后台增删账户。
+- 当前账户指针 `FEISHU_ACTIVE_ACCOUNT`（与账户配置同处）记录最后收到消息的账户，重启后恢复，用于无显式账户上下文时的账户选择。
+- 每个账户各自维护唯一联系人绑定，保存到 `memory-files/indexes/feishu-paired-contacts.json`。
+- 出站 `AgentOutput.target.accountId` 决定回复走哪个账户；未指定时用当前账户指针（为空用 `main` 或第一个账户），指定未配置账户会显式报错。
 - 普通聊天消息保存到 conversation-hub 消息表。
 - 追加式事件和调试日志不进入 LLM 上下文。
 

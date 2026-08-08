@@ -100,7 +100,7 @@ export function resolvePromptPreviewTarget(context: AdminRoutesContext): { plugi
   if (contact) {
     return {
       plugin: "feishu",
-      accountId: "main",
+      accountId: contact.accountId ?? "main",
       channelId: contact.channelId,
       userId: contact.channelId ? undefined : contact.userId,
       sessionId: contact.sessionId ?? contact.channelId ?? contact.userId ?? "preview"

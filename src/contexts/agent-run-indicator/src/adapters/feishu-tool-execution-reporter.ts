@@ -5,6 +5,8 @@ import type { ToolCall, ToolExecutionReporter, ToolExecutionReportSession, ToolR
 export function createFeishuToolExecutionReporter(input: {
   client: FeishuDynamicCardClient;
   pairingStore: FeishuPairingStore;
+  /** 无显式账户上下文时解析默认账户（当前账户指针）。 */
+  resolveAccount?(): string | undefined;
   throttleMs?: number;
   outputLimitChars?: number;
   log?(level: "info" | "warn" | "error", message: string): void;
@@ -21,10 +23,10 @@ export function createFeishuToolExecutionReporter(input: {
   return {
     async begin(call) {
       if (!input.client.isStarted()) return undefined;
-      const receiveId = pairedFeishuUserId();
-      if (!receiveId) return undefined;
+      const contact = pairedFeishuContact(call.requester?.accountId ?? input.resolveAccount?.());
+      if (!contact?.userId) return undefined;
       try {
-        const created = await ensureCard(receiveId, call);
+        const created = await ensureCard(contact.userId, contact.accountId, call);
         return createSession(created.card, created.panel);
       } catch (error) {
         input.log?.("warn", `[tool-execution] Feishu card begin failed: ${errorMessage(error)}`);
@@ -42,7 +44,7 @@ export function createFeishuToolExecutionReporter(input: {
     }
   };
 
-  async function ensureCard(receiveId: string, call: ToolCall): Promise<{ card: ToolExecutionCardState; panel: FeishuToolExecutionPanel }> {
+  async function ensureCard(receiveId: string, accountId: string | undefined, call: ToolCall): Promise<{ card: ToolExecutionCardState; panel: FeishuToolExecutionPanel }> {
     if (currentCard?.idleTimer) {
       clearTimeout(currentCard.idleTimer);
       currentCard.idleTimer = undefined;
@@ -51,7 +53,7 @@ export function createFeishuToolExecutionReporter(input: {
     const initialResult = renderCode("");
     if (!currentCard) {
       const amCreator = cardCreation === undefined;
-      const card = await ensureCardCreated(receiveId, call, renderedCall, initialResult);
+      const card = await ensureCardCreated(receiveId, accountId, call, renderedCall, initialResult);
       if (amCreator) {
         card.activeSessions += 1;
         return { card, panel: card.panels[0]! };
@@ -63,7 +65,7 @@ export function createFeishuToolExecutionReporter(input: {
     return await appendPanel(currentCard, call, renderedCall, initialResult);
   }
 
-  function ensureCardCreated(receiveId: string, call: ToolCall, renderedCall: string, initialResult: string): Promise<ToolExecutionCardState> {
+  function ensureCardCreated(receiveId: string, accountId: string | undefined, call: ToolCall, renderedCall: string, initialResult: string): Promise<ToolExecutionCardState> {
     if (cardCreation) return cardCreation;
     const ids = firstPanelIds();
     const firstPanel = createPanel(call.toolName, renderedCall, initialResult, ids);
@@ -76,9 +78,11 @@ export function createFeishuToolExecutionReporter(input: {
         result: firstPanel.result,
         titleElementId: rootElementId,
         callElementId: firstPanel.callElementId,
-        resultElementId: firstPanel.resultElementId
+        resultElementId: firstPanel.resultElementId,
+        accountId
       });
       const card: ToolExecutionCardState = {
+        accountId,
         cardId: created.cardId,
         panels: [firstPanel],
         nextPanelIndex: 2,
@@ -106,7 +110,8 @@ export function createFeishuToolExecutionReporter(input: {
         cardId: card.cardId,
         rootElementId,
         panels: card.panels,
-        sequence: takeSequence(card)
+        sequence: takeSequence(card),
+        accountId: card.accountId
       }));
     } catch (error) {
       card.panels.pop();
@@ -131,7 +136,8 @@ export function createFeishuToolExecutionReporter(input: {
         block: "result",
         elementId: panel.resultElementId,
         content,
-        sequence: takeSequence(card)
+        sequence: takeSequence(card),
+        accountId: card.accountId
       }));
     };
     const markFailed = (error: unknown): void => {
@@ -158,7 +164,8 @@ export function createFeishuToolExecutionReporter(input: {
             block: "title",
             elementId: card.panels.length === 1 ? rootElementId : panel.titleElementId,
             content: `${panel.toolName}: ${state}`,
-            sequence: takeSequence(card)
+            sequence: takeSequence(card),
+            accountId: card.accountId
           }));
         }
       } catch (error) {
@@ -189,7 +196,7 @@ export function createFeishuToolExecutionReporter(input: {
 
   async function setStreaming(card: ToolExecutionCardState, enabled: boolean): Promise<void> {
     if (card.streaming === enabled) return;
-    await enqueue(card, () => input.client.setToolExecutionCardStreaming({ cardId: card.cardId, enabled, sequence: takeSequence(card) }));
+    await enqueue(card, () => input.client.setToolExecutionCardStreaming({ cardId: card.cardId, enabled, sequence: takeSequence(card), accountId: card.accountId }));
     card.streaming = enabled;
   }
 
@@ -222,9 +229,10 @@ export function createFeishuToolExecutionReporter(input: {
     }
   }
 
-  function pairedFeishuUserId(): string | undefined {
+  function pairedFeishuContact(accountId?: string) {
     const contacts = input.pairingStore.list();
-    return contacts.length === 1 ? contacts[0].userId || undefined : undefined;
+    if (contacts.length === 0) return undefined;
+    return input.pairingStore.getPaired(accountId) ?? contacts[0];
   }
 
   function trimOutput(value: string): string {
@@ -233,6 +241,7 @@ export function createFeishuToolExecutionReporter(input: {
 }
 
 type ToolExecutionCardState = {
+  accountId?: string;
   cardId: string;
   panels: FeishuToolExecutionPanel[];
   nextPanelIndex: number;

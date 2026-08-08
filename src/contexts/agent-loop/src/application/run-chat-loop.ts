@@ -2,7 +2,7 @@ import type { AgentEvent, ToolResult } from "../contracts/agent-contracts.js";
 import type { LLMChatInput, LLMChatResult, LLMClient, LLMStreamHandlers } from "../../../llm-gateway/src/index.js";
 import type { LLMRequestLogEntry } from "../../../llm-session/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
-import type { AgentRunIndicator, AgentRunIndicatorOutput, AgentRunIndicatorSession } from "../../../agent-run-indicator/src/index.js";
+import type { AgentRunIndicator, AgentRunIndicatorBeginInput, AgentRunIndicatorOutput, AgentRunIndicatorSession } from "../../../agent-run-indicator/src/index.js";
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 import type { PromptProfile } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
 import { type LLMRequestSender, type LLMToolLoopContinuation } from "../../../llm-gateway/src/llm-tool-loop.js";
@@ -106,6 +106,8 @@ export type ChatAgentLoopInput = {
   onLLMRequestPrepared?(input: LLMChatInput): LLMRequestLogEntry | undefined | void;
   onLLMResponseReceived?(result: LLMChatResult, request?: LLMRequestLogEntry): void;
   agentRunIndicator?: AgentRunIndicator;
+  /** 触发该 run 的消息来源账户（用于按账户路由 agent-run 指示卡）。 */
+  runAccountId?: string;
   signal?: AbortSignal;
   onAgentRunIndicatorError?(error: unknown): void;
   onLLMLog?(event: {
@@ -145,7 +147,8 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
     indicator: input.agentRunIndicator,
     sendRequest: baseSendRequest,
     isCancelled: input.isLLMRunCancelled,
-    onError: input.onAgentRunIndicatorError
+    onError: input.onAgentRunIndicatorError,
+    runAccountId: input.runAccountId
   });
   const spec: AgentFunctionCallLoopSpec = {
     initialMessages: session.messages,
@@ -302,6 +305,7 @@ function createAgentRunIndicatorRequestSender(input: {
   sendRequest: LLMRequestSender;
   isCancelled?(): boolean;
   onError?(error: unknown): void;
+  runAccountId?: string;
 }): LLMRequestSender {
   if (!input.indicator) return input.sendRequest;
   const indicator = input.indicator;
@@ -309,7 +313,8 @@ function createAgentRunIndicatorRequestSender(input: {
   return async (request) => {
     let session = await beginIndicator(indicator, {
       agentId: request.agentId,
-      round: request.round
+      round: request.round,
+      accountId: input.runAccountId
     }, input.onError);
     const streamHandlers = withAgentRunIndicatorStreamHandlers(request.streamHandlers, {
       getSession: () => session,
@@ -339,7 +344,7 @@ function createAgentRunIndicatorRequestSender(input: {
 
 async function beginIndicator(
   indicator: AgentRunIndicator,
-  beginInput: { agentId?: string; round: number },
+  beginInput: AgentRunIndicatorBeginInput,
   onError: ((error: unknown) => void) | undefined
 ): Promise<AgentRunIndicatorSession | undefined> {
   try {

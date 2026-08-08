@@ -4,7 +4,7 @@ type AppConfigLike = {
 };
 
 type FeishuPairingStoreLike = {
-  list(): Array<{ channelId?: string; userId?: string; sessionId?: string }>;
+  list(): Array<{ accountId?: string; channelId?: string; userId?: string; sessionId?: string }>;
 };
 
 type WeChatStateStoreLike = {
@@ -43,7 +43,7 @@ export function createDefaultTargetResolver(input: {
     if (!contact) return undefined;
     return {
       plugin: "feishu",
-      accountId: "main",
+      accountId: contact.accountId ?? "main",
       channelId: contact.channelId,
       userId: contact.channelId ? undefined : contact.userId,
       sessionId: contact.sessionId ?? contact.channelId ?? contact.userId ?? "admin-test"

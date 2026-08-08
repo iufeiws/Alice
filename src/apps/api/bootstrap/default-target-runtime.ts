@@ -1,10 +1,21 @@
 type AppConfigLike = {
   core: { defaultTargetPlugin?: string };
-  plugins: { wechat: { enabled?: boolean } };
+  plugins: {
+    wechat: { enabled?: boolean };
+    feishu: { activeAccount?: string };
+  };
+};
+
+type FeishuPairedContactLike = {
+  accountId?: string;
+  channelId?: string;
+  userId?: string;
+  sessionId?: string;
 };
 
 type FeishuPairingStoreLike = {
-  list(): Array<{ accountId?: string; channelId?: string; userId?: string; sessionId?: string }>;
+  list(): FeishuPairedContactLike[];
+  getPaired?(accountId?: string): FeishuPairedContactLike | undefined;
 };
 
 type WeChatStateStoreLike = {
@@ -39,7 +50,11 @@ export function createDefaultTargetResolver(input: {
   }
 
   function getDefaultFeishuTarget(): DefaultMessagingTarget | undefined {
-    const contact = input.feishuPairingStore.list()[0];
+    // 无上下文默认目标应跟随当前账户指针（FEISHU_ACTIVE_ACCOUNT，最后收到消息的账户）；
+    // 指针缺失/无效或无配对联系人时才回退到配对数组第一项。
+    const activeAccount = input.config.plugins.feishu.activeAccount;
+    const contact = (activeAccount ? input.feishuPairingStore.getPaired?.(activeAccount) : undefined)
+      ?? input.feishuPairingStore.list()[0];
     if (!contact) return undefined;
     return {
       plugin: "feishu",

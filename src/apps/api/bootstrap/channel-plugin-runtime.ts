@@ -1,6 +1,7 @@
 import { createFeishuPlugin } from "../../../channels/feishu/src/index.js";
 import { createGoogleStreetViewPlugin } from "../../../channels/google-streetview/src/index.js";
 import { createWeChatPlugin } from "../../../channels/wechat/src/index.js";
+import type { ImageRecognitionTarget } from "../../../channels/image-recognition/src/index.js";
 
 export function createChannelPluginRuntime(input: {
   config: any;
@@ -12,7 +13,7 @@ export function createChannelPluginRuntime(input: {
   getMessageRuntime(): any;
   onFeishuCardAction?(event: any): Promise<unknown>;
   onFeishuActiveAccountChanged?(accountId: string): void | Promise<void>;
-  recognizeImage(filePath: string): Promise<any>;
+  recognizeImage(target: ImageRecognitionTarget): Promise<any>;
 }) {
   const feishu = createFeishuPlugin(input.config.plugins.feishu, {
     log: input.appendLog,

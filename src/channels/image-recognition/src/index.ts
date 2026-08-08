@@ -41,6 +41,12 @@ export type ImageRecognitionInput = {
   metadata?: Record<string, unknown>;
 };
 
+/**
+ * 图片识别目标: 宿主文件路径, 或已编码的图像字节(base64 data + mimeType)。
+ * 工具侧拿到 base64 时直接透传, 不落盘再读。
+ */
+export type ImageRecognitionTarget = string | { data: string; mimeType: string };
+
 export type ImageRecognitionResult = {
   text: string;
   provider: "multimodal_llm";

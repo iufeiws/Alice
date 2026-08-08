@@ -6,9 +6,10 @@ export type PiToolDefinition = {
   inputSchema: Record<string, unknown>;
 };
 
+/** Pi 工具结果 content part。图片 part 由 Pi 原生返回: data 为 base64 编码的图像字节, mimeType 为图像 MIME。 */
 export type PiContent =
   | { type: "text"; text: string }
-  | { type: "image"; path: string; mime?: string };
+  | { type: "image"; data: string; mimeType: string };
 
 export type PiToolExecutionResult = {
   ok: boolean;

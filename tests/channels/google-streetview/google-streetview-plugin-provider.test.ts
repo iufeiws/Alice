@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGoogleStreetViewPlugin } from "../../../src/channels/google-streetview/src/index.js";
+import type { ImageRecognitionTarget } from "../../../src/channels/image-recognition/src/index.js";
 import { storeStreetViewMetadata } from "../../../src/channels/google-streetview/src/storage.js";
 import {
   bytesResponse,
@@ -66,7 +67,7 @@ test("provider_reusesStoredPanoWithoutDownloadingImageAgain", async () => {
 
 test("provider_recognizesOnlyWhenRequestedAndCachesResultByPano", async () => {
   const root = tempOutputRoot();
-  const recognitionCalls: string[] = [];
+  const recognitionCalls: ImageRecognitionTarget[] = [];
   const plugin = createGoogleStreetViewPlugin({
     config: configWithOutput(root),
     fetch: async (url) => {

@@ -73,6 +73,24 @@ test("tool followup helper detects png content before declared mime", () => {
   );
 });
 
+test("tool followup helper builds image messages from base64 data directly, without a file", () => {
+  const base64 = Buffer.from("inline-image-bytes").toString("base64");
+  const result = buildToolFollowupLLMMessages({
+    callId: "call_3",
+    ok: true,
+    output: "ok",
+    llmFollowupAttachments: [{ kind: "image", data: base64, mime: "image/webp" }]
+  }, { supportsImage: true });
+
+  assert.equal(result.messages.length, 1);
+  const content = Array.isArray(result.messages[0].content) ? result.messages[0].content : [];
+  assert.equal(content[0]?.type, "image_url");
+  assert.equal(
+    content[0]?.type === "image_url" ? content[0].image_url.url : "",
+    `data:image/webp;base64,${base64}`
+  );
+});
+
 test("singleton lock rejects another running process in the same memory root", () => {
   const root = makeTempDir("singleton-lock");
   const first = acquireSingletonLock(root, "api");

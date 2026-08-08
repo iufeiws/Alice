@@ -121,13 +121,31 @@ test("SubAgent rejects legacy actions, mode, empty entry ids and extra fields", 
 
 test("Pi image tool results become image follow-up attachments for multimodal Chat", async () => {
   const worker = fakeWorker();
-  worker.executeTool = async () => ({ ok: true, content: [{ type: "text", text: "photo" }, { type: "image", path: "/home/alice/photo.png", mime: "image/png" }] });
+  worker.executeTool = async () => ({ ok: true, content: [{ type: "text", text: "photo" }, { type: "image", data: "aGVsbG8=", mimeType: "image/png" }] });
   const runtime = createPiWorkerRuntime({ worker, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
   await runtime.start();
-  const tool = createFileTools({ piWorker: runtime, resolveImagePath: (value) => `/host${value}` });
+  const tool = createFileTools({ piWorker: runtime });
   const result = await tool.execute({ id: "call-image", toolName: "Read", input: {} }, { llmCapabilities: { supportsImage: true } });
   assert.equal(result.output, "photo");
-  assert.deepEqual(result.llmFollowupAttachments, [{ kind: "image", path: "/host/home/alice/photo.png", mime: "image/png" }]);
+  assert.deepEqual(result.llmFollowupAttachments, [{ kind: "image", data: "aGVsbG8=", mime: "image/png" }]);
+  await runtime.stop();
+});
+
+test("Pi image tool results go through image recognition for non-multimodal Chat, passing base64 directly", async () => {
+  const worker = fakeWorker();
+  worker.executeTool = async () => ({ ok: true, content: [{ type: "text", text: "photo" }, { type: "image", data: "aGVsbG8=", mimeType: "image/png" }] });
+  const runtime = createPiWorkerRuntime({ worker, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
+  await runtime.start();
+  const targets: unknown[] = [];
+  const tool = createFileTools({
+    piWorker: runtime,
+    recognizeImage: async (target) => { targets.push(target); return { text: "recognized" }; }
+  });
+  const result = await tool.execute({ id: "call-image-recognition", toolName: "Read", input: {} }, { llmCapabilities: { supportsImage: false } });
+  assert.equal(result.ok, true);
+  assert.equal(result.output, "photo\nrecognized");
+  assert.deepEqual(targets, [{ data: "aGVsbG8=", mimeType: "image/png" }]);
+  assert.equal(result.llmFollowupAttachments, undefined);
   await runtime.stop();
 });
 

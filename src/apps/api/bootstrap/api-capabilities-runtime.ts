@@ -4,7 +4,7 @@ import { createVoicePluginRuntime } from "./voice-plugin-runtime.js";
 import { createLLMRequestsRuntime } from "../../../contexts/llm-gateway/src/llm-requests-runtime.js";
 import { registerLLMToolLoopTools } from "../../../contexts/llm-gateway/src/llm-tool-loop.js";
 import { createOpenAICompatibleClient } from "../../../contexts/llm-gateway/src/index.js";
-import { readImageRecognitionConfig, recognizeImageWithPlugin } from "../../../channels/image-recognition/src/index.js";
+import { readImageRecognitionConfig, recognizeImageWithPlugin, type ImageRecognitionTarget } from "../../../channels/image-recognition/src/index.js";
 import type { PiWorkerRuntime } from "../../../contexts/pi-worker/src/index.js";
 const path = await import("node:path");
 
@@ -59,8 +59,11 @@ export function createApiCapabilitiesRuntime(input: {
     appendLog: input.appendLog
   });
 
-  const recognizeImage = async (filePath: string) => {
-    const result = await recognizeImageWithPlugin({ imageFile: filePath }, readImageRecognitionConfig(), {
+  const recognizeImage = async (target: ImageRecognitionTarget) => {
+    const imageInput = typeof target === "string"
+      ? { imageFile: target }
+      : { imageFile: Buffer.from(target.data, "base64"), mimeType: target.mimeType };
+    const result = await recognizeImageWithPlugin(imageInput, readImageRecognitionConfig(), {
       resolveApiPreset(name) {
         return input.readLLMApiPresets().find((entry: { name?: string }) => entry.name === name);
       },

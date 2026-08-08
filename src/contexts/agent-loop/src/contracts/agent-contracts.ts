@@ -218,6 +218,8 @@ export type ToolResultLLMAttachment = {
   kind: "image";
   path?: string;
   assetId?: string;
+  /** base64 编码的图像字节; 提供时优先于 path/assetId, 不再读盘。 */
+  data?: string;
   mime?: string;
   toolNotice?: string;
   followupText?: string;

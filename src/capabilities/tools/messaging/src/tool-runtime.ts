@@ -15,10 +15,11 @@ import { createSkillsTools } from "../../skills/src/index.js";
 import { createRestartTools, createSystemdRestartController } from "../../restart/src/index.js";
 import { createToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { createOutfitOnBodyGenerationAttempt } from "../../../../contexts/capabilities/src/outfit-on-body-runtime.js";
-import { createBashSandboxRuntime, resolveSandboxHostPath } from "../../../../contexts/bash-sandbox/src/index.js";
+import { createBashSandboxRuntime } from "../../../../contexts/bash-sandbox/src/index.js";
 import { createSkillLoader, type SkillRegistry } from "../../../../contexts/skills/src/index.js";
 import { defaultWorldWandererPluginConfigPath } from "../../../../contexts/world-wanderer/src/index.js";
 import type { GoogleStreetViewPlugin } from "../../../../channels/google-streetview/src/index.js";
+import type { ImageRecognitionTarget } from "../../../../channels/image-recognition/src/index.js";
 import type { PromptContextRuntime } from "../../../../contexts/prompt-context/src/index.js";
 import { createRandomEventSandboxRuntime } from "../../../../contexts/initiative/src/application/random-event-sandbox-runtime.js";
 import type { PiWorkerRuntime } from "../../../../contexts/pi-worker/src/index.js";
@@ -51,7 +52,7 @@ export function createToolRuntime(input: {
   appendLog: AppendLog;
   appendMessageLog: AppendMessageLog;
   piWorkerRuntime?: PiWorkerRuntime;
-  recognizeImage?(filePath: string): Promise<{ text: string }>;
+  recognizeImage?(target: ImageRecognitionTarget): Promise<{ text: string }>;
 }) {
   const resolveOutputTarget = createToolOutputTargetResolver({
     getDefaultTarget() {
@@ -223,8 +224,7 @@ export function createToolRuntime(input: {
     bashSandbox: bashRuntime,
     config: input.config.bashSandbox,
     piWorker: input.piWorkerRuntime,
-    recognizeImage: input.recognizeImage,
-    resolveImagePath: (containerPath: string) => resolveSandboxHostPath(input.config.bashSandbox, containerPath, input.config.bashSandbox.defaultCwd)
+    recognizeImage: input.recognizeImage
   });
   const shellTools = input.piWorkerRuntime ? createShellTools({ runtime: input.piWorkerRuntime }) : undefined;
   const subAgentTools = input.piWorkerRuntime ? createSubAgentTool({

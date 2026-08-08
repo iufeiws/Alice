@@ -1,3 +1,5 @@
+import type { ImageRecognitionTarget } from "../../image-recognition/src/index.js";
+
 export type GoogleStreetViewBounds = {
   north: number;
   south: number;
@@ -38,7 +40,7 @@ export type GoogleStreetViewPluginDeps = {
   env?: Record<string, string | undefined>;
   now?(): Date;
   random?(): number;
-  recognizeImage?(filePath: string): Promise<GoogleStreetViewImageRecognition>;
+  recognizeImage?(target: ImageRecognitionTarget): Promise<GoogleStreetViewImageRecognition>;
   appendLog?(level: "info" | "warn" | "error", message: string): void;
 };
 

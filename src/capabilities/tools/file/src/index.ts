@@ -3,6 +3,7 @@ import { isAllowedCwd, normalizeContainerPath } from "../../../../contexts/bash-
 import type { ToolCall, ToolDefinition, ToolExecutionContext, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { PiContent, PiWorkerRuntime } from "../../../../contexts/pi-worker/src/index.js";
 import { piToolResultToToolResult } from "../../../../contexts/pi-worker/src/index.js";
+import type { ImageRecognitionTarget } from "../../../../channels/image-recognition/src/index.js";
 import { editTool, globTool, piFileToolNames, readTool, writeTool } from "../profile.js";
 
 const defaultMaxSizeBytes = 256 * 1024;
@@ -16,8 +17,7 @@ export function createFileTools(input: {
   bashSandbox?: BashSandboxRuntime;
   config?: BashSandboxConfig;
   piWorker?: PiWorkerRuntime;
-  recognizeImage?(path: string): Promise<{ text: string }>;
-  resolveImagePath?(path: string): string | undefined;
+  recognizeImage?(target: ImageRecognitionTarget): Promise<{ text: string }>;
 }): ToolPlugin {
   return {
     id: "file",
@@ -35,7 +35,7 @@ export function createFileTools(input: {
           input: call.input,
           context
         });
-        return await fileToolResult(call, result, context, input.recognizeImage, input.resolveImagePath);
+        return await fileToolResult(call, result, context, input.recognizeImage);
       }
       if (call.toolName === "Glob") {
         if (!input.bashSandbox || !input.config) throw new Error(`file_tool_unavailable:${call.toolName}`);
@@ -50,31 +50,31 @@ async function fileToolResult(
   call: ToolCall,
   result: Awaited<ReturnType<PiWorkerRuntime["executeTool"]>>,
   context: ToolExecutionContext | undefined,
-  recognizeImage?: (path: string) => Promise<{ text: string }>,
-  resolveImagePath?: (path: string) => string | undefined
+  recognizeImage?: (target: ImageRecognitionTarget) => Promise<{ text: string }>
 ): Promise<ToolResult> {
   const imageContent = result.content?.filter((part) => part.type === "image") ?? [];
   if (result.ok && imageContent.length > 0) {
-    if (context?.llmCapabilities?.supportsImage !== true) return await convertImages(call, result.content!, recognizeImage, resolveImagePath);
-    const output = piToolResultToToolResult(call.id, result);
-    return {
-      ...output,
-      llmFollowupAttachments: imageContent.map((part) => ({
-        kind: "image" as const,
-        path: resolveImagePath?.(part.path) ?? part.path,
-        mime: part.mime
-      }))
-    };
+    if (context?.llmCapabilities?.supportsImage === true) {
+      return {
+        ...piToolResultToToolResult(call.id, result),
+        llmFollowupAttachments: imageContent.map((part) => ({
+          kind: "image" as const,
+          data: part.data,
+          mime: part.mimeType
+        }))
+      };
+    }
+    return await convertImages(call, result.content!, recognizeImage);
   }
   return piToolResultToToolResult(call.id, result);
 }
 
-async function convertImages(call: ToolCall, content: PiContent[], recognizeImage?: (path: string) => Promise<{ text: string }>, resolveImagePath?: (path: string) => string | undefined): Promise<ToolResult> {
+async function convertImages(call: ToolCall, content: PiContent[], recognizeImage?: (target: ImageRecognitionTarget) => Promise<{ text: string }>): Promise<ToolResult> {
   if (!recognizeImage) throw new Error("file_read_image_recognition_required");
   const texts: string[] = [];
   for (const part of content) {
     if (part.type === "text") texts.push(part.text);
-    else texts.push((await recognizeImage(resolveImagePath?.(part.path) ?? part.path)).text);
+    else texts.push((await recognizeImage({ data: part.data, mimeType: part.mimeType })).text);
   }
   return { callId: call.id, ok: true, output: texts.join("\n") };
 }

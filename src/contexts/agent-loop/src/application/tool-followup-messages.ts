@@ -24,10 +24,17 @@ export function buildToolFollowupLLMMessages(
 
   for (const attachment of result.llmFollowupAttachments ?? []) {
     if (attachment.kind !== "image") continue;
-    const filePath = resolveAttachmentPath(attachment.path, attachment.assetId);
-    if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) continue;
-    const bytes = fs.readFileSync(filePath);
-    const mime = detectImageMime(bytes) || attachment.mime || mimeForPath(filePath);
+    let bytes: Buffer;
+    let mime: string;
+    if (attachment.data !== undefined) {
+      bytes = Buffer.from(attachment.data, "base64");
+      mime = attachment.mime || detectImageMime(bytes) || "image/jpeg";
+    } else {
+      const filePath = resolveAttachmentPath(attachment.path, attachment.assetId);
+      if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) continue;
+      bytes = fs.readFileSync(filePath);
+      mime = detectImageMime(bytes) || attachment.mime || mimeForPath(filePath);
+    }
     const base64 = bytes.toString("base64");
     if (attachment.toolNotice) toolNotices.push(attachment.toolNotice);
     messages.push({

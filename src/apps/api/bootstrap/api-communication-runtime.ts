@@ -6,6 +6,7 @@ import { createFeishuDynamicCardAgentRunIndicator, createFeishuToolExecutionRepo
 import { setLLMToolExecutionReporter } from "../../../contexts/llm-gateway/src/llm-tool-loop.js";
 import { isFeishuConfigured } from "../../../channels/feishu/src/config.js";
 import type { StoredMessageLog } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
+import type { ImageRecognitionTarget } from "../../../channels/image-recognition/src/index.js";
 import { createFeishuApprovalService } from "../../../contexts/approval/src/index.js";
 import { updateEnvFile } from "../server/env-file.js";
 
@@ -36,7 +37,7 @@ export function createApiCommunicationRuntime(input: {
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: Omit<StoredMessageLog, "id" | "time" | "timeUtc">): StoredMessageLog;
   processRestartContinuationStore?: any;
-  recognizeImage(filePath: string): Promise<any>;
+  recognizeImage(target: ImageRecognitionTarget): Promise<any>;
   piWorkerRuntime?: any;
 }) {
   let messageRuntime: any;

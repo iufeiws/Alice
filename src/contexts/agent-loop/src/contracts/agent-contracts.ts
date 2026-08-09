@@ -201,7 +201,7 @@ export type ToolResult = {
   llmFollowupAttachments?: ToolResultLLMAttachment[];
   meta?: {
     yieldReturn?: boolean;
-    yieldAction?: "wait" ;
+    yieldAction?: "schedule" | "await_chat";
     yieldSeconds?: number;
   };
   invalidateLLMSession?: boolean;

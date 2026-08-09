@@ -45,7 +45,7 @@ export function hydrateLLMSessionSnapshot(snapshot: LLMSessionSnapshot, nowMs: n
     waitChatStartedAt: typeof snapshot.waitChatStartedAt === "string" && Number.isFinite(Date.parse(snapshot.waitChatStartedAt))
       ? Date.parse(snapshot.waitChatStartedAt)
       : undefined,
-    waitChatMode: snapshot.waitChatMode === "wait" ? snapshot.waitChatMode : undefined,
+    waitChatMode: snapshot.waitChatMode === "schedule" || snapshot.waitChatMode === "await_chat" ? snapshot.waitChatMode : undefined,
     waitChatUntil: typeof snapshot.waitChatUntil === "string" && Number.isFinite(Date.parse(snapshot.waitChatUntil))
       ? Date.parse(snapshot.waitChatUntil)
       : undefined,

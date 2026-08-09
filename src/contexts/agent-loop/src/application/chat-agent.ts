@@ -460,6 +460,12 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
           return;
         }
         if (session.skipNextAppendLayers) return;
+        // await_chat 定时超时且无新消息: 直接结束会话(yield_end), 不恢复 loop。
+        if (session.waitChatMode === "await_chat" && agentInitiatedTriggerEventFromRaw(event.meta.raw) === "yield.timeout") {
+          clearWaitState(session);
+          clearLoopSession(() => deps.onLLMSessionCleared?.("yield_end"));
+          return;
+        }
         const waitChatResumeMessages = await buildWaitResumeMessages(session);
         if (waitChatResumeMessages.length > 0) {
           clearWaitState(session);
@@ -536,6 +542,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
           loopSession.loopStartedAt = currentLoopStartedAt;
           noteLLMSessionUpdated(loopSession);
           await appendSessionContext(loopSession);
+          if (!loopSession) return [];
           if (hasPendingWaitChatToolCall(loopSession.messages)) return [];
           const llmConfig = deps.getLLMConfig?.() ?? {
             client: deps.llm,

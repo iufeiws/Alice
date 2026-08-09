@@ -23,7 +23,7 @@ export type LLMSessionSnapshot = {
   fixedPrefixStartedAt?: string;
   loopStartedAt?: string;
   waitChatStartedAt?: string;
-  waitChatMode?: "wait" ;
+  waitChatMode?: "schedule" | "await_chat";
   waitChatUntil?: string;
   waitChatTarget?: {
     source: { plugin: string; accountId?: string; channelId?: string; userId?: string; rawMessageId?: string };
@@ -111,7 +111,7 @@ export type LLMSessionRecord = {
   fixedPrefixStartedAt?: string;
   loopStartedAt?: string;
   waitChatStartedAt?: string;
-  waitChatMode?: "wait" ;
+  waitChatMode?: "schedule" | "await_chat";
   waitChatUntil?: string;
   waitChatTarget?: LLMSessionSnapshot["waitChatTarget"];
   skipNextAppendLayers?: boolean;

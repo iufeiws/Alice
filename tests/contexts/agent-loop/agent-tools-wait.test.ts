@@ -30,7 +30,7 @@ test("chat agent resumes pending finish_and_wait with Chat result on new message
             toolCalls: [{
               id: "tool_wait",
               type: "function",
-              function: { name: "Yield", arguments: "{\"action\":\"wait\"}" }
+              function: { name: "Yield", arguments: "{\"action\":\"schedule\",\"timer\":10}" }
             }]
           },
           finishReason: "tool_calls"
@@ -103,7 +103,7 @@ test("chat agent resumes wait once after its deadline", async () => {
               toolCalls: [{
                 id: "tool_wait",
                 type: "function",
-                function: { name: "Yield", arguments: "{\"action\":\"wait\",\"timer\":10}" }
+                function: { name: "Yield", arguments: "{\"action\":\"schedule\",\"timer\":10}" }
               }]
             }
           };
@@ -132,7 +132,7 @@ test("chat agent resumes wait once after its deadline", async () => {
   });
 
   await runPreparedChatEvent(core, textEvent());
-  assert.equal(sessionUpdates.at(-1)?.waitChatMode, "wait");
+  assert.equal(sessionUpdates.at(-1)?.waitChatMode, "schedule");
   assert.equal(sessionUpdates.at(-1)?.waitChatUntil, "2026-05-26T00:00:10.000Z");
   assert.equal(sessionUpdates.at(-1)?.waitChatTarget?.externalSession.sessionId, "session-1");
 
@@ -160,6 +160,123 @@ function timedYieldEvent() {
   };
 }
 
+test("chat agent ends session when await_chat times out without new messages", async () => {
+  const requests: LLMChatInput[] = [];
+  const sessionUpdates: LLMSessionSnapshot[] = [];
+  const clearReasons: string[] = [];
+  let persistedSession: LLMSessionSnapshot | undefined;
+  let nowMs = Date.parse("2026-05-26T00:00:00.000Z");
+  const core = createChatAgent({
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
+    time: createCurrentTimeProvider("UTC", () => new Date(nowMs)),
+    llm: {
+      async chat(input) {
+        requests.push(input);
+        if (requests.length === 1) {
+          return {
+            message: {
+              role: "assistant",
+              content: "",
+              toolCalls: [{
+                id: "tool_wait",
+                type: "function",
+                function: { name: "Yield", arguments: "{\"action\":\"await_chat\"}" }
+              }]
+            },
+            finishReason: "tool_calls"
+          };
+        }
+        return { message: { role: "assistant", content: "" } };
+      }
+    },
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      userName: "user",
+      visibleTools: { feishu: true },
+      layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "static prompt", order: 1 }],
+      appendLayers: []
+    }),
+    tools: [chatTestTools()],
+    onLLMSessionUpdated(session) {
+      persistedSession = session;
+      sessionUpdates.push(session);
+    },
+    onLLMSessionCleared(reason) {
+      clearReasons.push(reason);
+    },
+    loadLLMSession() {
+      return persistedSession;
+    }
+  });
+
+  await runPreparedChatEvent(core, textEvent());
+  assert.equal(sessionUpdates.at(-1)?.waitChatMode, "await_chat");
+  assert.equal(sessionUpdates.at(-1)?.waitChatUntil, "2026-05-26T00:15:00.000Z");
+
+  nowMs = Date.parse("2026-05-26T00:15:01.000Z");
+  await runPreparedChatEvent(core, timedYieldEvent());
+  assert.equal(requests.length, 1);
+  assert.deepEqual(clearReasons, ["yield_end"]);
+});
+
+test("chat agent resumes await_chat on new message before deadline", async () => {
+  const requests: LLMChatInput[] = [];
+  const sessionUpdates: LLMSessionSnapshot[] = [];
+  let persistedSession: LLMSessionSnapshot | undefined;
+  let nowMs = Date.parse("2026-05-26T00:00:00.000Z");
+  const core = createChatAgent({
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
+    time: createCurrentTimeProvider("UTC", () => new Date(nowMs)),
+    llm: {
+      async chat(input) {
+        requests.push(input);
+        if (requests.length > 1) return { message: { role: "assistant", content: "" } };
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [{
+              id: "tool_wait",
+              type: "function",
+              function: { name: "Yield", arguments: "{\"action\":\"await_chat\"}" }
+            }]
+          },
+          finishReason: "tool_calls"
+        };
+      }
+    },
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      userName: "user",
+      visibleTools: { feishu: true },
+      layers: [{ id: "static", title: "Static", role: "system", enabled: true, content: "static prompt", order: 1 }],
+      appendLayers: []
+    }),
+    tools: [chatTestTools()],
+    onLLMSessionUpdated(session) {
+      persistedSession = session;
+      sessionUpdates.push(session);
+    },
+    loadLLMSession() {
+      return persistedSession;
+    }
+  });
+
+  await runPreparedChatEvent(core, textEvent());
+  nowMs = Date.parse("2026-05-26T00:10:00.000Z");
+  await runPreparedChatEvent(core, { ...textEvent(), id: "evt_resume" });
+
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].messages.some((message) => message.role === "tool" && message.toolCallId === "tool_wait"), true);
+  assert.equal(sessionUpdates.at(-1)?.waitChatUntil, undefined);
+});
+
 test("chat agent executes same-round tools when finish_and_wait appears", async () => {
   const requests: LLMChatInput[] = [];
   const calls: string[] = [];
@@ -182,7 +299,7 @@ test("chat agent executes same-round tools when finish_and_wait appears", async 
             {
               id: "tool_wait",
               type: "function",
-              function: { name: "Yield", arguments: "{\"action\":\"wait\"}" }
+              function: { name: "Yield", arguments: "{\"action\":\"schedule\",\"timer\":10}" }
             },
             {
               id: "tool_later",
@@ -251,7 +368,7 @@ test("chat agent resumes same-round finish_and_wait result on new message", asyn
             {
               id: "tool_wait",
               type: "function",
-              function: { name: "Yield", arguments: "{\"action\":\"wait\"}" }
+              function: { name: "Yield", arguments: "{\"action\":\"schedule\",\"timer\":10}" }
             },
             {
               id: "tool_later",

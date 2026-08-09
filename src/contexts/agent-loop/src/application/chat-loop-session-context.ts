@@ -51,11 +51,17 @@ export async function buildWaitChatResumeMessages(input: {
 }
 
 function shouldResumeWait(session: ChatAgentLoopSession, event: AgentEvent, nowMs: number): boolean {
-  if (event.type.startsWith("message.")) return session.waitChatMode === "wait" ;
-  if (session.waitChatMode !== "wait" || !Number.isFinite(session.waitChatUntil) || nowMs < Number(session.waitChatUntil)) return false;
+  if (event.type.startsWith("message.")) return isYieldWaitMode(session.waitChatMode);
+  if (!isYieldWaitMode(session.waitChatMode) || !Number.isFinite(session.waitChatUntil) || nowMs < Number(session.waitChatUntil)) return false;
   const raw = event.meta.raw;
-  return Boolean(raw && typeof raw === "object" && "agentInitiatedTriggerEvent" in raw
-    && raw.agentInitiatedTriggerEvent === "yield.timeout");
+  if (!Boolean(raw && typeof raw === "object" && "agentInitiatedTriggerEvent" in raw
+    && raw.agentInitiatedTriggerEvent === "yield.timeout")) return false;
+  // await_chat 超时无新消息 → 不恢复 loop, 由 chat-agent 直接结束会话。
+  return session.waitChatMode === "schedule";
+}
+
+function isYieldWaitMode(mode: ChatAgentLoopSession["waitChatMode"]): boolean {
+  return mode === "schedule" || mode === "await_chat";
 }
 
 export function findToolPlugin(tools: ToolPlugin[], toolName: string): ToolPlugin | undefined {

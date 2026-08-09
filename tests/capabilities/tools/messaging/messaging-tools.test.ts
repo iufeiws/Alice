@@ -35,42 +35,74 @@ test("messagingTools_listTools_exposesChatOnly", async () => {
   assert.equal(names.length, 1);
 });
 
-test("finishAndWaitTools_yieldCalled_returnsYieldMeta", async () => {
+test("finishAndWaitTools_schedule_returnsYieldMeta", async () => {
   const tools = createFinishAndWaitTools();
   const waitTool = tools.listTools().find((tool) => tool.name === "Yield");
   assert.ok(waitTool);
-  const result = await tools.execute({ id: "call_wait", toolName: "Yield", input: { action: "wait" } });
+  const result = await tools.execute({ id: "call_schedule", toolName: "Yield", input: { action: "schedule", timer: 60 } });
   assert.equal(result.ok, true);
   assert.equal(result.meta?.yieldReturn, true);
-  assert.equal(result.meta?.yieldAction, "wait");
+  assert.equal(result.meta?.yieldAction, "schedule");
+  assert.equal(result.meta?.yieldSeconds, 60);
   assert.equal(result.output, undefined);
 });
 
 test("finishAndWaitTools validates actions and wait range", async () => {
   const tools = createFinishAndWaitTools();
   for (const timer of [10, 900]) {
-    const result = await tools.execute({ id: `wait_${timer}`, toolName: "Yield", input: { action: "wait", timer } });
+    const result = await tools.execute({ id: `schedule_${timer}`, toolName: "Yield", input: { action: "schedule", timer } });
     assert.equal(result.ok, true);
     assert.equal(result.meta?.yieldSeconds, timer);
   }
+  const awaitChat = await tools.execute({ id: "await_chat", toolName: "Yield", input: { action: "await_chat" } });
+  assert.equal(awaitChat.ok, true);
+  assert.equal(awaitChat.meta?.yieldAction, "await_chat");
+  assert.equal(awaitChat.meta?.yieldSeconds, 900);
   for (const input of [
     {},
     { action: "poll" },
     { action: "wait_for", timer: 10 },
-    { action: "end", timer: 10 },
-    { action: "wait", timer: 9 },
-    { action: "wait", timer: 901 },
-    { action: "wait", timer: 10.5 },
-    { action: "wait", timer: 10, extra: true }
+    { action: "finish", timer: 10 },
+    { action: "await_chat", timer: 10 },
+    { action: "schedule" },
+    { action: "schedule", timer: 9 },
+    { action: "schedule", timer: 901 },
+    { action: "schedule", timer: 10.5 },
+    { action: "schedule", timer: 10, extra: true }
   ]) {
     const result = await tools.execute({ id: "invalid", toolName: "Yield", input });
     assert.equal(result.ok, false, JSON.stringify(input));
   }
-  const end = await tools.execute({ id: "end", toolName: "Yield", input: { action: "end" } });
-  assert.equal(end.invalidateLLMSession, true);
-  assert.equal(end.llmSessionClearReason, "yield_end");
+  const finish = await tools.execute({ id: "finish", toolName: "Yield", input: { action: "finish" } });
+  assert.equal(finish.invalidateLLMSession, true);
+  assert.equal(finish.llmSessionClearReason, "yield_end");
   assert.equal(tools.listTools()[0].description.includes("关闭"), false);
   assert.equal(tools.listTools()[0].description.includes("会话"), false);
+});
+
+test("finishAndWaitTools rejects consecutive schedule without running subagent", async () => {
+  const idle = createFinishAndWaitTools({ agentState: { getSubAgentHoldCount: () => 0 } });
+  const first = await idle.execute({ id: "first", toolName: "Yield", input: { action: "schedule", timer: 60 } });
+  assert.equal(first.ok, true);
+  const consecutive = await idle.execute(
+    { id: "second", toolName: "Yield", input: { action: "schedule", timer: 60 } },
+    { lastCompletedToolName: "Yield" }
+  );
+  assert.equal(consecutive.ok, false);
+  assert.match(String(consecutive.error), /schedule_consecutive/);
+
+  const running = createFinishAndWaitTools({ agentState: { getSubAgentHoldCount: () => 1 } });
+  const held = await running.execute(
+    { id: "held", toolName: "Yield", input: { action: "schedule", timer: 60 } },
+    { lastCompletedToolName: "Yield" }
+  );
+  assert.equal(held.ok, true);
+
+  const afterBash = await idle.execute(
+    { id: "after_bash", toolName: "Yield", input: { action: "schedule", timer: 60 } },
+    { lastCompletedToolName: "Bash" }
+  );
+  assert.equal(afterBash.ok, true);
 });
 
 test("check_chat range scope filters with from and to", async () => {

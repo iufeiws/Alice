@@ -457,7 +457,7 @@ test("chat agent exits the current loop after finish_and_wait", async () => {
           toolCalls: [{
             id: "tool_wait",
             type: "function",
-            function: { name: "Yield", arguments: "{\"action\":\"wait\"}" }
+            function: { name: "Yield", arguments: "{\"action\":\"schedule\",\"timer\":10}" }
           }]
         },
         finishReason: "tool_calls"
@@ -493,7 +493,7 @@ test("chat agent exits the current loop after finish_and_wait", async () => {
   assert.equal(sessionUpdates.at(-1)?.messages.some((message) => message.role === "tool" && message.name === "Yield"), false);
 });
 
-test("chat agent ends and clears the current LLM session after Yield end", async () => {
+test("chat agent ends and clears the current LLM session after Yield finish", async () => {
   const requests: LLMChatInput[] = [];
   const clearReasons: string[] = [];
   const core = createChatAgent({
@@ -509,7 +509,7 @@ test("chat agent ends and clears the current LLM session after Yield end", async
             toolCalls: [{
               id: "tool_end",
               type: "function",
-              function: { name: "Yield", arguments: "{\"action\":\"end\"}" }
+              function: { name: "Yield", arguments: "{\"action\":\"finish\"}" }
             }]
           }
         };

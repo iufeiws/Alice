@@ -196,7 +196,7 @@ export function createToolRuntime(input: {
     calendarStore: input.calendarStore,
     time: input.time
   });
-  const finishAndWaitTools = createFinishAndWaitTools();
+  const finishAndWaitTools = createFinishAndWaitTools({ agentState: input.agentState });
   const diceTools = createDiceTools();
   const locationTools = createLocationTools({
     configPath: defaultWorldWandererPluginConfigPath,

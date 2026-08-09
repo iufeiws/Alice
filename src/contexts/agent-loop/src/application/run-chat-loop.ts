@@ -42,7 +42,7 @@ export type ChatAgentLoopSession = {
   fixedPrefixStartedAt?: string;
   loopStartedAt?: string;
   waitChatStartedAt?: number;
-  waitChatMode?: "wait";
+  waitChatMode?: "schedule" | "await_chat";
   waitChatUntil?: number;
   waitChatTarget?: YieldResumeTarget;
   skipNextAppendLayers?: boolean;
@@ -235,16 +235,13 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
         const yieldSeconds = Number(toolResult.meta.yieldSeconds);
         session.waitChatStartedAt = nowMs;
         session.waitChatMode = toolResult.meta.yieldAction;
-        session.waitChatUntil = toolResult.meta.yieldAction === "wait"
-          && Number.isFinite(yieldSeconds)
+        session.waitChatUntil = Number.isFinite(yieldSeconds)
           ? nowMs + yieldSeconds * 1000
           : undefined;
-        session.waitChatTarget = toolResult.meta.yieldAction === "wait"
-          ? {
-              source: { ...input.event.source },
-              externalSession: { ...input.event.externalSession }
-            }
-          : undefined;
+        session.waitChatTarget = {
+          source: { ...input.event.source },
+          externalSession: { ...input.event.externalSession }
+        };
       }
       if (toolResult.llmSessionClearReason === "yield_end") clearReason = "yield_end";
       input.setLastCompletedToolName(call.function.name);

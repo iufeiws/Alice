@@ -161,7 +161,7 @@ export function chatTestTools(onCall?: (call: ToolCall) => void) {
     async execute(call: ToolCall) {
       onCall?.(call);
       if (call.toolName === "Yield") {
-        if (call.input.action === "end") {
+        if (call.input.action === "finish") {
           return {
             callId: call.id,
             ok: true,
@@ -169,15 +169,29 @@ export function chatTestTools(onCall?: (call: ToolCall) => void) {
             llmSessionClearReason: "yield_end" as const
           };
         }
-        return {
-          callId: call.id,
-          ok: true,
-          meta: {
-            yieldReturn: true,
-            yieldAction: "wait" as const,
-            yieldSeconds: call.input.action === "wait" ? Number(call.input.timer) : undefined
-          }
-        };
+        if (call.input.action === "await_chat") {
+          return {
+            callId: call.id,
+            ok: true,
+            meta: {
+              yieldReturn: true,
+              yieldAction: "await_chat" as const,
+              yieldSeconds: 900
+            }
+          };
+        }
+        if (call.input.action === "schedule" && typeof call.input.timer === "number") {
+          return {
+            callId: call.id,
+            ok: true,
+            meta: {
+              yieldReturn: true,
+              yieldAction: "schedule" as const,
+              yieldSeconds: Number(call.input.timer)
+            }
+          };
+        }
+        return { callId: call.id, ok: false, error: "invalid yield input" };
       }
       if (call.toolName === "Chat") {
         return {

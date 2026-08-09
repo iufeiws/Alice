@@ -290,7 +290,7 @@ export function createLLMSessionArchive(input: {
       fixedPrefixStartedAt: typeof metadata.fixedPrefixStartedAt === "string" ? metadata.fixedPrefixStartedAt : undefined,
       loopStartedAt: typeof metadata.loopStartedAt === "string" ? metadata.loopStartedAt : undefined,
       waitChatStartedAt: typeof metadata.waitChatStartedAt === "string" ? metadata.waitChatStartedAt : undefined,
-      waitChatMode: metadata.waitChatMode === "wait" ? metadata.waitChatMode : undefined,
+      waitChatMode: metadata.waitChatMode === "schedule" || metadata.waitChatMode === "await_chat" ? metadata.waitChatMode : undefined,
       waitChatUntil: typeof metadata.waitChatUntil === "string" ? metadata.waitChatUntil : undefined,
       waitChatTarget: parseWaitChatTarget(metadata.waitChatTarget),
       skipNextAppendLayers: metadata.skipNextAppendLayers === true ? true : undefined,

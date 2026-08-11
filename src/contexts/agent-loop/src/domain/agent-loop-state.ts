@@ -73,7 +73,7 @@ const HOUR = 60 * MINUTE;
 
 const DEFAULT_INTIMACY = 50;
 const ACTIVE_TIMEOUT_MS = 5 * MINUTE;
-const WAITING_INACTIVE_TIMEOUT_MS = 30 * MINUTE;
+const WAITING_INACTIVE_TIMEOUT_MS = 15 * MINUTE;
 
 export function createJsonAgentStateStore(filePath: string): AgentStateStore {
   return {

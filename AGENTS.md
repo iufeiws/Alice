@@ -3,6 +3,7 @@
 ## 项目上下文
 ystemctl --user restart alice-agent-tmux.service 用于重启服务
 Alice 是一个本地优先的个人 Agent 运行时。当前范围包括 ChatAgent、占位式 Agent 行为、OpenAI 兼容 `/v1` 客户端、飞书与微信渠道插件、本地管理后台、SQLite 消息历史、JSONL LLM 会话归档，以及文件化系统日志。
+**project_summary.md 为项目结构总结, 实施前阅读以确定改动目标, 对项目做出改动后必须对其更新**
 
 ## 工程规则
 - 所有文档必须使用中文撰写；新增或修改 README、设计说明、变更说明、审阅记录等文档时都遵守这一规则。
@@ -16,8 +17,7 @@ Alice 是一个本地优先的个人 Agent 运行时。当前范围包括 ChatAg
 - 数据库迁移需要检查向后兼容和回滚安全。
 - 引入新抽象前，先使用项目已有模式。
 - 对任何用户行为、测试行为或运行原因做推测前，必须先向用户询问确认；禁止在未确认前直接下判断或把推测当成结论。
-- 代码文件位于项目root/src/下
-- 测试代码位于项目root/test/下
+- 非重构任务的, 应当保持现有代码结构不变
 - 单一代码文件*禁止*超过一千行
 
 ## Prompt 构筑硬约束
@@ -29,7 +29,8 @@ Alice 是一个本地优先的个人 Agent 运行时。当前范围包括 ChatAg
 
 ## Tool / Loop 硬约束
 
-- Tool 是否可用只能由 LLM request 构筑阶段的 `toolNames`/visible tools 决定；loop 执行期不得再按 loop kind、requester、channel 或 tool name 做二次拦截。
+- Tool 是否可用只能由 LLM request 构筑阶段的 `toolNames`/visible tools 决定；loop 执行期不得按 loop kind、requester、channel 或 tool name 做二次拦截。
+- 一个会话存活期必须保持tool 的暴露scope不变
 - LLM 已经收到并调用的 tool 必须走统一 `ToolPlugin.execute` 路径执行，并把 tool result 写回同一个 function-call run loop；不得把 tool result follow-up 交给 heartbeat 或下一次外部 loop 启动。
 - `requester` 只表示 tool call 来源，不表示输出投递目标，也不能决定 tool 能不能用。产生 `AgentOutput` 的工具必须通过 capabilities 层的 output target resolver 解析投递目标。
 
@@ -49,10 +50,6 @@ Alice 是一个本地优先的个人 Agent 运行时。当前范围包括 ChatAg
 
 - `.env` 保存本地凭据和运行时配置，不要提交密钥。
 - 管理后台改动的设置必须持久化到 `.env` 或其他已记录的持久存储；可行时，当前进程应立即应用这些设置。
-- `memory-files/alice.sqlite` 保存长期记忆、日记和 Core 侧消息历史。
-- `logs/message/message-logs.sqlite` 保存追加式消息事件/调试日志。
-- `memory-files/llm-sessions/` 保存 LLM 会话 transcript delta 事件。
-- `logs/system/` 保存调试日志，保留期由每日调度器管理。
 - 日志类数据，包括 `logs/message/`、`logs/system/` 和 LLM 会话归档，不进入 LLM 上下文。用户要求删除或修改消息历史时，不要删除或编辑这些日志；除非用户明确点名日志存储，否则这类请求只适用于 Core 侧 `messages` 数据。
 - `memory-files/indexes/feishu-paired-contacts.json` 保存唯一飞书联系人绑定。
 - 运行时代码需要“当前时间”时，应使用 `core/time/src/index.ts` 的全局时间提供器；时区来自 `config.core.timezone`（`AGENT_TIMEZONE`，默认 `Asia/Singapore`）。保存给 Agent 使用的时间戳时，必须使用配置时区下的本地 wall-clock ISO 字符串，例如 `2026-05-25T08:00:00.000`。不要保存 UTC `Z` 时间戳或带 `+08:00` 的 offset 形式；避免直接用 `new Date().toISOString()` 写记录。
@@ -66,10 +63,8 @@ Alice 是一个本地优先的个人 Agent 运行时。当前范围包括 ChatAg
 
 - Admin API 必须校验输入，并返回 JSON 错误，而不是直接抛异常。
 - 任何能发送消息、更新凭据、读取本地文件或暴露日志的端点，都必须有明确授权方案。
-- 飞书运行时 start/stop 必须幂等，不能创建重复 WebSocket client。
 - LLM 配置变更必须影响活跃 Agent 运行时，而不仅是未来重启。
 - SQLite schema 变更在生产使用前需要迁移/版本路径。
-
 
 ## 通用规则
 - 修改任何代码前向用户确认该改动目标是符合用户预期的。

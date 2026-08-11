@@ -10,8 +10,8 @@ export function createLLMSessionListRuntime(input: {
   };
 
   /**
-   * 纯文件名列表: 会话文件路径 {agentType}/{date}/{clock}.jsonl 自带时间与 agent 类型,
-   * 标题行只展示这两项; 详情在用户展开时按路径按需读取。
+   * 会话列表: 条目由 archive.listSessionFiles 从主库总表派生,
+   * id 即存储 sessionId(不再是 .jsonl 相对路径), 详情按 id 单次读取。
    */
   function getClearedLLMSessions(): unknown[] {
     return listByAgentType("chat");
@@ -34,9 +34,8 @@ export function createLLMSessionListRuntime(input: {
   }
 
   function sessionFileListItem(entry: SessionFileEntry): unknown {
-    const relativePath = `${entry.agentType}/${entry.date}/${entry.clock}.jsonl`;
     return {
-      id: relativePath,
+      id: entry.filePath,
       agentId: entry.agentType,
       startedAt: `${entry.date}T${entry.clock}`,
       archiveFilePath: entry.filePath

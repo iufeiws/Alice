@@ -12,7 +12,7 @@ export type TokenUsageEventInput = {
   createdAtUtc?: string;
   agentId: string;
   model?: string;
-  sessionId?: number;
+  sessionId?: number | string;
   requestId?: number;
   responseId?: number;
   inputTokens?: number;
@@ -28,7 +28,7 @@ export type StoredTokenUsageEvent = Required<Pick<TokenUsageEventInput, "created
   id: number;
   createdAtUtc?: string;
   model?: string;
-  sessionId?: number;
+  sessionId?: number | string;
   requestId?: number;
   responseId?: number;
   inputTokens?: number;
@@ -278,7 +278,7 @@ function rowToEvent(row: any): StoredTokenUsageEvent {
     createdAtUtc: optionalString(row.createdAtUtc),
     agentId: row.agentId,
     model: optionalString(row.model),
-    sessionId: optionalNumber(row.sessionId),
+    sessionId: optionalScalar(row.sessionId),
     requestId: optionalNumber(row.requestId),
     responseId: optionalNumber(row.responseId),
     inputTokens: optionalNumber(row.inputTokens),
@@ -294,6 +294,13 @@ function rowToEvent(row: any): StoredTokenUsageEvent {
 
 function optionalNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/** LLM 会话 id 已改为字符串; 兼容旧记录里的数字 id, 原样返回数字或字符串。 */
+function optionalScalar(value: unknown): number | string | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.length > 0) return value;
+  return undefined;
 }
 
 function optionalString(value: unknown): string | undefined {

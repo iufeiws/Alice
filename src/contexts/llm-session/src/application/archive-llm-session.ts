@@ -1,27 +1,10 @@
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { LLMChatInput } from "../../../llm-gateway/src/index.js";
-import { staticPromptFingerprintForMessages, staticPromptFingerprintForText } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
-import {
-  absoluteLLMSessionPath as absoluteLLMSessionJsonlPath,
-  appendLLMSessionJsonlMessages,
-  cloneLLMMessages,
-  collectLLMSessionFiles as collectLLMSessionJsonlFiles,
-  createLLMSessionFilePath as createLLMSessionJsonlFilePath,
-  readLLMSessionJsonl,
-  relativeLLMSessionPath as relativeLLMSessionJsonlPath,
-  writeLLMSessionJsonl,
-  writeLLMSessionJsonlMetadata
-} from "../adapters/jsonl-llm-session-log.js";
-import type { LLMSessionRecord } from "../domain/llm-session.js";
-import {
-  parseRequestInfo,
-  parseResponseInfo,
-  parseRoundInfo,
-  parseTokenPressurePreviewBaselines,
-  stringArray
-} from "../domain/llm-session-utils.js";
+import { cloneLLMMessages } from "../adapters/jsonl-llm-session-log.js";
+import { createLLMSessionStore, type LLMSessionStore, type StoredLLMSession } from "../adapters/sqlite-llm-session-store.js";
+import { clearLLMSessionPointer, pointerFilePath, readLLMSessionPointer, writeLLMSessionPointer } from "../adapters/llm-session-pointer.js";
+import type { LLMSessionRecord, LLMRequestLogEntry, LLMResponseLogEntry } from "../domain/llm-session.js";
 
-const fs = await import("node:fs");
 const path = await import("node:path");
 
 type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
@@ -33,29 +16,41 @@ export type SessionFileEntry = {
   filePath: string;
 };
 
+/** readAll / listSessionFiles 使用的全量列表上限。 */
+const UNLIMITED_LIST_LIMIT = Number.MAX_SAFE_INTEGER;
+
+/**
+ * LLM 会话归档: SQLite 主库(llm-sessions.sqlite) + current 指针(current.json)。
+ *
+ * 完整会话对象(除 messages 与固定列外的全部字段)序列化进 meta_json,
+ * 读取时 JSON.parse 直接作为 meta 返回, 不从普通列重建、不丢弃未知字段。
+ * store 可选注入: 测试注入包装 store 模拟提交失败, 因此所有写路径必须经过 store 实例。
+ */
 export function createLLMSessionArchive(input: {
   memoryRoot: string;
   time: CurrentTimeProvider;
   appendLog: AppendLog;
+  store?: LLMSessionStore;
 }) {
+  const store = input.store ?? createLLMSessionStore(path.join(input.memoryRoot, "llm-sessions.sqlite"));
+
   return {
     root,
     currentPointerPath,
-    createFilePath,
-    relativePath,
-    absolutePath,
     writeCurrentPointer,
     clearCurrentPointer,
-    sessionMetadata,
     writeFile,
     writeMetadata,
     appendMessages,
+    replaceTranscript,
     readCurrent,
     restorePersistedActive,
     readAll,
     listSessionFiles,
-    collectFiles,
-    readFile
+    listSessions,
+    readSession,
+    readSessionMeta,
+    close
   };
 
   function root(): string {
@@ -63,128 +58,104 @@ export function createLLMSessionArchive(input: {
   }
 
   function currentPointerPath(): string {
-    return path.join(root(), "current.json");
-  }
-
-  function createFilePath(time: string, agentId: "chat" | "talk" = "chat"): string {
-    return createLLMSessionJsonlFilePath(root(), time || input.time.now().iso, { type: agentId });
-  }
-
-  function relativePath(filePath: string): string {
-    return relativeLLMSessionJsonlPath(root(), filePath);
-  }
-
-  function absolutePath(relativePath: string): string {
-    return absoluteLLMSessionJsonlPath(root(), relativePath);
+    return pointerFilePath(root());
   }
 
   function writeCurrentPointer(session: LLMSessionRecord): void {
-    if (!session.archiveFilePath) return;
-    fs.mkdirSync(root(), { recursive: true });
-    fs.writeFileSync(currentPointerPath(), `${JSON.stringify({
-      path: relativePath(session.archiveFilePath),
-      sessionId: session.id
-    }, null, 2)}\n`);
+    writeLLMSessionPointer(root(), { sessionId: session.id, agentType: session.agentId ?? "chat" });
   }
 
   function clearCurrentPointer(): void {
-    try {
-      fs.rmSync(currentPointerPath(), { force: true });
-    } catch {
-      // Ignore pointer cleanup errors; the archived session metadata is still written.
-    }
+    clearLLMSessionPointer(root());
   }
 
+  /** 完整 meta: 整个可变会话对象, 排除 messages 与固定列/派生字段。 */
   function sessionMetadata(session: LLMSessionRecord): Record<string, unknown> {
-    const agentId = session.agentId ?? "chat";
-    const last = session.messages.at(-1);
-    return {
-      type: "llm_session",
-      agent: agentId,
-      schemaVersion: 1,
-      sessionId: session.id,
-      sessionCreatedAtUtc: session.startedAtUtc,
-      startedAt: session.startedAt,
-      startedAtUtc: session.startedAtUtc,
-      updatedAt: session.updatedAt,
-      updatedAtUtc: session.updatedAtUtc,
-      staticPromptFingerprint: session.staticPromptFingerprint,
-      staticPromptMessageCount: session.staticPromptMessageCount ?? 0,
-      requestTimestamps: session.requestTimestamps,
-      lastTotalTokens: session.lastTotalTokens,
-      lastInputTokens: session.lastInputTokens,
-      lastUsageModel: session.lastUsageModel,
-      tokenPressurePreviewBaselines: session.tokenPressurePreviewBaselines ?? {},
-      mode: session.mode ?? "normal",
-      modeStartedAt: session.modeStartedAt,
-      modeExpiresAt: session.modeExpiresAt,
-      modeStaticMessageCount: session.modeStaticMessages?.length ?? 0,
-      modeStaticTokenEstimate: session.modeStaticTokenEstimate ?? 0,
-      fixedPrefixKind: session.fixedPrefixKind,
-      fixedPrefixStartedAt: session.fixedPrefixStartedAt,
-      loopStartedAt: session.loopStartedAt,
-      waitChatStartedAt: session.waitChatStartedAt,
-      waitChatMode: session.waitChatMode,
-      waitChatUntil: session.waitChatUntil,
-      waitChatTarget: session.waitChatTarget,
-      skipNextAppendLayers: session.skipNextAppendLayers === true ? true : undefined,
-      agentLoopRunSeq: session.agentLoopRunSeq,
-      currentRound: session.currentRound,
-      latestRequest: session.latestRequestInfo,
-      latestResponse: session.latestResponseInfo,
-      requestIds: session.requestIds,
-      responseIds: session.responseIds,
-      messageCount: session.messages.length,
-      lastMessageRole: last?.role,
-      lastMessageAt: session.updatedAt,
-      clearedAt: session.clearedAt,
-      clearedAtUtc: session.clearedAtUtc,
-      clearReason: session.reason
-    };
-  }
-
-  function writeFile(session: LLMSessionRecord): void {
-    const filePath = session.archiveFilePath ?? createFilePath(session.startedAtUtc ?? session.startedAt, session.agentId ?? "chat");
-    session.archiveFilePath = filePath;
-    session.archiveMetadata = sessionMetadata(session);
-    writeLLMSessionJsonl(filePath, session.archiveMetadata, session.messages);
-  }
-
-  function writeMetadata(session: LLMSessionRecord): void {
-    session.archiveMetadata = sessionMetadata(session);
-    if (!session.archiveFilePath || !fs.existsSync(session.archiveFilePath)) {
-      writeFile(session);
-      return;
+    const meta: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(session)) {
+      if (key === "messages" || key === "id" || key === "agentId" || key === "startedAt"
+        || key === "startedAtUtc" || key === "archiveFilePath" || key === "archiveMetadata") {
+        continue;
+      }
+      meta[key] = value;
     }
-    writeLLMSessionJsonlMetadata(session.archiveFilePath, session.archiveMetadata);
+    return meta;
   }
 
+  /** 新会话: store.create(重复 sessionId 会抛错)。 */
+  function writeFile(session: LLMSessionRecord): void {
+    const meta = sessionMetadata(session);
+    session.archiveMetadata = meta;
+    store.create({
+      sessionId: String(session.id),
+      agentType: session.agentId ?? "chat",
+      startedAt: session.startedAt,
+      startedAtUtc: session.startedAtUtc ?? session.startedAt,
+      meta,
+      messages: cloneLLMMessages(session.messages)
+    });
+  }
+
+  /** 只更新 meta_json(不动 started_at 列与分表)。 */
+  function writeMetadata(session: LLMSessionRecord): void {
+    const meta = sessionMetadata(session);
+    session.archiveMetadata = meta;
+    store.updateMeta({ sessionId: String(session.id), meta });
+  }
+
+  /** 追加消息并同步 message_count 列; meta_json 由 writeMetadata 单独更新。 */
   function appendMessages(session: LLMSessionRecord, messages: LLMChatInput["messages"]): void {
     if (messages.length === 0) return;
-    if (!session.archiveFilePath || !fs.existsSync(session.archiveFilePath)) {
-      writeFile(session);
-      return;
-    }
-    appendLLMSessionJsonlMessages(session.archiveFilePath, messages);
+    store.append({ sessionId: String(session.id), messages: cloneLLMMessages(messages) });
   }
 
+  /** 显式完整替换(Talk 重建): 事务内删除分表消息并重写, reason 由调用方说明。 */
+  function replaceTranscript(session: LLMSessionRecord, reason: string): void {
+    const meta = sessionMetadata(session);
+    session.archiveMetadata = meta;
+    store.replace({ sessionId: String(session.id), messages: cloneLLMMessages(session.messages), meta, reason });
+  }
+
+  /** 读取 current: 只从外部指针定位, 绝不扫描表推断; 已 cleared 时清理陈旧指针。 */
   function readCurrent(): LLMSessionRecord | undefined {
-    const pointer = currentPointerPath();
-    if (!fs.existsSync(pointer)) return undefined;
-    const parsedPointer = JSON.parse(fs.readFileSync(pointer, "utf8")) as { path?: unknown };
-    if (typeof parsedPointer.path !== "string") return undefined;
-    return readFile(absolutePath(parsedPointer.path));
+    const pointer = readLLMSessionPointer(root());
+    if (!pointer) return undefined;
+    const stored = store.read(String(pointer.sessionId));
+    if (!stored) {
+      input.appendLog("warn", `llm session pointer target missing: session=${pointer.sessionId} agent=${pointer.agentType}`);
+      return undefined;
+    }
+    if (stored.agentType !== pointer.agentType) {
+      input.appendLog("warn", `llm session pointer agent mismatch: pointer_agent=${pointer.agentType} stored_agent=${stored.agentType} session=${pointer.sessionId}`);
+      return undefined;
+    }
+    const session = restoreLLMSessionRecord(stored);
+    if (session.clearedAt) {
+      clearLLMSessionPointer(root());
+      return undefined;
+    }
+    return session;
   }
 
+  /** 启动恢复: 指针 + 主库; 无指针/目标缺失/agent 不一致返回 undefined。 */
   function restorePersistedActive(): LLMSessionRecord | undefined {
-    const pointer = currentPointerPath();
-    if (!fs.existsSync(pointer)) return undefined;
+    const pointer = readLLMSessionPointer(root());
+    if (!pointer) return undefined;
     try {
-      const parsedPointer = JSON.parse(fs.readFileSync(pointer, "utf8")) as { path?: unknown; sessionId?: unknown };
-      if (typeof parsedPointer.path !== "string") return undefined;
-      const filePath = absolutePath(parsedPointer.path);
-      const session = readFile(filePath);
-      if (!session || session.clearedAt || session.messages.length === 0 || !session.staticPromptFingerprint) return undefined;
+      const stored = store.read(String(pointer.sessionId));
+      if (!stored) {
+        input.appendLog("warn", `llm session pointer target missing: session=${pointer.sessionId} agent=${pointer.agentType}`);
+        return undefined;
+      }
+      if (stored.agentType !== pointer.agentType) {
+        input.appendLog("warn", `llm session pointer agent mismatch: pointer_agent=${pointer.agentType} stored_agent=${stored.agentType} session=${pointer.sessionId}`);
+        return undefined;
+      }
+      const session = restoreLLMSessionRecord(stored);
+      if (session.clearedAt || !session.staticPromptFingerprint || session.messages.length === 0) {
+        clearLLMSessionPointer(root());
+        return undefined;
+      }
       if (session.currentRound?.status === "running") {
         session.currentRound = {
           ...session.currentRound,
@@ -200,151 +171,91 @@ export function createLLMSessionArchive(input: {
     }
   }
 
+  /** 主库 chat/talk/memorize 三 agent 的全量浏览(管理后台行为)。 */
   function readAll(): LLMSessionRecord[] {
-    const sessionRoot = root();
-    if (!fs.existsSync(sessionRoot)) return [];
-    const files: string[] = [];
-    collectFiles(sessionRoot, files);
     const sessions: LLMSessionRecord[] = [];
-    for (const filePath of files) {
-      const session = readFile(filePath);
-      if (session) sessions.push(session);
+    for (const agentType of ["chat", "talk", "memorize"]) {
+      for (const item of store.list({ agentType, limit: UNLIMITED_LIST_LIMIT })) {
+        const stored = store.read(item.sessionId);
+        if (stored) sessions.push(restoreLLMSessionRecord(stored));
+      }
     }
     return sessions;
   }
 
-  function collectFiles(dir: string, files: string[]): void {
-    // sub_agent 目录是 pi/subagent LLM 会话转录(llm_subagent_session),
-    // 主会话列表从不展示它们, 全量扫描纯属浪费, 直接跳过。
-    collectLLMSessionJsonlFiles(dir, files, { skipDirs: ["sub_agent"] });
-  }
-
   /**
-   * 纯文件名/路径扫描: 只枚举会话文件, 不读取任何内容。
-   * 路径结构为 {agentType}/{date}/{clock}.jsonl, 列表据此展示时间与 agent 类型。
+   * 会话列表条目: 从 store.list 派生(只查总表, 不解析 meta_json、不读分表)。
+   * filePath 携带存储 sessionId, 供列表以存储 id 定位详情。
    */
   function listSessionFiles(): SessionFileEntry[] {
-    const sessionRoot = root();
-    if (!fs.existsSync(sessionRoot)) return [];
-    const files: string[] = [];
-    collectFiles(sessionRoot, files);
-    return files.map((filePath) => {
-      const relative = path.relative(sessionRoot, filePath).split(path.sep);
-      return {
-        agentType: relative[0] ?? "",
-        date: relative[1] ?? "",
-        clock: (relative[2] ?? "").replace(/\.jsonl$/, ""),
-        filePath
-      };
-    });
-  }
-
-  function readFile(filePath: string): LLMSessionRecord | undefined {
-    try {
-      const parsed = readLLMSessionJsonl(filePath);
-      if (!parsed) return undefined;
-      return buildSessionRecord(filePath, parsed.metadata, parsed.messages);
-    } catch {
-      input.appendLog("warn", `llm session file parse failed: ${filePath}`);
-      return undefined;
+    const entries: SessionFileEntry[] = [];
+    for (const agentType of ["chat", "talk", "memorize"]) {
+      for (const item of store.list({ agentType, limit: UNLIMITED_LIST_LIMIT })) {
+        entries.push({
+          agentType: item.agentType,
+          date: item.startedAt.slice(0, 10),
+          clock: item.startedAt.slice(11, 23).replace(/[:.]/g, "-"),
+          filePath: item.sessionId
+        });
+      }
     }
+    return entries;
   }
 
-  function buildSessionRecord(
-    filePath: string,
-    metadata: Record<string, unknown>,
-    messages: LLMChatInput["messages"]
-  ): LLMSessionRecord | undefined {
-    if (metadata.agent === "memorize") return undefined;
-    if (metadata.type !== "llm_session" || typeof metadata.sessionId !== "number") return undefined;
-    const agentId = metadata.agent === "talk" ? "talk" : "chat";
-    const staticPromptMessageCount = messageCountFromMetadata(metadata.staticPromptMessageCount, messages.length);
-    const modeStaticMessages = modeStaticMessagesFromMetadata(metadata, messages);
-    return {
-      id: metadata.sessionId,
-      agentId,
-      startedAt: typeof metadata.startedAt === "string" ? metadata.startedAt : "",
-      startedAtUtc: typeof metadata.startedAtUtc === "string" ? metadata.startedAtUtc : undefined,
-      updatedAt: typeof metadata.updatedAt === "string" ? metadata.updatedAt : "",
-      updatedAtUtc: typeof metadata.updatedAtUtc === "string" ? metadata.updatedAtUtc : undefined,
-      archiveFilePath: filePath,
-      archiveMetadata: metadata,
-      requestIds: numberArray(metadata.requestIds),
-      responseIds: numberArray(metadata.responseIds),
-      messages,
-      latestRequest: undefined,
-      staticPromptFingerprint: staticPromptFingerprintFromMetadata(metadata, messages, staticPromptMessageCount),
-      staticPromptMessageCount,
-      requestTimestamps: stringArray(metadata.requestTimestamps),
-      agentLoopRunSeq: typeof metadata.agentLoopRunSeq === "number" && Number.isFinite(metadata.agentLoopRunSeq) ? metadata.agentLoopRunSeq : undefined,
-      lastTotalTokens: typeof metadata.lastTotalTokens === "number" && Number.isFinite(metadata.lastTotalTokens) ? metadata.lastTotalTokens : undefined,
-      lastInputTokens: typeof metadata.lastInputTokens === "number" && Number.isFinite(metadata.lastInputTokens) ? metadata.lastInputTokens : undefined,
-      lastUsageModel: typeof metadata.lastUsageModel === "string" ? metadata.lastUsageModel : undefined,
-      tokenPressurePreviewBaselines: parseTokenPressurePreviewBaselines(metadata.tokenPressurePreviewBaselines),
-      mode: typeof metadata.mode === "string" ? metadata.mode : "normal",
-      modeStaticMessages,
-      modeStaticTokenEstimate: typeof metadata.modeStaticTokenEstimate === "number" && Number.isFinite(metadata.modeStaticTokenEstimate) ? metadata.modeStaticTokenEstimate : 0,
-      modeStartedAt: typeof metadata.modeStartedAt === "string" ? metadata.modeStartedAt : undefined,
-      modeExpiresAt: typeof metadata.modeExpiresAt === "string" ? metadata.modeExpiresAt : undefined,
-      fixedPrefixKind: typeof metadata.fixedPrefixKind === "string" ? metadata.fixedPrefixKind : undefined,
-      fixedPrefixStartedAt: typeof metadata.fixedPrefixStartedAt === "string" ? metadata.fixedPrefixStartedAt : undefined,
-      loopStartedAt: typeof metadata.loopStartedAt === "string" ? metadata.loopStartedAt : undefined,
-      waitChatStartedAt: typeof metadata.waitChatStartedAt === "string" ? metadata.waitChatStartedAt : undefined,
-      waitChatMode: metadata.waitChatMode === "schedule" || metadata.waitChatMode === "await_chat" ? metadata.waitChatMode : undefined,
-      waitChatUntil: typeof metadata.waitChatUntil === "string" ? metadata.waitChatUntil : undefined,
-      waitChatTarget: parseWaitChatTarget(metadata.waitChatTarget),
-      skipNextAppendLayers: metadata.skipNextAppendLayers === true ? true : undefined,
-      currentRound: parseRoundInfo(metadata.currentRound),
-      latestRequestInfo: parseRequestInfo(metadata.latestRequest),
-      latestResponseInfo: parseResponseInfo(metadata.latestResponse),
-      clearedAt: typeof metadata.clearedAt === "string" ? metadata.clearedAt : undefined,
-      clearedAtUtc: typeof metadata.clearedAtUtc === "string" ? metadata.clearedAtUtc : undefined,
-      reason: typeof metadata.clearReason === "string" ? metadata.clearReason : undefined,
-      requests: [],
-      responses: []
-    };
+  /** 按 agent 类型列出会话(只查总表)。 */
+  function listSessions(agentType: string, limit?: number): ReturnType<LLMSessionStore["list"]> {
+    return store.list({ agentType, limit: limit ?? UNLIMITED_LIST_LIMIT });
+  }
+
+  /** 按存储 id 读取完整会话(总表 + 目标 agent 分表)。 */
+  function readSession(sessionId: string): StoredLLMSession | undefined {
+    return store.read(sessionId);
+  }
+
+  /** 只读总表 meta(不访问 messages 分表), 供列表展示使用。 */
+  function readSessionMeta(sessionId: string): Record<string, unknown> | undefined {
+    return store.readMeta(sessionId);
+  }
+
+  function close(): void {
+    store.close();
   }
 }
 
-function messageCountFromMetadata(value: unknown, max: number): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
-  return Math.max(0, Math.min(max, Math.floor(value)));
-}
-
-function numberArray(value: unknown): number[] {
-  return Array.isArray(value)
-    ? value.filter((entry): entry is number => typeof entry === "number" && Number.isFinite(entry))
-    : [];
-}
-
-function parseWaitChatTarget(value: unknown): LLMSessionRecord["waitChatTarget"] {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const target = value as NonNullable<LLMSessionRecord["waitChatTarget"]>;
-  if (!target.source || typeof target.source.plugin !== "string") return undefined;
-  if (!target.externalSession || typeof target.externalSession.sessionId !== "string") return undefined;
-  if (!["dm", "group", "topic", "admin", "desktop"].includes(target.externalSession.scope)) return undefined;
-  return target;
-}
-
-function staticPromptFingerprintFromMetadata(
-  metadata: Record<string, unknown>,
-  messages: LLMChatInput["messages"],
-  staticPromptMessageCount: number
-): string {
-  if (typeof metadata.staticPromptFingerprint === "string") {
-    return metadata.staticPromptFingerprint.startsWith("sha256:")
-      ? metadata.staticPromptFingerprint
-      : staticPromptFingerprintForText(metadata.staticPromptFingerprint);
-  }
-  return staticPromptFingerprintForMessages(messages.slice(0, staticPromptMessageCount));
-}
-
-function modeStaticMessagesFromMetadata(metadata: Record<string, unknown>, messages: LLMChatInput["messages"]): LLMChatInput["messages"] {
-  const count = messageCountFromMetadata(metadata.modeStaticMessageCount, messages.length);
-  if (typeof metadata.modeStaticMessageCount === "number" && Number.isFinite(metadata.modeStaticMessageCount)) {
-    return cloneLLMMessages(messages.slice(0, count));
-  }
-  return Array.isArray(metadata.modeStaticMessages)
-    ? cloneLLMMessages(metadata.modeStaticMessages as LLMChatInput["messages"])
-    : [];
+/** 从 StoredLLMSession 恢复内存会话记录: meta 原样展开 + 固定列覆盖。 */
+export function restoreLLMSessionRecord(stored: StoredLLMSession): LLMSessionRecord {
+  const meta = stored.meta as Record<string, unknown>;
+  const agentId = stored.agentType === "chat" || stored.agentType === "talk" || stored.agentType === "memorize"
+    ? stored.agentType
+    : undefined;
+  // 旧 JSONL meta 使用 latestRequest/latestResponse/clearReason/modeStaticMessageCount
+  // 字段名, 新 meta 使用 latestRequestInfo/latestResponseInfo/reason/modeStaticMessages;
+  // 迁移会话保留旧字段名, 这里做兼容映射, 避免恢复后丢失展示与模式状态。
+  const latestRequestInfo = meta.latestRequestInfo ?? meta.latestRequest;
+  const latestResponseInfo = meta.latestResponseInfo ?? meta.latestResponse;
+  const reason = typeof meta.reason === "string" ? meta.reason : (typeof meta.clearReason === "string" ? meta.clearReason : undefined);
+  const modeStaticMessages = Array.isArray(meta.modeStaticMessages)
+    ? meta.modeStaticMessages as LLMChatInput["messages"]
+    : (typeof meta.modeStaticMessageCount === "number" && Number.isFinite(meta.modeStaticMessageCount)
+      ? cloneLLMMessages(stored.messages.slice(0, Math.max(0, Math.min(stored.messages.length, meta.modeStaticMessageCount))))
+      : []);
+  return {
+    ...(meta as Record<string, unknown>),
+    id: Number(stored.sessionId),
+    agentId,
+    startedAt: stored.startedAt,
+    startedAtUtc: stored.startedAtUtc,
+    updatedAt: typeof meta.updatedAt === "string" ? meta.updatedAt : stored.startedAt,
+    requestIds: Array.isArray(meta.requestIds) ? meta.requestIds as number[] : [],
+    responseIds: Array.isArray(meta.responseIds) ? meta.responseIds as number[] : [],
+    requestTimestamps: Array.isArray(meta.requestTimestamps) ? meta.requestTimestamps as string[] : [],
+    messages: stored.messages,
+    requests: Array.isArray(meta.requests) ? meta.requests as LLMRequestLogEntry[] : [],
+    responses: Array.isArray(meta.responses) ? meta.responses as LLMResponseLogEntry[] : [],
+    latestRequestInfo,
+    latestResponseInfo,
+    reason,
+    modeStaticMessages,
+    archiveMetadata: stored.meta
+  } as LLMSessionRecord;
 }

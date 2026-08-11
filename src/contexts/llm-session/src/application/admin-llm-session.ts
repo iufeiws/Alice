@@ -23,31 +23,26 @@ export function createAdminLLMSessionRuntime(input: {
     time: input.time
   });
   const memoryLLMSessionRuntime = createMemoryLLMSessionRuntime({
-    sessionRoot: input.sessionRoot,
-    collectFiles: input.archive.collectFiles,
-    relativePath: input.archive.relativePath
+    listSessions: (agentType, limit) => input.archive.listSessions(agentType, limit),
+    readSession: (sessionId) => input.archive.readSession(sessionId),
+    readSessionMeta: (sessionId) => input.archive.readSessionMeta(sessionId)
   });
   const llmSessionListRuntime = createLLMSessionListRuntime({
     archive: input.archive
   });
   const llmSessionBrowserRuntime = createLLMSessionBrowserRuntime({
-    sessionRoot: input.sessionRoot,
-    collectFiles: input.archive.collectFiles,
-    relativePath: input.archive.relativePath,
     getActiveSession: input.getActiveSession,
+    listSessions: (agentType, limit) => input.archive.listSessions(agentType, limit),
+    readSession: (sessionId) => input.archive.readSession(sessionId),
+    readSessionMeta: (sessionId) => input.archive.readSessionMeta(sessionId),
     sources: [{
       name: "runtime",
-      accept: (metadata) => metadata.agent !== "memorize",
-      id: ({ metadata, relativePath }) => String(metadata.sessionId ?? relativePath)
+      agentTypes: ["chat", "talk"]
     }, {
       name: "memorize",
-      subdir: "memorize",
+      agentTypes: ["memorize"],
       limit: 100,
-      accept: (metadata) => metadata.agent === "memorize",
-      id: ({ metadata, relativePath }) => typeof metadata.sessionId === "string"
-        ? metadata.sessionId
-        : `memorize:${relativePath}`,
-      mode: (metadata) => typeof metadata.mode === "string" ? metadata.mode : "memorize"
+      mode: () => "memorize"
     }]
   });
   const llmRequestPreviewRuntime = createLLMRequestPreviewRuntime({

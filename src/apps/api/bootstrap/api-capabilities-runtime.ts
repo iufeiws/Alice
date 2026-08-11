@@ -46,7 +46,7 @@ export function createApiCapabilitiesRuntime(input: {
     time: input.time,
     resolvePromptApiPreset: input.resolvePromptApiPreset,
     appendLog: input.appendLog,
-    subagentSessionRoot: path.join(input.config.memoryFiles.root, "llm-sessions", "sub_agent"),
+    subagentSessionRoot: path.join(input.config.memoryFiles.root, "llm-subagent-sessions.sqlite"),
     agentState: input.agentState
   });
 

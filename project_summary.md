@@ -71,8 +71,8 @@ src/
 |---|---|
 | **agent-loop** | ChatAgent 核心。`createChatAgent`（policy 检查、session 解析、intent 路由、profile/tool 过滤）→ `createAgentLoopRuntime`（串行 requestRun、interrupt、activeMainLLMSession）→ `buildChatAgentLoop`（function-call loop hooks）。心跳 `agent-heartbeat-runtime`：idle transition、randomized initiative、timed yield、talk session、sleep cocoon、calendar reminder、pending session。进程重启续跑 continuation 存储。**无 index.ts**，出口在 `application/chat-agent.ts` 的 re-export |
 | **memory** | 长期记忆/日记/睡眠 Memorize。`store.ts`（SQLite WAL，persistent/userPreferences/diary 表）、`induction.ts`（`runSleepMemoryInduction` 等，用独立 memory preset 的 LLM 跑归纳 loop）、`prompt-build`/`prompt-store`（三个 target 的归纳 prompt）、`self-talk-tool`（Memorize 私有思考工具 `self_talk`，不落盘） |
-| **llm-session** | LLM 会话管理。`llm-session-runtime`（ensure/note/clear/delta transcript）、JSONL 归档（首行 metadata + 消息行追加，`{root}/{type}/{date}/{clock}.jsonl` + current.json 指针）、浏览/列表/admin API |
-| **llm-gateway** | LLM 调用入口。`createOpenAICompatibleClient`（chat/completions + SSE + listModels）、`llm-requests.ts`（send + buildTools）、`llm-tool-loop.ts`（多轮 function-call loop，round/call 上限 100、continuation 恢复、全局 tool 注册表 `executeRegisteredLLMTool`）、运行时钩子（请求日志/usage/subagent transcript）、preset 配置（chat/talk 分离） |
+| **llm-session** | LLM 会话管理。`sqlite-llm-session-store`（主库 `memory-files/llm-sessions.sqlite`：总表 `llm_session_meta` 六列 + 每 agent 类型 messages 分表三列）、`llm-session-pointer`（`current.json` 仅 `{sessionId, agentType}`，原子写）、`llm-session-runtime`（ensure/note/clear/delta transcript，单一内存所有者，SQLite 事务失败内存不变）、浏览/列表/admin API、一次性迁移脚本 `scripts/migrate-llm-sessions-sqlite.ts` |
+| **llm-gateway** | LLM 调用入口。`createOpenAICompatibleClient`（chat/completions + SSE + listModels）、`llm-requests.ts`（send + buildTools）、`llm-tool-loop.ts`（多轮 function-call loop，round/call 上限 100、continuation 恢复、全局 tool 注册表 `executeRegisteredLLMTool`）、运行时钩子（请求日志/usage/subagent transcript，SubAgent 转录落独立库 `memory-files/llm-subagent-sessions.sqlite`，失败降级不中断 LLM）、preset 配置（chat/talk 分离） |
 | **agent-profile** | Prompt 层管理。`domain/prompt-layer.ts` 为**唯一公共 layer 解析入口**（normalize、layer→LLMMessage、tool 参数解析）；`build-system-prompt.ts`（PromptProfile + build/append messages + layer 内嵌 tool call 回填 + staticPromptFingerprint）；`shell.ts`（每日 persona/relationship/outfit，`createDailyShellStore`） |
 | **talk-session** | WebRTC 语音 talk 会话。SQLite 适配器（`logs/talk/talk.sqlite`，talk_sessions/events/transcript/outputs）、`createTalkRuntime`（open/append/delta/interrupt/claim）、`createTalkRuntimeRuntime`（+ conversation-hub 投影，会话关闭转 inbound 消息） |
 | **conversation-hub** | 多渠道消息统一入口。`createMessageRuntime`（ingestEvent/ingestLifecycle/sendSystemNotice/processNow/flushAll）内部组装 agentLoopRuntime + heartbeat 全部任务；`sqlite-conversation-store` 为 Core 侧消息历史 |
@@ -175,7 +175,10 @@ capabilities/tools/{tool name}/
 | 长期记忆/日记/Core 侧消息历史 | `memory-files/alice.sqlite` |
 | 追加式消息事件/调试日志 | `logs/message/message-logs.sqlite` |
 | talk 语音会话 | `logs/talk/talk.sqlite` |
-| LLM 会话 JSONL 归档 | `memory-files/llm-sessions/core|memorize/YYYY-MM-DD/*.jsonl` |
+| LLM 会话（chat/talk/memorize） | `memory-files/llm-sessions.sqlite`（总表 + agent messages 分表） |
+| SubAgent 会话 | `memory-files/llm-subagent-sessions.sqlite` |
+| LLM 会话 current 指针 | `memory-files/llm-sessions/current.json`（仅 `{sessionId, agentType}`） |
+| 旧 JSONL 会话归档（一次性迁移后） | `memory-files/llm-sessions-jsonl-legacy-*`（运行时不再访问） |
 | 系统日志（保留 7 天） | `logs/system/` |
 | 飞书配对 | `memory-files/indexes/feishu-paired-contacts.json` |
 | 微信 iLink 状态 | `memory-files/indexes/wechat-ilink-state.json` |
@@ -201,6 +204,7 @@ capabilities/tools/{tool name}/
 ## 9. 脚本（scripts/）
 
 - `backfill-sleep-memory.ts`：一次性回填睡眠记忆。
+- `migrate-llm-sessions-sqlite.ts`：一次性把 JSONL 会话归档迁移到 SQLite 主库与 SubAgent 独立库（逐文件逐行导入、拒绝覆盖、独立校验、legacy 目录改名保留源文件）。
 - `seed-calendar-holidays.ts`：用 date-holidays 写入节假日到日历表。
 - `test-selfie-image-api.mjs`：自拍图片 API 独立测速。
 - `update-photo-pngfile-to-jpg.mjs`：一次性 PNG→JPG 迁移。

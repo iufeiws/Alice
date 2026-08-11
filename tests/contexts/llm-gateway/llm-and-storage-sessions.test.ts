@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createLLMRequestsRuntime } from "../../../src/contexts/llm-gateway/src/llm-requests-runtime.js";
 import { createLLMLogRuntime } from "../../../src/contexts/llm-gateway/src/llm-log-runtime.js";
 import { createApiSessionRuntime } from "../../../src/contexts/llm-session/src/index.js";
+import { createLLMSessionStore } from "../../../src/contexts/llm-session/src/adapters/sqlite-llm-session-store.js";
 import { createLLMSessionFilePath, writeLLMSessionJsonl, readLLMSessionJsonl } from "../../../src/contexts/llm-session/src/adapters/jsonl-llm-session-log.js";
 import type { LLMClient } from "../../../src/contexts/llm-gateway/src/index.js";
 import { fs, path, fixedTime, makeTempDir } from "./llm-and-storage-helpers.js";
@@ -84,20 +85,24 @@ test("LLM log runtime binds responses to the request session instead of current 
   assert.equal(responseLogs[0].sessionId, 100);
 });
 
-test("LLM session runtime writes chat request directly to jsonl", () => {
-  const { runtime, filePathFor } = createChatSessionRuntime("llm-session-request-jsonl");
+test("LLM session runtime writes chat request directly to sqlite", () => {
+  const { runtime, readCurrentSession } = createChatSessionRuntime("llm-session-request-sqlite");
   const request = chatRequest(1, [
     { role: "system" as const, content: "system" },
     { role: "user" as const, content: "hello" }
   ]);
   runtime.noteLLMRequest(request, "chat");
 
-  const filePath = filePathFor();
-  assert.deepEqual(readLLMSessionJsonl(filePath)?.messages.map((message) => message.role), ["system", "user"]);
+  const { pointer, session } = readCurrentSession();
+  assert.deepEqual(Object.keys(pointer).sort(), ["agentType", "sessionId"], "pointer must contain only sessionId and agentType");
+  assert.equal(pointer.agentType, "chat");
+  assert.equal(session?.agentType, "chat");
+  assert.deepEqual(session?.messages.map((message: any) => message.role), ["system", "user"]);
+  assert.deepEqual(session?.meta.requestIds, [1]);
 });
 
-test("LLM session runtime appends chat response directly to jsonl", () => {
-  const { runtime, filePathFor } = createChatSessionRuntime("llm-session-response-jsonl");
+test("LLM session runtime appends chat response directly to sqlite", () => {
+  const { runtime, readCurrentSession } = createChatSessionRuntime("llm-session-response-sqlite");
   const request = chatRequest(1, [
     { role: "system" as const, content: "system" },
     { role: "user" as const, content: "hello" }
@@ -114,12 +119,14 @@ test("LLM session runtime appends chat response directly to jsonl", () => {
     message: { role: "assistant", content: "done" },
     finishReason: "stop"
   });
-  const filePath = filePathFor();
-  assert.deepEqual(readLLMSessionJsonl(filePath)?.messages.map((message) => message.role), ["system", "user", "assistant"]);
+  const { pointer, session } = readCurrentSession();
+  assert.equal(pointer.agentType, "chat");
+  assert.deepEqual(session?.messages.map((message: any) => message.role), ["system", "user", "assistant"]);
+  assert.deepEqual(session?.meta.responseIds, [2]);
 });
 
 test("LLM session runtime records latest chat request metadata", () => {
-  const { runtime, filePathFor } = createChatSessionRuntime("llm-session-latest-request");
+  const { runtime, readCurrentSession } = createChatSessionRuntime("llm-session-latest-request");
   const request = chatRequest(1, [
     { role: "system" as const, content: "system" },
     { role: "user" as const, content: "hello" }
@@ -149,10 +156,9 @@ test("LLM session runtime records latest chat request metadata", () => {
       { role: "user", content: "again" }
     ]
   }, "chat");
-  const filePath = filePathFor();
-  const metadata = readLLMSessionJsonl(filePath)?.metadata;
-  assert.equal((metadata?.latestRequest as any)?.round, 1);
-  assert.deepEqual(metadata?.requestIds, [1, 3]);
+  const { session } = readCurrentSession();
+  assert.equal((session?.meta.latestRequestInfo as any)?.round, 1);
+  assert.deepEqual(session?.meta.requestIds, [1, 3]);
 });
 
 test("LLM requests runtime passes request-scoped log entry to response logging", async () => {
@@ -313,15 +319,15 @@ test("cancelled main LLM requests restore inactivity", async () => {
 });
 
 test("LLM requests runtime writes subagent session metadata", async () => {
-  const { parsed } = await runSubagentSession("llm-subagent-metadata");
-  assert.equal(parsed?.metadata.type, "llm_subagent_session");
-  assert.equal(parsed?.metadata.agent, "asr");
-  assert.deepEqual(parsed?.metadata.metadata, { pluginId: "asr" });
+  const { session } = await runSubagentSession("llm-subagent-metadata");
+  assert.equal(session?.meta.type, "llm_subagent_session");
+  assert.equal(session?.meta.agent, "asr");
+  assert.deepEqual(session?.meta.metadata, { pluginId: "asr" });
 });
 
 test("LLM requests runtime writes subagent transcript", async () => {
-  const { parsed } = await runSubagentSession("llm-subagent-transcript");
-  assert.deepEqual(parsed?.messages.map((message) => message.role), ["user", "assistant"]);
+  const { session } = await runSubagentSession("llm-subagent-transcript");
+  assert.deepEqual(session?.messages.map((message: any) => message.role), ["user", "assistant"]);
 });
 
 test("LLM requests runtime records subagent token usage", async () => {
@@ -340,9 +346,12 @@ function createChatSessionRuntime(name: string) {
   }).llmSessionRuntime;
   return {
     runtime,
-    filePathFor() {
-      const pointer = JSON.parse(fs.readFileSync(path.join(root, "llm-sessions", "current.json"), "utf8")) as { path: string };
-      return path.join(root, "llm-sessions", pointer.path);
+    readCurrentSession() {
+      const pointer = JSON.parse(fs.readFileSync(path.join(root, "llm-sessions", "current.json"), "utf8")) as { sessionId: number; agentType: string };
+      const store = createLLMSessionStore(path.join(root, "llm-sessions.sqlite"));
+      const session = store.read(String(pointer.sessionId));
+      store.close();
+      return { pointer, session };
     }
   };
 }
@@ -360,6 +369,8 @@ function chatRequest(id: number, messages: any[]) {
 
 async function runSubagentSession(name: string) {
   const subagentRoot = makeTempDir(name);
+  // subagentSessionRoot 现在是 llm-subagent-sessions.sqlite 的库文件路径(不再是 JSONL 目录)。
+  const subagentDbPath = path.join(subagentRoot, "llm-subagent-sessions.sqlite");
   const usageEvents: any[] = [];
   const client: LLMClient = {
     async chat() {
@@ -395,7 +406,7 @@ async function runSubagentSession(name: string) {
     time: fixedTime("2026-06-14T01:00:00.000Z"),
     resolvePromptApiPreset: () => ({ model: "fallback" }),
     appendLog() {},
-    subagentSessionRoot: subagentRoot
+    subagentSessionRoot: subagentDbPath
   });
 
   await runtime.send({
@@ -409,8 +420,10 @@ async function runSubagentSession(name: string) {
     metadata: { pluginId: "asr" }
   });
 
-  const sessionDir = path.join(subagentRoot, "asr", "2026-06-14");
-  const files = fs.readdirSync(sessionDir).filter((entry) => entry.endsWith(".jsonl"));
-  assert.equal(files.length, 1);
-  return { parsed: readLLMSessionJsonl(path.join(sessionDir, files[0])), usageEvents };
+  const store = createLLMSessionStore(subagentDbPath);
+  const sessions = store.list({ agentType: "asr", limit: 10 });
+  assert.equal(sessions.length, 1, "subagent transcript must be persisted in the subagent database");
+  const session = store.read(sessions[0].sessionId);
+  store.close();
+  return { session, usageEvents };
 }

@@ -341,7 +341,7 @@ async function runMemoryOrganizationInduction(
       windowEndAt: deps.windowEndAt,
       timezone: deps.timezone,
       nowIso: deps.nowIso
-    });
+    }, deps.log);
     session.activeTarget = promptTarget;
     const promptRuntime = withMemoryPromptPaths(deps.promptContextRuntime, workspace);
     const promptMessages = session.messages.length === 0

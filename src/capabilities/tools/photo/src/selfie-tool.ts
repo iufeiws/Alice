@@ -260,8 +260,12 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
 }
 
 function selfieMarker(context?: ToolExecutionContext): number | undefined {
-  const llmSessionId = context?.llmSessionId;
+  const rawSessionId = context?.llmSessionId;
   const agentLoopRunSeq = context?.agentLoopRunSeq;
+  // LLM 会话 id 已改为字符串(UTC 毫秒时间戳), 转回数字保持旧缓存键形态。
+  const llmSessionId = typeof rawSessionId === "number"
+    ? rawSessionId
+    : (typeof rawSessionId === "string" ? Number(rawSessionId) : undefined);
   if (typeof llmSessionId !== "number" || !Number.isInteger(llmSessionId)) return undefined;
   if (typeof agentLoopRunSeq !== "number" || !Number.isInteger(agentLoopRunSeq)) return undefined;
   return llmSessionId * 1000 + agentLoopRunSeq;

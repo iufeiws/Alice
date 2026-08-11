@@ -2,7 +2,7 @@ import type { LLMChatInput } from "../../../llm-gateway/src/index.js";
 import type { AgentLoopKind } from "./agent-loop-runtime.js";
 
 export type AgentLoopTranscriptSession = {
-  id?: number;
+  id?: string;
   messages: LLMChatInput["messages"];
   staticPromptFingerprint?: string;
   staticPromptMessageCount?: number;

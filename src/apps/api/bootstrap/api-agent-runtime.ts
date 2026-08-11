@@ -32,7 +32,11 @@ export function createApiAgentRuntime(input: {
     isActiveTalkLLMSession: (sessionId) => input.agentLoopRuntime.isActiveTalkLLMSession(sessionId),
     getCurrentTalkLLMSessionId: () => {
       const active = input.agentLoopRuntime.getActiveMainLLMSession();
-      return active?.agentId === "talk" && typeof active.id === "number" ? active.id : undefined;
+      if (!active || active.agentId !== "talk") return undefined;
+      // LLM 会话 id 为字符串(UTC 毫秒时间戳), talk 会话 id 仍为数字, 在边界转换。
+      if (typeof active.id === "number") return active.id;
+      const parsed = Number(active.id);
+      return Number.isFinite(parsed) ? parsed : undefined;
     },
     getTalkPromptProfile: () => input.talkPromptProfileStore.get(),
     time: input.time,
@@ -42,7 +46,7 @@ export function createApiAgentRuntime(input: {
     getLLMConfig: input.currentTalkLLMConfig,
     sendRequest: (requestInput) => input.llmRequests.send(requestInput),
     agentLoopRuntime: input.agentLoopRuntime,
-    createLLMSession: (occurredAt) => input.agentLoopRuntime.createTalkLLMSession(occurredAt).id,
+    createLLMSession: (occurredAt) => Number(input.agentLoopRuntime.createTalkLLMSession(occurredAt).id),
     loadActiveTalkLLMSessionTranscript: () => input.agentLoopRuntime.loadCurrentLLMSessionTranscript(),
     updateActiveTalkLLMSessionTranscript: (session) => input.agentLoopRuntime.updateActiveTalkLLMSessionTranscript(session),
     rewriteActiveTalkLLMSessionFromRuntime: (sessionId) => input.agentLoopRuntime.rewriteActiveTalkLLMSessionFromRuntime(sessionId),

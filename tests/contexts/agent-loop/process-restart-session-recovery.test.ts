@@ -60,7 +60,7 @@ test("restart checkpoint uses the same session id as the persisted Chat transcri
     tools: [createRestartTools({ async restart() {} })],
     loadLLMSession: sessionRuntime.loadCurrentLLMSessionTranscript,
     createLLMSessionId(occurredAt: string) {
-      return Number(sessionRuntime.ensureCurrentLLMSession(occurredAt, "chat").id);
+      return sessionRuntime.ensureCurrentLLMSession(occurredAt, "chat").id;
     },
     onLLMSessionUpdated: sessionRuntime.updateCurrentLLMSessionTranscript,
     processRestartContinuationStore: {

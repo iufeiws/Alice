@@ -78,7 +78,7 @@ test("talk exposed selfie tool calls receive agent loop run context", async () =
   let sendCalls = 0;
   let activeSession: any;
   const executedPoses: string[] = [];
-  const observedContexts: Array<{ agentLoopRunSeq?: number; llmSessionId?: number }> = [];
+  const observedContexts: Array<{ agentLoopRunSeq?: number; llmSessionId?: number | string }> = [];
   const sentMessages: unknown[][] = [];
   const tools: ToolPlugin[] = [{
     id: "photo",

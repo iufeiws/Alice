@@ -1,23 +1,20 @@
 import { createLLMSessionBrowserRuntime } from "../../../llm-session/src/application/browse-llm-sessions.js";
+import type { LLMSessionListItem, StoredLLMSession } from "../../../llm-session/src/adapters/sqlite-llm-session-store.js";
 
 export function createMemoryLLMSessionRuntime(input: {
-  sessionRoot(): string;
-  collectFiles(dir: string, files: string[]): void;
-  relativePath(filePath: string): string;
+  listSessions(agentType: string, limit?: number): LLMSessionListItem[];
+  readSession(sessionId: string): StoredLLMSession | undefined;
+  readSessionMeta(sessionId: string): Record<string, unknown> | undefined;
 }) {
   const browser = createLLMSessionBrowserRuntime({
-    sessionRoot: input.sessionRoot,
-    collectFiles: input.collectFiles,
-    relativePath: input.relativePath,
+    listSessions: input.listSessions,
+    readSession: input.readSession,
+    readSessionMeta: input.readSessionMeta,
     sources: [{
       name: "memorize",
-      subdir: "memorize",
+      agentTypes: ["memorize"],
       limit: 100,
-      accept: (metadata) => metadata.agent === "memorize",
-      id: ({ metadata, relativePath }) => typeof metadata.sessionId === "string"
-        ? metadata.sessionId
-        : `memorize:${relativePath}`,
-      mode: (metadata) => typeof metadata.mode === "string" ? metadata.mode : "memorize"
+      mode: () => "memorize"
     }]
   });
 

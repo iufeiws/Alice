@@ -19,7 +19,7 @@ export type TalkLoopSessionContextDeps = {
   setLoopPrefixMessageCount(sessionId: number, count: number): void;
   buildNextLoopMessagePatch(sessionId: number, options?: { supportsAudio?: boolean }): Promise<TalkLoopMessagePatch> | TalkLoopMessagePatch;
   loadActiveTalkLLMSessionTranscript(): {
-    id?: number;
+    id?: string;
     messages: LLMMessage[];
     staticPromptFingerprint?: string;
     staticPromptMessageCount?: number;
@@ -32,7 +32,7 @@ export type TalkLoopSessionContextDeps = {
     lastCompletedToolName?: string;
   } | undefined;
   updateActiveTalkLLMSessionTranscript(session: {
-    id?: number;
+    id?: string;
     messages: LLMMessage[];
     staticPromptFingerprint?: string;
     staticPromptMessageCount?: number;

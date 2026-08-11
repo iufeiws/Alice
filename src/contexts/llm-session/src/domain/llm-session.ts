@@ -83,7 +83,7 @@ export type LLMSessionTurn = {
 
 export type LLMSessionRecord = {
   id: number;
-  agentId?: "chat" | "talk";
+  agentId?: "chat" | "talk" | "memorize";
   startedAt: string;
   startedAtUtc?: string;
   updatedAt: string;

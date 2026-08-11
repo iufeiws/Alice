@@ -255,7 +255,7 @@ test("chat agent exits expired fixed prefix mode on the next request", async () 
 test("chat agent passes agent loop run context to exposed selfie tool calls", async () => {
   const requests: LLMChatInput[] = [];
   const executed: string[] = [];
-  const contexts: Array<{ agentLoopRunSeq?: number; llmSessionId?: number }> = [];
+  const contexts: Array<{ agentLoopRunSeq?: number; llmSessionId?: number | string }> = [];
   const llm: LLMClient = {
     async chat(input) {
       requests.push(input);

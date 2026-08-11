@@ -10,6 +10,13 @@ import { cloneJsonObject, cloneLLMTools, cloneTokenPressurePreviewBaselines } fr
 
 type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
 
+/**
+ * LLM 会话运行时: 主会话的唯一内存所有者和唯一数据库写入口。
+ *
+ * 写操作一律"构造新值 -> SQLite 同步事务 -> 替换内存值":
+ * 事务失败抛错且内存权威对象保持原值; 不引入 revision/CAS/并发协议。
+ * current 只由外部指针决定, 启动时恢复一次, 运行期间不重新从 SQLite 构造会话。
+ */
 export function createLLMSessionRuntime(input: {
   time: CurrentTimeProvider;
   archive: any;
@@ -18,6 +25,8 @@ export function createLLMSessionRuntime(input: {
   appendLog: AppendLog;
 }) {
   let nextSessionId = 1;
+  /** 内存权威当前会话(与指针指向的会话一致)。 */
+  let currentSession: LLMSessionRecord | undefined;
 
   return {
     ensureCurrentLLMSession,
@@ -34,138 +43,160 @@ export function createLLMSessionRuntime(input: {
     restorePersistedCurrentLLMSession
   };
 
+  /**
+   * 取当前会话; pointer agent 与请求不一致或没有 current 时创建新会话。
+   * 创建顺序(§7): 先提交 SQLite 新会话, 再原子写 pointer。
+   */
   function ensureCurrentLLMSession(time: string, agentId: "chat" | "talk" = "chat"): LLMSessionRecord {
-    let currentSession = input.archive.readCurrent();
-    if (currentSession && (currentSession.agentId ?? "chat") !== agentId) {
-      currentSession = undefined;
+    if (currentSession && (currentSession.agentId ?? "chat") === agentId) return currentSession;
+    let session = input.archive.readCurrent();
+    if (session && (session.agentId ?? "chat") !== agentId) session = undefined;
+    if (!session) {
+      session = createNewSession(time, agentId);
+      input.archive.writeFile(session);
+      input.archive.writeCurrentPointer(session);
     }
-    if (!currentSession) {
-      currentSession = createNewSession(time, agentId);
-      input.archive.writeFile(currentSession);
-      input.archive.writeCurrentPointer(currentSession);
-    }
-    currentSession.agentId = agentId;
-    return currentSession;
+    currentSession = session;
+    return session;
   }
 
   function createTalkLLMSession(time: string): LLMSessionRecord {
     const session = createNewSession(time, "talk");
     input.archive.writeFile(session);
     input.archive.writeCurrentPointer(session);
+    currentSession = session;
     return session;
   }
 
-  function noteLLMRequest(entry: LLMRequestLogEntry, agentId: "chat" | "talk" = "chat"): void {
+  /** 发送 LLM 请求前提交: 请求消息必须是对当前 transcript 的追加或相等。 */
+  function noteLLMRequest(entry: Omit<LLMRequestLogEntry, "agentId"> & { agentId?: string }, agentId: "chat" | "talk" = "chat"): void {
     const session = ensureCurrentLLMSession(entry.time, agentId);
     entry.sessionId = session.id;
-    session.updatedAt = entry.time;
-    session.updatedAtUtc = entry.timeUtc;
-    session.requestIds.push(entry.id);
-    session.latestRequest = entry.rawRequest;
-    session.requests = [...(session.requests ?? []), archiveRequestEntry(entry)];
-    const round = session.requestIds.length - 1;
-    session.currentRound = {
-      status: "running",
-      round,
-      startedAt: entry.time,
-      startedAtUtc: entry.timeUtc,
-      model: entry.model,
-      temperature: entry.temperature,
-      tools: cloneLLMTools(entry.tools),
-      extraParams: cloneJsonObject(entry.extraParams),
-      presetName: entry.presetName
+    const previousMessages = session.messages;
+    const commonPrefix = commonMessagePrefixLength(previousMessages, entry.messages);
+    if (commonPrefix !== previousMessages.length) {
+      throw new Error(`llm current session transcript divergence: session=${session.id} common_prefix=${commonPrefix} next_messages=${entry.messages.length}`);
+    }
+    const delta = entry.messages.slice(previousMessages.length);
+    const round = session.requestIds.length;
+    const next: LLMSessionRecord = {
+      ...session,
+      updatedAt: entry.time,
+      updatedAtUtc: entry.timeUtc,
+      requestIds: [...session.requestIds, entry.id],
+      latestRequest: entry.rawRequest,
+      requests: [...(session.requests ?? []), archiveRequestEntry(entry)],
+      currentRound: {
+        status: "running",
+        round,
+        startedAt: entry.time,
+        startedAtUtc: entry.timeUtc,
+        model: entry.model,
+        temperature: entry.temperature,
+        tools: cloneLLMTools(entry.tools),
+        extraParams: cloneJsonObject(entry.extraParams),
+        presetName: entry.presetName
+      },
+      latestRequestInfo: {
+        time: entry.time,
+        timeUtc: entry.timeUtc,
+        round,
+        model: entry.model,
+        temperature: entry.temperature,
+        tools: cloneLLMTools(entry.tools),
+        extraParams: cloneJsonObject(entry.extraParams),
+        presetName: entry.presetName,
+        messageCount: entry.messages.length
+      },
+      messages: cloneLLMMessages(entry.messages)
     };
-    session.latestRequestInfo = {
-      time: entry.time,
-      timeUtc: entry.timeUtc,
-      round,
-      model: entry.model,
-      temperature: entry.temperature,
-      tools: cloneLLMTools(entry.tools),
-      extraParams: cloneJsonObject(entry.extraParams),
-      presetName: entry.presetName,
-      messageCount: entry.messages.length
-    };
-    session.messages = cloneLLMMessages(entry.messages);
-    input.archive.writeFile(session);
-    input.archive.writeCurrentPointer(session);
+    if (delta.length > 0) input.archive.appendMessages(next, delta);
+    input.archive.writeMetadata(next);
+    currentSession = next;
   }
 
+  /** 收到 assistant response 后、执行 tool 前同步追加。 */
   function noteLLMResponse(entry: LLMResponseLogEntry): void {
-    // agent loop 串行执行, 响应永远属于当前指针指向的会话,
-    // 只读当前单个会话文件即可, 不要全量扫描(readAll)所有会话。
-    const currentSession = input.archive.readCurrent();
-    if (!currentSession) return;
-    if (entry.sessionId !== undefined && currentSession.id !== entry.sessionId) {
-      input.appendLog("warn", `llm response skipped: session mismatch response_session=${entry.sessionId} current_session=${currentSession.id}`);
+    const session = currentSession ?? input.archive.readCurrent();
+    if (!session) return;
+    if (entry.sessionId !== undefined && session.id !== entry.sessionId) {
+      input.appendLog("warn", `llm response skipped: session mismatch response_session=${entry.sessionId} current_session=${session.id}`);
       return;
     }
-    currentSession.updatedAt = entry.time;
-    currentSession.updatedAtUtc = entry.timeUtc;
-    currentSession.responseIds.push(entry.id);
-    currentSession.responses = [...(currentSession.responses ?? []), entry];
-    const round = currentSession.currentRound?.round ?? Math.max(0, currentSession.requestIds.length - 1);
-    currentSession.currentRound = {
-      ...(currentSession.currentRound ?? { round, startedAt: entry.time }),
-      status: "finished",
-      round,
-      finishedAt: entry.time,
-      finishedAtUtc: entry.timeUtc
+    const round = session.currentRound?.round ?? Math.max(0, session.requestIds.length - 1);
+    const next: LLMSessionRecord = {
+      ...session,
+      updatedAt: entry.time,
+      updatedAtUtc: entry.timeUtc,
+      responseIds: [...session.responseIds, entry.id],
+      responses: [...(session.responses ?? []), entry],
+      currentRound: {
+        ...(session.currentRound ?? { round, startedAt: entry.time }),
+        status: "finished",
+        round,
+        finishedAt: entry.time,
+        finishedAtUtc: entry.timeUtc
+      },
+      latestResponseInfo: {
+        time: entry.time,
+        timeUtc: entry.timeUtc,
+        round,
+        finishReason: entry.finishReason,
+        usage: entry.usage,
+        toolCallCount: entry.message.toolCalls?.length ?? 0
+      },
+      messages: [...session.messages, cloneLLMMessages([entry.message])[0]]
     };
-    currentSession.latestResponseInfo = {
-      time: entry.time,
-      timeUtc: entry.timeUtc,
-      round,
-      finishReason: entry.finishReason,
-      usage: entry.usage,
-      toolCallCount: entry.message.toolCalls?.length ?? 0
-    };
-    currentSession.messages = [...currentSession.messages, cloneLLMMessages([entry.message])[0]];
-    input.archive.appendMessages(currentSession, [entry.message]);
-    input.archive.writeMetadata(currentSession);
-    input.archive.writeCurrentPointer(currentSession);
+    input.archive.appendMessages(next, [entry.message]);
+    input.archive.writeMetadata(next);
+    currentSession = next;
   }
 
-  function rewriteActiveTalkLLMSessionFromRuntime(talkSessionId: number): void {
-    const session = input.archive.readCurrent();
-    if (!session || session.agentId !== "talk" || session.id !== talkSessionId) return;
-    const conversationStartIndex = input.getConversationStartIndex(talkSessionId);
+  /** Talk 显式完整替换(原因 talk_interrupt): 只允许从 talk runtime 重建。 */
+  function rewriteActiveTalkLLMSessionFromRuntime(talkSessionId: number | string): void {
+    const session = currentSession ?? input.archive.readCurrent();
+    if (!session || session.agentId !== "talk" || session.id !== Number(talkSessionId)) return;
+    const conversationStartIndex = input.getConversationStartIndex(Number(talkSessionId));
     if (conversationStartIndex === undefined) return;
     const preservedPrefix = session.messages.slice(0, conversationStartIndex);
-    const runtimeMessages = input.buildTalkRuntimeMessages(talkSessionId);
+    const runtimeMessages = input.buildTalkRuntimeMessages(Number(talkSessionId));
     const current = input.time.now();
-    session.updatedAt = current.iso;
-    session.updatedAtUtc = current.date.toISOString();
-    session.messages = cloneLLMMessages([
-      ...preservedPrefix,
-      ...runtimeMessages
-    ]);
-    session.currentRound = session.currentRound
-      ? {
-        ...session.currentRound,
-        status: "interrupted",
-        finishedAt: current.iso,
-        finishedAtUtc: current.date.toISOString()
-      }
-      : session.currentRound;
-    session.reason = "talk_interrupt";
-    input.archive.writeFile(session);
-    input.archive.writeMetadata(session);
-    input.archive.writeCurrentPointer(session);
+    const next: LLMSessionRecord = {
+      ...session,
+      updatedAt: current.iso,
+      updatedAtUtc: current.date.toISOString(),
+      messages: cloneLLMMessages([
+        ...preservedPrefix,
+        ...runtimeMessages
+      ]),
+      currentRound: session.currentRound
+        ? {
+          ...session.currentRound,
+          status: "interrupted",
+          finishedAt: current.iso,
+          finishedAtUtc: current.date.toISOString()
+        }
+        : session.currentRound,
+      reason: "talk_interrupt"
+    };
+    input.archive.replaceTranscript(next, "talk_interrupt");
+    currentSession = next;
   }
 
   function isActiveTalkLLMSession(sessionId: number): boolean {
-    const session = input.archive.readCurrent();
-    return session?.agentId === "talk" && session.id === sessionId;
+    return currentSession?.agentId === "talk" && currentSession.id === sessionId;
   }
 
+  /**
+   * 普通 Chat 更新: 只允许 meta 改变或尾部追加。
+   * 非追加(第二份内存历史/错误覆盖)是违反单一内存所有权的程序错误,
+   * 抛出明确错误并中止, 不覆盖 SQLite、不自动创建新会话(§5.2)。
+   */
   function updateCurrentLLMSessionTranscript(sessionInput: LLMSessionSnapshot & { staticPromptFingerprint: string; requestTimestamps: string[] }): void {
     const current = input.time.now();
     const now = current.iso;
     const nowUtc = current.date.toISOString();
-    const session = ensureCurrentLLMSession(now);
-    session.updatedAt = now;
-    session.updatedAtUtc = nowUtc;
+    const session = currentSession ?? input.archive.readCurrent() ?? ensureCurrentLLMSession(now);
     const commonPrefix = commonMessagePrefixLength(session.messages, sessionInput.messages);
     const isAppend = commonPrefix === session.messages.length;
     const delta = sessionInput.messages.slice(commonPrefix);
@@ -202,110 +233,117 @@ export function createLLMSessionRuntime(input: {
       || session.skipNextAppendLayers !== nextSkipNextAppendLayers
       || stableStringify(session.modeStaticMessages ?? []) !== stableStringify(nextModeStaticMessages);
     if (!isAppend) {
-      session.clearedAt = now;
-      session.clearedAtUtc = nowUtc;
-      session.reason = "transcript_replaced";
-      input.archive.writeMetadata(session);
-      input.archive.clearCurrentPointer();
-      input.appendLog("warn", `llm current session archived without transcript rewrite: session=${session.id} common_prefix=${commonPrefix} next_messages=${sessionInput.messages.length}`);
-      return;
+      throw new Error(`llm current session transcript divergence: session=${session.id} common_prefix=${commonPrefix} next_messages=${sessionInput.messages.length}`);
     }
-    session.messages = sessionInput.messages;
-    session.staticPromptFingerprint = sessionInput.staticPromptFingerprint;
-    session.staticPromptMessageCount = sessionInput.staticPromptMessageCount;
-    session.requestTimestamps = sessionInput.requestTimestamps;
-    session.agentLoopRunSeq = sessionInput.agentLoopRunSeq;
-    session.lastTotalTokens = sessionInput.lastTotalTokens;
-    session.lastInputTokens = sessionInput.lastInputTokens;
-    session.lastUsageModel = sessionInput.lastUsageModel;
-    session.tokenPressurePreviewBaselines = nextTokenPressurePreviewBaselines;
-    session.mode = nextMode;
-    session.modeStaticMessages = nextModeStaticMessages;
-    session.modeStaticTokenEstimate = nextModeStaticTokenEstimate;
-    session.modeStartedAt = nextModeStartedAt;
-    session.modeExpiresAt = nextModeExpiresAt;
-    session.fixedPrefixKind = nextFixedPrefixKind;
-    session.fixedPrefixStartedAt = nextFixedPrefixStartedAt;
-    session.loopStartedAt = nextLoopStartedAt;
-    session.waitChatStartedAt = nextWaitChatStartedAt;
-    session.waitChatMode = nextWaitChatMode;
-    session.waitChatUntil = nextWaitChatUntil;
-    session.waitChatTarget = nextWaitChatTarget;
-    session.skipNextAppendLayers = nextSkipNextAppendLayers;
-    if (delta.length > 0) input.archive.appendMessages(session, delta);
-    if (delta.length > 0 || agentLoopRunSeqChanged || tokenUsageChanged || modeChanged) input.archive.writeMetadata(session);
-    input.archive.writeCurrentPointer(session);
+    const next: LLMSessionRecord = {
+      ...session,
+      updatedAt: now,
+      updatedAtUtc: nowUtc,
+      messages: cloneLLMMessages(sessionInput.messages),
+      staticPromptFingerprint: sessionInput.staticPromptFingerprint,
+      staticPromptMessageCount: sessionInput.staticPromptMessageCount,
+      requestTimestamps: sessionInput.requestTimestamps,
+      agentLoopRunSeq: sessionInput.agentLoopRunSeq,
+      lastTotalTokens: sessionInput.lastTotalTokens,
+      lastInputTokens: sessionInput.lastInputTokens,
+      lastUsageModel: sessionInput.lastUsageModel,
+      tokenPressurePreviewBaselines: nextTokenPressurePreviewBaselines,
+      mode: nextMode,
+      modeStaticMessages: nextModeStaticMessages,
+      modeStaticTokenEstimate: nextModeStaticTokenEstimate,
+      modeStartedAt: nextModeStartedAt,
+      modeExpiresAt: nextModeExpiresAt,
+      fixedPrefixKind: nextFixedPrefixKind,
+      fixedPrefixStartedAt: nextFixedPrefixStartedAt,
+      loopStartedAt: nextLoopStartedAt,
+      waitChatStartedAt: nextWaitChatStartedAt,
+      waitChatMode: nextWaitChatMode,
+      waitChatUntil: nextWaitChatUntil,
+      waitChatTarget: nextWaitChatTarget,
+      skipNextAppendLayers: nextSkipNextAppendLayers
+    };
+    if (delta.length > 0) input.archive.appendMessages(next, delta);
+    if (delta.length > 0 || agentLoopRunSeqChanged || tokenUsageChanged || modeChanged) input.archive.writeMetadata(next);
+    currentSession = next;
   }
 
+  /** Talk 更新: 追加场景走 store.append, 重建场景走显式 store.replace(原因 talk_rebuild)。 */
   function updateActiveTalkLLMSessionTranscript(sessionInput: LLMSessionSnapshot): void {
     const current = input.time.now();
     const now = current.iso;
     const nowUtc = current.date.toISOString();
     const session = ensureCurrentLLMSession(now, "talk");
     const previousMessages = session.messages;
-    session.updatedAt = now;
-    session.updatedAtUtc = nowUtc;
-    session.messages = cloneLLMMessages(sessionInput.messages);
-    session.staticPromptFingerprint = sessionInput.staticPromptFingerprint;
-    session.staticPromptMessageCount = sessionInput.staticPromptMessageCount;
-    session.requestTimestamps = sessionInput.requestTimestamps ?? session.requestTimestamps ?? [];
-    session.agentLoopRunSeq = sessionInput.agentLoopRunSeq;
-    session.lastTotalTokens = sessionInput.lastTotalTokens;
-    session.lastInputTokens = sessionInput.lastInputTokens;
-    session.lastUsageModel = sessionInput.lastUsageModel;
-    session.tokenPressurePreviewBaselines = cloneTokenPressurePreviewBaselines(sessionInput.tokenPressurePreviewBaselines);
-    session.mode = sessionInput.mode ?? "normal";
-    session.modeStaticMessages = sessionInput.modeStaticMessages ?? [];
-    session.modeStaticTokenEstimate = sessionInput.modeStaticTokenEstimate ?? 0;
-    session.modeStartedAt = sessionInput.modeStartedAt;
-    session.modeExpiresAt = sessionInput.modeExpiresAt;
-    session.fixedPrefixKind = sessionInput.fixedPrefixKind;
-    session.fixedPrefixStartedAt = sessionInput.fixedPrefixStartedAt;
-    session.loopStartedAt = sessionInput.loopStartedAt;
-    session.waitChatStartedAt = sessionInput.waitChatStartedAt;
-    session.waitChatMode = sessionInput.waitChatMode;
-    session.waitChatUntil = sessionInput.waitChatUntil;
-    session.waitChatTarget = sessionInput.waitChatTarget;
-    session.skipNextAppendLayers = sessionInput.skipNextAppendLayers === true ? true : undefined;
-    if (commonMessagePrefixLength(previousMessages, session.messages) === previousMessages.length) {
-      const delta = session.messages.slice(previousMessages.length);
-      if (delta.length > 0) input.archive.appendMessages(session, delta);
-      input.archive.writeMetadata(session);
-      input.archive.writeCurrentPointer(session);
-      return;
+    const next: LLMSessionRecord = {
+      ...session,
+      updatedAt: now,
+      updatedAtUtc: nowUtc,
+      messages: cloneLLMMessages(sessionInput.messages),
+      staticPromptFingerprint: sessionInput.staticPromptFingerprint,
+      staticPromptMessageCount: sessionInput.staticPromptMessageCount,
+      requestTimestamps: sessionInput.requestTimestamps ?? session.requestTimestamps ?? [],
+      agentLoopRunSeq: sessionInput.agentLoopRunSeq,
+      lastTotalTokens: sessionInput.lastTotalTokens,
+      lastInputTokens: sessionInput.lastInputTokens,
+      lastUsageModel: sessionInput.lastUsageModel,
+      tokenPressurePreviewBaselines: cloneTokenPressurePreviewBaselines(sessionInput.tokenPressurePreviewBaselines),
+      mode: sessionInput.mode ?? "normal",
+      modeStaticMessages: sessionInput.modeStaticMessages ?? [],
+      modeStaticTokenEstimate: sessionInput.modeStaticTokenEstimate ?? 0,
+      modeStartedAt: sessionInput.modeStartedAt,
+      modeExpiresAt: sessionInput.modeExpiresAt,
+      fixedPrefixKind: sessionInput.fixedPrefixKind,
+      fixedPrefixStartedAt: sessionInput.fixedPrefixStartedAt,
+      loopStartedAt: sessionInput.loopStartedAt,
+      waitChatStartedAt: sessionInput.waitChatStartedAt,
+      waitChatMode: sessionInput.waitChatMode,
+      waitChatUntil: sessionInput.waitChatUntil,
+      waitChatTarget: sessionInput.waitChatTarget,
+      skipNextAppendLayers: sessionInput.skipNextAppendLayers === true ? true : undefined
+    };
+    if (commonMessagePrefixLength(previousMessages, next.messages) === previousMessages.length) {
+      const delta = next.messages.slice(previousMessages.length);
+      if (delta.length > 0) input.archive.appendMessages(next, delta);
+      input.archive.writeMetadata(next);
+    } else {
+      next.reason = "talk_rebuild";
+      input.archive.replaceTranscript(next, "talk_rebuild");
     }
-    input.archive.writeFile(session);
-    input.archive.writeMetadata(session);
-    input.archive.writeCurrentPointer(session);
+    currentSession = next;
   }
 
+  /** clear: 先提交完整新 meta(clearedAt/clearedAtUtc/reason), 再删除指针(§7)。 */
   function clearCurrentLLMSession(reason: LLMSessionClearReason): void {
-    const currentSession = input.archive.readCurrent();
-    if (!currentSession) {
+    const session = currentSession ?? input.archive.readCurrent();
+    if (!session) {
       input.archive.clearCurrentPointer();
       return;
     }
-    const sessionId = currentSession.id;
-    const requestCount = currentSession.requestIds.length;
+    const sessionId = session.id;
+    const requestCount = session.requestIds.length;
     const clearedTime = input.time.now();
-    currentSession.clearedAt = clearedTime.iso;
-    currentSession.clearedAtUtc = clearedTime.date.toISOString();
-    currentSession.reason = reason;
-    input.archive.writeMetadata(currentSession);
+    const next: LLMSessionRecord = {
+      ...session,
+      clearedAt: clearedTime.iso,
+      clearedAtUtc: clearedTime.date.toISOString(),
+      reason
+    };
+    input.archive.writeMetadata(next);
     input.archive.clearCurrentPointer();
+    currentSession = undefined;
     input.appendLog("info", `llm current session cleared: session=${sessionId} reason=${reason} requests=${requestCount}`);
   }
 
   function getCurrentLLMSessionSnapshot(): unknown {
-    const currentSession = input.archive.readCurrent();
-    if (!currentSession) return undefined;
-    return summarizeLLMSession(currentSession);
+    const session = currentSession ?? input.archive.readCurrent();
+    if (!session) return undefined;
+    return summarizeLLMSession(session);
   }
 
   function loadCurrentLLMSessionTranscript(): LLMSessionSnapshot | undefined {
-    const currentSession = input.archive.readCurrent();
-    if (!currentSession) return undefined;
-    const latest = currentSession;
+    const session = currentSession ?? input.archive.readCurrent();
+    if (!session) return undefined;
+    const latest = session;
     if (latest.clearedAt) return undefined;
     return {
       id: latest.id,
@@ -337,14 +375,19 @@ export function createLLMSessionRuntime(input: {
 
   function restorePersistedCurrentLLMSession(): LLMSessionRecord | undefined {
     const session = input.archive.restorePersistedActive();
-    if (session) nextSessionId = Math.max(nextSessionId, session.id + 1);
+    if (session) {
+      nextSessionId = Math.max(nextSessionId, session.id + 1);
+      currentSession = session;
+    }
     return session;
   }
 
   function createNewSession(time: string, agentId: "chat" | "talk"): LLMSessionRecord {
     const timeUtc = parseZonedIso(time, input.time.timeZone).toISOString();
+    // session_id 为 UTC 毫秒时间戳(单一互斥 worker 下同一毫秒不会创建两个会话);
+    // 时间解析失败时回退到递增备用 ID。
     const sessionId = utcTimestamp(timeUtc) ?? nextSessionId;
-    nextSessionId += 1;
+    nextSessionId = Math.max(nextSessionId, sessionId + 1);
     return {
       id: sessionId,
       agentId,
@@ -352,7 +395,6 @@ export function createLLMSessionRuntime(input: {
       startedAtUtc: timeUtc,
       updatedAt: time,
       updatedAtUtc: timeUtc,
-      archiveFilePath: input.archive.createFilePath(timeUtc, agentId),
       requestIds: [],
       responseIds: [],
       messages: [],
@@ -363,9 +405,10 @@ export function createLLMSessionRuntime(input: {
   }
 }
 
-function archiveRequestEntry(entry: LLMRequestLogEntry): LLMRequestLogEntry {
+function archiveRequestEntry(entry: Omit<LLMRequestLogEntry, "agentId"> & { agentId?: string }): LLMRequestLogEntry {
   return {
     ...entry,
+    agentId: entry.agentId === "talk" || entry.agentId === "chat" ? entry.agentId : undefined,
     messages: cloneLLMMessages(entry.messages),
     tools: cloneLLMTools(entry.tools),
     rawRequest: entry.rawRequest ?? buildRawLLMRequest(entry)

@@ -245,7 +245,7 @@ export type ToolExecutionContext = {
   signal?: AbortSignal;
   lastCompletedToolName?: string;
   agentLoopRunSeq?: number;
-  llmSessionId?: number;
+  llmSessionId?: number | string;
   llmCapabilities?: {
     supportsImage?: boolean;
     supportsAudio?: boolean;

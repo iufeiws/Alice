@@ -51,6 +51,7 @@ src/
 ├── contexts/            # 业务上下文（DDD 边界）
 ├── channels/            # 渠道插件（飞书/微信/语音/媒体）
 ├── capabilities/tools/  # LLM 工具插件（ToolPlugin）
+├── capabilities/skills/ # 项目专有技能（SkillPlugin）
 ├── platform/            # 平台基础设施（config/time/storage/scheduler/output-router）
 └── shared/              # 跨模块共享小工具
 ```
@@ -121,6 +122,25 @@ src/
 | bookcase | `Bookcase` | 书橱抽书讲故事 / 还书（assets/tools/bookcase/booksummaries.sqlite） |
 | wardrobe | `Wardrobe` | 查看/切换服装（list/mirror/switch/random，可触发 on-body 生成） |
 | finish-and-wait | `Yield` | 等待或结束：schedule（10s–15min 定时返回）/ await_chat（固定 15 分钟）/ finish；连续 schedule 且无 subagent 运行时拒绝（防空转） |
+
+
+结构约束：
+capabilities/tools/{tool name}/
+├── src/                          # 业务代码
+│   ├── index.ts                  # 导出 createXxxTools(deps): ToolPlugin 工厂（契约 id + listTools + execute）
+│   └── *.ts                      # 复杂工具按需拆分（config.ts / types.ts / tool-runtime.ts 等）
+├── profile.ts                    # 纯静态声明：ToolDefinition（name/description/inputSchema/suppressExecutionCard）
+│                                 #   + 工具名常量 + 描述常量 + 提示/报错/警告/系统提示文本常量
+│                                 #   可被 chat-agent / admin-api 等跨模块直接引用（如 restartToolName）
+└── README.md                     # 可选：工具行为说明（photo / subagent / bookcase 有）
+
+配套路径：总装在 `messaging/src/tool-runtime.ts`（逐一 `createXxxTools` 组装）；测试在 `tests/capabilities/tools/{tool name}/`。
+
+实现约束：
+- 已暴露的 tool call 必须走统一 ToolPlugin.execute 路径，结果写回同一 function-call loop；`requester` 仅表示调用来源。
+- 产出 AgentOutput 的工具必须经 capabilities 层 tool-output-target 解析投递目标，不得自行决定渠道。
+- 工具返回无须包含无关元数据，也不得带 render 层渠道格式。
+- description 是 LLM 可见的工具接口，遵循 tool_description_guideline.md（不重复 inputSchema、无需暴露实现细节）。
 
 ### 4.5 platform 与 shared
 

@@ -113,7 +113,7 @@ src/
 | calendar | `calendar` | 日历增删查搜 + 上下文渲染（SQLite CalendarStore） |
 | shell | `Bash` | 沙盒 bash 执行（透传 PiWorker） |
 | file | `Read`/`Write`/`Edit`/`Glob` | 文件读写改查（图片转 llmFollowupAttachments） |
-| location | `check_location` | 当前历史位置对应的现实地点（走 StreetView） |
+| location | Panorama | 街景与世界漫游：current 查看当前位置/teleport 传送重置轨迹/navigation 设导航目标 |
 | restart | `restart` | 重启 Alice 服务（systemd） |
 | subagent | `SubAgent` | 持久化 SubAgent 会话（spawn/send/wait/cancel/fork，走 PiWorker） |
 | skills | `Skill` | 按名称加载技能（XML 输出） |

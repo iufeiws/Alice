@@ -1,48 +1,99 @@
 import type { ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import {
+  defaultWorldWandererPluginConfigPath,
+  pathEntryFromPano,
   readWorldWandererConfig,
   readWorldWandererState,
+  writeWorldWandererConfig,
+  writeWorldWandererState
+} from "../../../../contexts/world-wanderer/src/index.js";
+import type {
+  WorldWandererConfig,
+  WorldWandererState
 } from "../../../../contexts/world-wanderer/src/index.js";
 import type { GoogleStreetViewPanoGraphMetadataResponse, GoogleStreetViewPlugin } from "../../../../channels/google-streetview/src/index.js";
-import { checkLocationTool, checkLocationToolName, locationToolText } from "../profile.js";
+import { locationToolText, panoramaTool, panoramaToolName } from "../profile.js";
 
 export type LocationToolsDeps = {
   configPath?: string;
   dbPath: string;
   getGoogleStreetView(): Pick<GoogleStreetViewPlugin, "getPanoGraphByCoordinates" | "getPanoGraphByPanoId" | "getStreetViewByCoordinates">;
-  now?(): Date;
+  now(): string;
 };
 
 export function createLocationTools(deps: LocationToolsDeps): ToolPlugin {
   return {
     id: "location",
     listTools() {
-      return readWorldWandererConfig(deps.configPath).enabled ? [checkLocationTool] : [];
+      return readWorldWandererConfig(deps.configPath).enabled ? [panoramaTool] : [];
     },
     async execute(call) {
-      if (call.toolName !== checkLocationToolName) return toolError(call, locationToolText.unknownTool(call.toolName));
+      if (call.toolName !== panoramaToolName) return toolError(call, locationToolText.unknownTool(call.toolName));
       const config = readWorldWandererConfig(deps.configPath);
       if (!config.enabled) return toolError(call, locationToolText.unavailable);
-      const state = readWorldWandererState(deps.dbPath, config);
-      const googleStreetView = deps.getGoogleStreetView();
-      const pano = state.panoId
-        ? await googleStreetView.getPanoGraphByPanoId({ panoId: state.panoId })
-        : await googleStreetView.getPanoGraphByCoordinates(state.location);
-      const text = readableWorldWandererLocationText(pano.metadata);
-      if (!text) return toolError(call, locationToolText.addressUnavailable);
-      const streetView = await googleStreetView.getStreetViewByCoordinates({
-        lat: pano.location.lat,
-        lng: pano.location.lng,
-        recognizeImage: true
-      });
-      if (!streetView.imageRecognition) throw new Error("google streetview image recognition returned no result");
-      return {
-        callId: call.id,
-        ok: true,
-        output: `${text}\n${streetView.imageRecognition.text}`
-      };
+      const action = call.input.action;
+      if (action !== "current" && action !== "teleport" && action !== "navigation") {
+        return toolError(call, locationToolText.invalidAction);
+      }
+      if (action === "teleport" || action === "navigation") {
+        const lat = call.input.lat;
+        const lng = call.input.lng;
+        if (lat === undefined) return toolError(call, locationToolText.missingLat);
+        if (lng === undefined) return toolError(call, locationToolText.missingLng);
+        if (!finiteNumberInRange(lat, -90, 90)) return toolError(call, locationToolText.invalidLat);
+        if (!finiteNumberInRange(lng, -180, 180)) return toolError(call, locationToolText.invalidLng);
+        return action === "teleport"
+          ? executeTeleport(call, config, lat, lng)
+          : executeNavigation(call, config, lat, lng);
+      }
+      return executeCurrent(call, config);
     }
   };
+
+  async function executeCurrent(call: ToolCall, config: WorldWandererConfig): Promise<ToolResult> {
+    const state = readWorldWandererState(deps.dbPath, config);
+    const googleStreetView = deps.getGoogleStreetView();
+    const pano = state.panoId
+      ? await googleStreetView.getPanoGraphByPanoId({ panoId: state.panoId })
+      : await googleStreetView.getPanoGraphByCoordinates(state.location);
+    const text = readableWorldWandererLocationText(pano.metadata);
+    if (!text) return toolError(call, locationToolText.addressUnavailable);
+    const streetView = await googleStreetView.getStreetViewByCoordinates({
+      lat: pano.location.lat,
+      lng: pano.location.lng,
+      recognizeImage: true
+    });
+    if (!streetView.imageRecognition) throw new Error("google streetview image recognition returned no result");
+    return {
+      callId: call.id,
+      ok: true,
+      output: `${text}\n${streetView.imageRecognition.text}`
+    };
+  }
+
+  async function executeTeleport(call: ToolCall, config: WorldWandererConfig, lat: number, lng: number): Promise<ToolResult> {
+    const googleStreetView = deps.getGoogleStreetView();
+    const pano = await googleStreetView.getPanoGraphByCoordinates({ lat, lng });
+    const text = readableWorldWandererLocationText(pano.metadata);
+    if (!text) return toolError(call, locationToolText.addressUnavailable);
+    const entry = pathEntryFromPano({ pano, lastHeading: pano.heading, time: deps.now() });
+    const state: WorldWandererState = {
+      location: pano.location,
+      lastHeading: entry.lastHeading,
+      panoId: pano.panoId,
+      pathStack: [entry]
+    };
+    writeWorldWandererState(deps.dbPath, state, config.recentHistoryLimit);
+    const next = { ...readWorldWandererConfig(deps.configPath) };
+    delete next.targetLocation;
+    writeWorldWandererConfig(deps.configPath ?? defaultWorldWandererPluginConfigPath, next);
+    return { callId: call.id, ok: true, output: text };
+  }
+
+  function executeNavigation(call: ToolCall, config: WorldWandererConfig, lat: number, lng: number): ToolResult {
+    writeWorldWandererConfig(deps.configPath ?? defaultWorldWandererPluginConfigPath, { ...config, targetLocation: { lat, lng } });
+    return { callId: call.id, ok: true, output: JSON.stringify({ lat, lng }) };
+  }
 }
 
 export function readableWorldWandererLocationText(metadata: GoogleStreetViewPanoGraphMetadataResponse | undefined): string | undefined {
@@ -55,6 +106,10 @@ export function readableWorldWandererLocationText(metadata: GoogleStreetViewPano
   if (components.length > 0) return withRecordDate([...new Set(components)].join(", "), metadata);
 
   return undefined;
+}
+
+function finiteNumberInRange(value: unknown, min: number, max: number): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= min && value <= max;
 }
 
 function withRecordDate(text: string, metadata: GoogleStreetViewPanoGraphMetadataResponse | undefined): string {

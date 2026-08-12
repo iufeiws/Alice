@@ -104,7 +104,7 @@ export function renderShellsScript(): string {
 
       function renderShellOption(category, option, index) {
         return \`
-          <details class="shell-option" data-shell-index="\${index}">
+          <details class="shell-option \${option.enabled === false ? "disabled" : ""}" data-shell-index="\${index}">
             <summary>
               <span class="shell-title">\${escapeHtml(option.name || "New Shell")}</span>
               <span class="shell-marker" data-field="marker"></span>
@@ -123,6 +123,11 @@ export function renderShellsScript(): string {
             <input data-field="name" value="\${escapeAttr(option.name || "")}" />
             <label>Group</label>
             <input data-field="group" value="\${escapeAttr(option.group || "")}" placeholder="root / 原神 / ..." />
+            \${category !== "outfits" ? \`
+              <label class="shell-option-toggle">
+                <input type="checkbox" data-field="enabled" \${option.enabled !== false ? "checked" : ""} /> 启用（可被随机选中）
+              </label>
+            \` : ""}
             \${category === "outfits" ? \`
               <div class="shell-outfit-images">
                 <div class="shell-image-box">
@@ -162,7 +167,7 @@ export function renderShellsScript(): string {
           event.preventDefault();
           event.stopPropagation();
           const group = event.currentTarget.dataset.shellGroupAdd || "root";
-          shellData[category].push({ id: category.slice(0, -1) + "_" + Date.now(), name: "New Shell", content: "", group });
+          shellData[category].push({ id: category.slice(0, -1) + "_" + Date.now(), name: "New Shell", content: "", group, enabled: true });
           rerenderShellGroup(category, group, true);
           updateShellCategoryCount(category);
         });
@@ -198,6 +203,23 @@ export function renderShellsScript(): string {
         optionRoot.querySelector('[data-field="id"]').addEventListener("input", (event) => { option.id = event.target.value; markShellOption(optionRoot, "dirty"); });
         optionRoot.querySelector('[data-field="name"]').addEventListener("input", (event) => { option.name = event.target.value; markShellOption(optionRoot, "dirty"); });
         optionRoot.querySelector('[data-field="group"]').addEventListener("input", (event) => { option.group = event.target.value; markShellOption(optionRoot, "dirty"); });
+        const enabledCheckbox = optionRoot.querySelector('[data-field="enabled"]');
+        if (enabledCheckbox) {
+          enabledCheckbox.addEventListener("change", async (event) => {
+            option.enabled = event.target.checked;
+            optionRoot.classList.toggle("disabled", !option.enabled);
+            enabledCheckbox.disabled = true;
+            try {
+              await persistShellOption(category, currentShellIndex(optionRoot));
+              markShellOption(optionRoot, "saved");
+              $("shell-status").textContent = "Shell saved: " + (option.enabled ? "enabled" : "disabled") + " " + (option.name || option.id || category);
+            } catch (error) {
+              $("shell-status").textContent = "Shell save failed: " + (error?.message || "unknown error");
+            } finally {
+              enabledCheckbox.disabled = false;
+            }
+          });
+        }
         bindShellImageDrop(optionRoot, option, category, index);
         bindShellOnBodyGenerate(optionRoot, option, category, index);
         const generatedCheckbox = optionRoot.querySelector('[data-field="outfitImageGenerated"]');

@@ -63,6 +63,8 @@ export function renderAdminStyles(): string {
       .shell-marker { color: #667085; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
       .shell-option summary button { margin: 0; padding: 5px 8px; }
       .shell-option textarea { min-height: 110px; }
+      .shell-option.disabled { opacity: 0.55; }
+      .shell-option-toggle { display: flex; align-items: center; gap: 6px; margin: 8px 0; font-weight: 600; cursor: pointer; }
       .shell-image-preview { margin-top: 10px; max-width: 220px; max-height: 160px; border: 1px solid #d7dce3; border-radius: 6px; object-fit: contain; background: #f8fafc; display: block; }
       .shell-image-preview.hidden { display: none; }
       .shell-image-drop { border: 1px dashed #98a2b3; border-radius: 6px; padding: 10px; background: #f8fafc; transition: border-color 120ms ease, background 120ms ease; }

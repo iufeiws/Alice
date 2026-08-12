@@ -54,6 +54,7 @@ export function normalizeOption(value: unknown): ShellOption | undefined {
       : typeof item.tag1 === "string" && item.tag1.trim()
         ? item.tag1
         : undefined,
+    enabled: item.enabled !== false,
     imageUrl: typeof item.imageUrl === "string" && item.imageUrl.trim() ? item.imageUrl : undefined,
     onBodyImageUrl,
     outfitImageGenerated: item.outfitImageGenerated === true || undefined,
@@ -73,14 +74,21 @@ export function findOption(options: ShellOption[], id: string): ShellOption | un
   return options.find((option) => option.id === id);
 }
 
+export function enabledOptions(options: ShellOption[]): ShellOption[] {
+  const enabled = options.filter((option) => option.enabled !== false);
+  return enabled.length > 0 ? enabled : options;
+}
+
 export function pick(options: ShellOption[]): ShellOption {
-  return options[Math.floor(Math.random() * options.length)] ?? options[0];
+  const pool = enabledOptions(options);
+  return pool[Math.floor(Math.random() * pool.length)] ?? pool[0];
 }
 
 export function pickExcludingRecent(options: ShellOption[], recentIds: string[]): ShellOption {
   const blocked = new Set(recentIds);
-  const candidates = options.filter((option) => !blocked.has(option.id));
-  return pick(candidates.length > 0 ? candidates : options);
+  const pool = enabledOptions(options);
+  const candidates = pool.filter((option) => !blocked.has(option.id));
+  return pick(candidates.length > 0 ? candidates : pool);
 }
 
 export function normalizeRecentRelationshipIds(value: unknown, relationships: ShellOption[]): string[] {

@@ -3,6 +3,7 @@ export type ShellOption = {
   name: string;
   content: string;
   group?: string;
+  enabled?: boolean;
   imageUrl?: string;
   onBodyImageUrl?: string;
   outfitImageGenerated?: boolean;

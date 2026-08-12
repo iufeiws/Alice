@@ -244,3 +244,111 @@ test("dailyShellStore_shellSwitch_recordsLocalTimeLogs", () => {
   assert.doesNotMatch(logs[0].time, /Z$|[+-]\d{2}:\d{2}$/);
   assert.doesNotMatch(logs[1].time, /Z$|[+-]\d{2}:\d{2}$/);
 });
+
+test("dailyShellStore_disabledOption_neverPickedOnGetOrReroll", () => {
+  const root = makeTempDir("daily-shell-disabled-pick");
+  const store = createDailyShellStore(root);
+  replaceShellCategory(root, store, "personalities", [
+    { id: "p1", name: "P One", content: "personality one", enabled: false },
+    { id: "p2", name: "P Two", content: "personality two" },
+    { id: "p3", name: "P Three", content: "personality three" }
+  ]);
+  replaceShellCategory(root, store, "relationships", [{ id: "r1", name: "R One", content: "relationship one" }]);
+  replaceShellCategory(root, store, "outfits", [{ id: "o1", name: "O One", content: "outfit one" }]);
+
+  const originalRandom = Math.random;
+  Math.random = () => 0;
+  try {
+    const daily = store.get(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
+    assert.notEqual(daily.personality.id, "p1");
+    assert.equal(["p2", "p3"].includes(daily.personality.id), true);
+    const rerolled = store.reroll(new Date("2026-05-27T08:00:00.000Z"), "Asia/Shanghai");
+    assert.notEqual(rerolled.personality.id, "p1");
+    assert.equal(["p2", "p3"].includes(rerolled.personality.id), true);
+  } finally {
+    Math.random = originalRandom;
+  }
+});
+
+test("dailyShellStore_disabledRelationship_neverPickedOnReroll", () => {
+  const root = makeTempDir("daily-shell-disabled-relationship");
+  const store = createDailyShellStore(root);
+  replaceShellCategory(root, store, "personalities", [{ id: "p1", name: "P One", content: "personality one" }]);
+  replaceShellCategory(root, store, "relationships", [
+    { id: "r1", name: "R One", content: "relationship one", enabled: false },
+    { id: "r2", name: "R Two", content: "relationship two" },
+    { id: "r3", name: "R Three", content: "relationship three" }
+  ]);
+  replaceShellCategory(root, store, "outfits", [{ id: "o1", name: "O One", content: "outfit one" }]);
+
+  const originalRandom = Math.random;
+  Math.random = () => 0;
+  try {
+    const daily = store.reroll(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
+    assert.notEqual(daily.relationship.id, "r1");
+    assert.equal(["r2", "r3"].includes(daily.relationship.id), true);
+  } finally {
+    Math.random = originalRandom;
+  }
+});
+
+test("dailyShellStore_allOptionsDisabled_fallsBackToFullPool", () => {
+  const root = makeTempDir("daily-shell-disabled-all");
+  const store = createDailyShellStore(root);
+  replaceShellCategory(root, store, "personalities", [
+    { id: "p1", name: "P One", content: "personality one", enabled: false },
+    { id: "p2", name: "P Two", content: "personality two", enabled: false }
+  ]);
+  replaceShellCategory(root, store, "relationships", [{ id: "r1", name: "R One", content: "relationship one" }]);
+  replaceShellCategory(root, store, "outfits", [{ id: "o1", name: "O One", content: "outfit one" }]);
+
+  const originalRandom = Math.random;
+  Math.random = () => 0;
+  try {
+    const daily = store.reroll(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
+    assert.equal(daily.personality.id, "p1");
+  } finally {
+    Math.random = originalRandom;
+  }
+});
+
+test("dailyShellStore_saveOption_persistsEnabledFlag", () => {
+  const root = makeTempDir("daily-shell-enabled-flag");
+  const store = createDailyShellStore(root);
+  replaceShellCategory(root, store, "personalities", [
+    { id: "p1", name: "P One", content: "personality one" },
+    { id: "p2", name: "P Two", content: "personality two" }
+  ]);
+  store.saveOption("personalities", { id: "p1", name: "P One", content: "personality one", enabled: false }, "p1");
+
+  const config = store.getConfig(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
+  assert.equal(config.personalities.find((option) => option.id === "p1")?.enabled, false);
+  assert.equal(config.personalities.find((option) => option.id === "p2")?.enabled, true);
+  const file = JSON.parse(fs.readFileSync(path.join(root, "shell", "personalities", "p1.json"), "utf8")) as { enabled?: boolean };
+  assert.equal(file.enabled, false);
+});
+
+test("dailyShellStore_disabledActiveOption_keepsTodayUntilReroll", () => {
+  const root = makeTempDir("daily-shell-disabled-active");
+  const store = createDailyShellStore(root);
+  replaceShellCategory(root, store, "personalities", [
+    { id: "p1", name: "P One", content: "personality one" },
+    { id: "p2", name: "P Two", content: "personality two" }
+  ]);
+  replaceShellCategory(root, store, "relationships", [{ id: "r1", name: "R One", content: "relationship one" }]);
+  replaceShellCategory(root, store, "outfits", [{ id: "o1", name: "O One", content: "outfit one" }]);
+
+  const originalRandom = Math.random;
+  Math.random = () => 0;
+  try {
+    const first = store.get(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
+    assert.equal(first.personality.id, "p1");
+    store.saveOption("personalities", { id: "p1", name: "P One", content: "personality one", enabled: false }, "p1");
+    const sameDay = store.get(new Date("2026-05-26T18:00:00.000Z"), "Asia/Shanghai");
+    assert.equal(sameDay.personality.id, "p1");
+    const rerolled = store.reroll(new Date("2026-05-27T08:00:00.000Z"), "Asia/Shanghai");
+    assert.equal(rerolled.personality.id, "p2");
+  } finally {
+    Math.random = originalRandom;
+  }
+});

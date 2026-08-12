@@ -1,7 +1,7 @@
 import type { LLMChatInput, LLMChatResult } from "../../../llm-gateway/src/index.js";
 import type { LLMRequestDiff } from "../../../llm-gateway/src/llm-request-diff.js";
 
-export type LLMSessionClearReason = "prompt_static_changed" | "admin_clear" | "admin_cancel" | "shutdown" | "token_pressure" | "mode_transition" | "mode_timeout" | "yield_end" | "process_restart_recovery_failed";
+export type LLMSessionClearReason = "prompt_static_changed" | "admin_clear" | "admin_cancel" | "shutdown" | "mode_transition" | "mode_timeout" | "yield_end" | "process_restart_recovery_failed";
 export type LLMSessionSnapshot = {
   id?: number;
   messages: LLMChatInput["messages"];
@@ -10,10 +10,6 @@ export type LLMSessionSnapshot = {
   requestTimestamps?: string[];
   agentLoopRunSeq?: number;
   currentRound?: number;
-  lastTotalTokens?: number;
-  lastInputTokens?: number;
-  lastUsageModel?: string;
-  tokenPressurePreviewBaselines?: Record<string, TokenPressurePreviewBaseline>;
   mode?: string;
   modeStaticMessages?: LLMChatInput["messages"];
   modeStaticTokenEstimate?: number;
@@ -30,11 +26,6 @@ export type LLMSessionSnapshot = {
     externalSession: { scope: "dm" | "group" | "topic" | "admin" | "desktop"; sessionId: string; threadId?: string };
   };
   skipNextAppendLayers?: boolean;
-};
-
-export type TokenPressurePreviewBaseline = {
-  inputTokens: number;
-  previewTokens: number;
 };
 
 export type LLMRequestLogEntry = {
@@ -98,10 +89,6 @@ export type LLMSessionRecord = {
   staticPromptMessageCount?: number;
   requestTimestamps: string[];
   agentLoopRunSeq?: number;
-  lastTotalTokens?: number;
-  lastInputTokens?: number;
-  lastUsageModel?: string;
-  tokenPressurePreviewBaselines?: Record<string, TokenPressurePreviewBaseline>;
   mode?: string;
   modeStaticMessages?: LLMChatInput["messages"];
   modeStaticTokenEstimate?: number;
@@ -156,6 +143,5 @@ export type LLMSessionResponseInfo = {
   timeUtc?: string;
   round: number;
   finishReason?: string;
-  usage?: LLMChatResult["usage"];
   toolCallCount: number;
 };

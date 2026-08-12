@@ -25,9 +25,6 @@ export type TalkLoopSessionContextDeps = {
     staticPromptMessageCount?: number;
     requestTimestamps?: string[];
     agentLoopRunSeq?: number;
-    lastTotalTokens?: number;
-    lastInputTokens?: number;
-    lastUsageModel?: string;
     mode?: string;
     lastCompletedToolName?: string;
   } | undefined;
@@ -38,9 +35,6 @@ export type TalkLoopSessionContextDeps = {
     staticPromptMessageCount?: number;
     requestTimestamps?: string[];
     agentLoopRunSeq?: number;
-    lastTotalTokens?: number;
-    lastInputTokens?: number;
-    lastUsageModel?: string;
     mode?: string;
     lastCompletedToolName?: string;
   }): void;

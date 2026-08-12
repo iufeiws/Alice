@@ -6,7 +6,7 @@ import { cloneLLMMessages } from "../adapters/jsonl-llm-session-log.js";
 import { buildRawLLMRequest } from "../../../llm-gateway/src/llm-request-shape.js";
 import type { LLMSessionRecord, LLMRequestLogEntry, LLMResponseLogEntry } from "../domain/llm-session.js";
 import { summarizeLLMSession } from "./llm-session-view.js";
-import { cloneJsonObject, cloneLLMTools, cloneTokenPressurePreviewBaselines } from "../domain/llm-session-utils.js";
+import { cloneJsonObject, cloneLLMTools } from "../domain/llm-session-utils.js";
 
 type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
 
@@ -129,7 +129,8 @@ export function createLLMSessionRuntime(input: {
       updatedAt: entry.time,
       updatedAtUtc: entry.timeUtc,
       responseIds: [...session.responseIds, entry.id],
-      responses: [...(session.responses ?? []), entry],
+      // 会话 meta 不保存 usage/raw(token usage 由 token-usage-store 独立审计, 零消费冗余)。
+      responses: [...(session.responses ?? []), stripResponseLogEntry(entry)],
       currentRound: {
         ...(session.currentRound ?? { round, startedAt: entry.time }),
         status: "finished",
@@ -142,7 +143,6 @@ export function createLLMSessionRuntime(input: {
         timeUtc: entry.timeUtc,
         round,
         finishReason: entry.finishReason,
-        usage: entry.usage,
         toolCallCount: entry.message.toolCalls?.length ?? 0
       },
       messages: [...session.messages, cloneLLMMessages([entry.message])[0]]
@@ -213,11 +213,6 @@ export function createLLMSessionRuntime(input: {
     const nextWaitChatUntil = sessionInput.waitChatUntil;
     const nextWaitChatTarget = sessionInput.waitChatTarget;
     const nextSkipNextAppendLayers = sessionInput.skipNextAppendLayers === true ? true : undefined;
-    const nextTokenPressurePreviewBaselines = cloneTokenPressurePreviewBaselines(sessionInput.tokenPressurePreviewBaselines);
-    const tokenUsageChanged = session.lastTotalTokens !== sessionInput.lastTotalTokens
-      || session.lastInputTokens !== sessionInput.lastInputTokens
-      || session.lastUsageModel !== sessionInput.lastUsageModel
-      || stableStringify(session.tokenPressurePreviewBaselines ?? {}) !== stableStringify(nextTokenPressurePreviewBaselines);
     const agentLoopRunSeqChanged = session.agentLoopRunSeq !== sessionInput.agentLoopRunSeq;
     const modeChanged = session.mode !== nextMode
       || session.modeStaticTokenEstimate !== nextModeStaticTokenEstimate
@@ -244,10 +239,6 @@ export function createLLMSessionRuntime(input: {
       staticPromptMessageCount: sessionInput.staticPromptMessageCount,
       requestTimestamps: sessionInput.requestTimestamps,
       agentLoopRunSeq: sessionInput.agentLoopRunSeq,
-      lastTotalTokens: sessionInput.lastTotalTokens,
-      lastInputTokens: sessionInput.lastInputTokens,
-      lastUsageModel: sessionInput.lastUsageModel,
-      tokenPressurePreviewBaselines: nextTokenPressurePreviewBaselines,
       mode: nextMode,
       modeStaticMessages: nextModeStaticMessages,
       modeStaticTokenEstimate: nextModeStaticTokenEstimate,
@@ -263,7 +254,7 @@ export function createLLMSessionRuntime(input: {
       skipNextAppendLayers: nextSkipNextAppendLayers
     };
     if (delta.length > 0) input.archive.appendMessages(next, delta);
-    if (delta.length > 0 || agentLoopRunSeqChanged || tokenUsageChanged || modeChanged) input.archive.writeMetadata(next);
+    if (delta.length > 0 || agentLoopRunSeqChanged || modeChanged) input.archive.writeMetadata(next);
     currentSession = next;
   }
 
@@ -283,10 +274,6 @@ export function createLLMSessionRuntime(input: {
       staticPromptMessageCount: sessionInput.staticPromptMessageCount,
       requestTimestamps: sessionInput.requestTimestamps ?? session.requestTimestamps ?? [],
       agentLoopRunSeq: sessionInput.agentLoopRunSeq,
-      lastTotalTokens: sessionInput.lastTotalTokens,
-      lastInputTokens: sessionInput.lastInputTokens,
-      lastUsageModel: sessionInput.lastUsageModel,
-      tokenPressurePreviewBaselines: cloneTokenPressurePreviewBaselines(sessionInput.tokenPressurePreviewBaselines),
       mode: sessionInput.mode ?? "normal",
       modeStaticMessages: sessionInput.modeStaticMessages ?? [],
       modeStaticTokenEstimate: sessionInput.modeStaticTokenEstimate ?? 0,
@@ -353,10 +340,6 @@ export function createLLMSessionRuntime(input: {
       requestTimestamps: latest.requestTimestamps,
       agentLoopRunSeq: latest.agentLoopRunSeq,
       currentRound: latest.currentRound?.round,
-      lastTotalTokens: latest.lastTotalTokens,
-      lastInputTokens: latest.lastInputTokens,
-      lastUsageModel: latest.lastUsageModel,
-      tokenPressurePreviewBaselines: cloneTokenPressurePreviewBaselines(latest.tokenPressurePreviewBaselines),
       mode: latest.mode ?? "normal",
       modeStaticMessages: latest.modeStaticMessages ?? [],
       modeStaticTokenEstimate: latest.modeStaticTokenEstimate ?? 0,
@@ -413,6 +396,12 @@ function archiveRequestEntry(entry: Omit<LLMRequestLogEntry, "agentId"> & { agen
     tools: cloneLLMTools(entry.tools),
     rawRequest: entry.rawRequest ?? buildRawLLMRequest(entry)
   };
+}
+
+/** 会话 meta 不保存 usage/raw(token usage 由 token-usage-store 独立审计)。 */
+function stripResponseLogEntry(entry: LLMResponseLogEntry): LLMResponseLogEntry {
+  const { usage: _usage, raw: _raw, ...rest } = entry;
+  return rest;
 }
 
 function commonMessagePrefixLength(left: LLMChatInput["messages"], right: LLMChatInput["messages"]): number {

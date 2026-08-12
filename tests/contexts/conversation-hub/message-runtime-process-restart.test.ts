@@ -162,7 +162,7 @@ test("process restart recovery resumes a matching persisted restart continuation
   };
   let requestCount = 0;
   const chatAgent = createChatAgent({
-    config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
+    config: loadConfig({ LLM_MODEL: "test-model" }),
     time,
     getPromptProfile: () => promptProfile,
     getPromptRenderer: () => promptRenderer,
@@ -282,7 +282,7 @@ test("process restart recovery abandons the interrupted event when the checkpoin
   const clearedReasons: string[] = [];
   let requestCount = 0;
   const chatAgent = createChatAgent({
-    config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
+    config: loadConfig({ LLM_MODEL: "test-model" }),
     time,
     getPromptProfile: () => promptProfile,
     getPromptRenderer: () => promptRenderer,

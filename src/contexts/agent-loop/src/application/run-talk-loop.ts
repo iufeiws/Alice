@@ -1,4 +1,5 @@
-import type { LLMRequestSender, LLMRequestSenderInput } from "../../../llm-gateway/src/llm-tool-loop.js";
+import type { LLMRequestSender, LLMRequestSenderInput, LLMToolLoopRoundRequest } from "../../../llm-gateway/src/llm-tool-loop.js";
+import type { LLMChatResult } from "../../../llm-gateway/src/index.js";
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 import type { AgentEvent } from "../contracts/agent-contracts.js";
 import { type ChatAgentLoopInput, type ChatAgentLoopResult, type ChatAgentLoopSession } from "./run-chat-loop.js";
@@ -53,6 +54,8 @@ type TalkAgentLoopDeps = TalkLoopSessionContextDeps & {
   maxPendingVoiceOutputChars?: number;
   getLLMConfig(): TalkAgentLoopLLMConfig;
   sendRequest: LLMRequestSender;
+  /** response 消息格式化完成后的递交钩子(llm-requests 的 flushResponseTranscript)。 */
+  flushResponseTranscript?(input: { round: number; result: LLMChatResult; request: LLMToolLoopRoundRequest }): void | Promise<void>;
   appendAssistantDelta(input: { sessionId: number; outputId: string; delta: string }): void;
   finishAssistantOutput(input: { sessionId: number; outputId: string }): void;
   log(level: TalkAgentLoopLogLevel, message: string): void;
@@ -163,6 +166,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
         };
       },
       sendRequest: deps.sendRequest,
+      flushResponseTranscript: deps.flushResponseTranscript,
       toolCallSource: {
         requester: input.event.source,
         externalSession: input.event.externalSession

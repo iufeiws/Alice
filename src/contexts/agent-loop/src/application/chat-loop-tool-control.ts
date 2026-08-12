@@ -74,7 +74,6 @@ export function resolveChatLoopToolControl(input: ChatLoopToolControlInput): Cha
       mode,
       modeStaticMessages,
       modeStaticTokenEstimate: estimateMessagesTokens(modeStaticMessages),
-      tokenPressurePreviewBaselines: {},
       modeStartedAt,
       modeExpiresAt: mode === "fixed_prefix" && typeof modeStartedAt === "number" ? modeStartedAt + ttlMs : undefined,
       fixedPrefixKind,
@@ -116,7 +115,7 @@ function toolRequestMessage(result: LLMChatResult, call: LLMToolCall): LLMChatIn
 }
 
 function defaultChatAgentModeState(): ChatAgentModeState {
-  return { mode: "normal", modeStaticMessages: [], modeStaticTokenEstimate: 0, tokenPressurePreviewBaselines: {} };
+  return { mode: "normal", modeStaticMessages: [], modeStaticTokenEstimate: 0 };
 }
 
 function clearFixedPrefixState(session: ChatAgentLoopSession & Partial<ChatAgentModeState>): void {
@@ -124,7 +123,6 @@ function clearFixedPrefixState(session: ChatAgentLoopSession & Partial<ChatAgent
   session.mode = mode.mode;
   session.modeStaticMessages = cloneLLMMessages(mode.modeStaticMessages);
   session.modeStaticTokenEstimate = mode.modeStaticTokenEstimate;
-  session.tokenPressurePreviewBaselines = {};
   session.modeStartedAt = undefined;
   session.modeExpiresAt = undefined;
   session.fixedPrefixKind = undefined;

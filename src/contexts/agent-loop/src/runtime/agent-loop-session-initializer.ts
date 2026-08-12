@@ -8,9 +8,6 @@ export type AgentLoopTranscriptSession = {
   staticPromptMessageCount?: number;
   requestTimestamps?: string[];
   agentLoopRunSeq?: number;
-  lastTotalTokens?: number;
-  lastInputTokens?: number;
-  lastUsageModel?: string;
   mode?: string;
   lastCompletedToolName?: string;
 };
@@ -107,7 +104,6 @@ export type AgentLoopEnsureChatSessionContextInput<TSession = unknown, TMode = u
   shouldClearForInitiatedBehavior(session: TSession): boolean;
   isModeExpired(session: TSession): boolean;
   isStaticPromptChanged(session: TSession): boolean;
-  shouldResetForTokenPressure(session: TSession): Promise<boolean> | boolean;
   modeFromSession(session: TSession): TMode;
   clearSession(reason?: string): boolean;
   prepareSession(mode: TMode): Promise<TSession> | TSession;
@@ -240,13 +236,6 @@ export async function ensureAgentLoopChatSessionContext<TSession = unknown, TMod
   if (session && input.isStaticPromptChanged(session)) {
     const mode = input.modeFromSession(session);
     input.clearSession("prompt_static_changed");
-    input.setPendingMode(mode);
-  }
-
-  session = input.getSession();
-  if (session && await Promise.resolve(input.shouldResetForTokenPressure(session))) {
-    const mode = input.modeFromSession(session);
-    input.clearSession("token_pressure");
     input.setPendingMode(mode);
   }
 

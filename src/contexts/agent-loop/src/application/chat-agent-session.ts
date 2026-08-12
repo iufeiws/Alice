@@ -5,9 +5,7 @@ import {
   estimateMessagesTokens,
   type ChatAgentModeState
 } from "./run-chat-loop.js";
-import { isTokenPressurePreviewBaseline, type TokenPressurePreviewBaseline } from "./chat-agent-token-pressure.js";
 import type { LLMSessionRecord, LLMSessionSnapshot } from "./chat-agent-types.js";
-
 export function hydrateLLMSessionSnapshot(snapshot: LLMSessionSnapshot, nowMs: number): LLMSessionRecord {
   const modeStaticMessages = cloneLLMMessages(snapshot.modeStaticMessages ?? []);
   const mode = snapshot.mode || "normal";
@@ -24,10 +22,6 @@ export function hydrateLLMSessionSnapshot(snapshot: LLMSessionSnapshot, nowMs: n
       .map((timestamp) => Date.parse(timestamp))
       .filter((timestamp) => Number.isFinite(timestamp)),
     agentLoopRunSeq: Number.isInteger(snapshot.agentLoopRunSeq) ? snapshot.agentLoopRunSeq : undefined,
-    lastTotalTokens: Number.isFinite(snapshot.lastTotalTokens) ? snapshot.lastTotalTokens : undefined,
-    lastInputTokens: Number.isFinite(snapshot.lastInputTokens) ? snapshot.lastInputTokens : undefined,
-    lastUsageModel: typeof snapshot.lastUsageModel === "string" ? snapshot.lastUsageModel : undefined,
-    tokenPressurePreviewBaselines: cloneTokenPressurePreviewBaselines(snapshot.tokenPressurePreviewBaselines),
     mode,
     modeStaticMessages,
     modeStaticTokenEstimate: Number.isFinite(snapshot.modeStaticTokenEstimate)
@@ -63,7 +57,6 @@ export function modeStateFromSession(session: LLMSessionRecord): ChatAgentModeSt
     mode: session.mode || "normal",
     modeStaticMessages: cloneLLMMessages(session.modeStaticMessages),
     modeStaticTokenEstimate: session.modeStaticTokenEstimate,
-    tokenPressurePreviewBaselines: cloneTokenPressurePreviewBaselines(session.tokenPressurePreviewBaselines),
     modeStartedAt: session.modeStartedAt,
     modeExpiresAt: session.modeExpiresAt,
     fixedPrefixKind: session.fixedPrefixKind,
@@ -77,16 +70,6 @@ export function isModeExpired(session: LLMSessionRecord, nowMs: number): boolean
   return nowMs >= Number(session.modeExpiresAt);
 }
 
-export function cloneTokenPressurePreviewBaselines(value: Record<string, TokenPressurePreviewBaseline> | undefined): Record<string, TokenPressurePreviewBaseline> {
-  const result: Record<string, TokenPressurePreviewBaseline> = {};
-  for (const [key, entry] of Object.entries(value ?? {})) {
-    if (isTokenPressurePreviewBaseline(entry)) {
-      result[key] = { inputTokens: entry.inputTokens, previewTokens: entry.previewTokens };
-    }
-  }
-  return result;
-}
-
 export function createLLMSessionSnapshot(session: LLMSessionRecord): LLMSessionSnapshot & { staticPromptFingerprint: string; requestTimestamps: string[] } {
   return {
     id: session.id,
@@ -95,10 +78,6 @@ export function createLLMSessionSnapshot(session: LLMSessionRecord): LLMSessionS
     staticPromptMessageCount: session.staticPromptMessageCount,
     requestTimestamps: session.requestTimestamps.map((timestamp) => new Date(timestamp).toISOString()),
     agentLoopRunSeq: session.agentLoopRunSeq,
-    lastTotalTokens: session.lastTotalTokens,
-    lastInputTokens: session.lastInputTokens,
-    lastUsageModel: session.lastUsageModel,
-    tokenPressurePreviewBaselines: cloneTokenPressurePreviewBaselines(session.tokenPressurePreviewBaselines),
     mode: session.mode,
     modeStaticMessages: cloneLLMMessages(session.modeStaticMessages),
     modeStaticTokenEstimate: session.modeStaticTokenEstimate,

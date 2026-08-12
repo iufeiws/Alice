@@ -219,7 +219,7 @@ type LLMSessionStore = {
 ### 每轮写入
 
 1. Prompt/append layers 构建完成后，发送 LLM 请求前同步提交。
-2. 收到 assistant response 后、执行 tool 前同步追加。
+2. assistant 消息**格式化确定后**（如 contentToolCall 等转换完成）、执行 tool 前同步追加最终版本——递交必须发生在消息最终确定之后，递交内容与后续提交的 transcript 完全一致，避免同一消息存在两个版本。
 3. 每个 tool result 写回同一 function-call loop 后同步追加。
 4. follow-up messages、yield resume 或业务 meta 改变后同步提交。
 5. 下一步只使用事务成功后替换的新内存会话。

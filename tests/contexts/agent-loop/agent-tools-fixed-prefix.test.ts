@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { calculateTokenPressureSwitch, createChatAgent as createChatAgentUnderTest, type LLMSessionSnapshot } from "../../../src/contexts/agent-loop/src/application/chat-agent.js";
+import { createChatAgent as createChatAgentUnderTest, type LLMSessionSnapshot } from "../../../src/contexts/agent-loop/src/application/chat-agent.js";
 import type { LLMRequestSenderInput } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
 import type { LLMChatInput, LLMClient } from "../../../src/contexts/llm-gateway/src/index.js";
 import type { AgentEvent, ToolCall } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
@@ -79,7 +79,6 @@ test("chat agent keeps fixed prefix current transcript when token pressure runs"
         ...(capturedSession?.messages ?? []),
         { role: "assistant", content: "old session marker" }
       ],
-      lastTotalTokens: 10_000,
       mode: "fixed_prefix",
       modeStaticMessages: fixedPrefixStatic,
       modeStaticTokenEstimate: 100,
@@ -319,7 +318,7 @@ test("chat agent passes agent loop run context to exposed selfie tool calls", as
   ]);
 });
 
-test("chat agent uses empty reasoning content for tool requests when missing", async () => {
+test("chat agent preserves missing reasoning content on tool request messages", async () => {
   const requests: LLMChatInput[] = [];
   const llm: LLMClient = {
     async chat(input) {
@@ -364,5 +363,5 @@ test("chat agent uses empty reasoning content for tool requests when missing", a
   await runPreparedChatEvent(core, textEvent());
 
   assert.equal(requests.length, 2);
-  assert.equal(requests[1].messages.at(-2)?.reasoningContent, "");
+  assert.equal(requests[1].messages.at(-2)?.reasoningContent, undefined);
 });

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { calculateTokenPressureSwitch, createChatAgent as createChatAgentUnderTest, type LLMSessionSnapshot } from "../../../src/contexts/agent-loop/src/application/chat-agent.js";
+import { createChatAgent as createChatAgentUnderTest, type LLMSessionSnapshot } from "../../../src/contexts/agent-loop/src/application/chat-agent.js";
 import type { LLMRequestSenderInput } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
 import type { LLMChatInput, LLMClient } from "../../../src/contexts/llm-gateway/src/index.js";
 import type { ToolCall } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
@@ -32,7 +32,7 @@ test("chat agent requires an injected prompt profile", async () => {
 test("chat agent exposes platform-neutral tools", async () => {
   const requests: LLMChatInput[] = [];
   const core = createChatAgent({
-    config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
+    config: loadConfig({ LLM_MODEL: "test-model" }),
     llm: {
       async chat(input) {
         requests.push(input);
@@ -89,7 +89,7 @@ test("chat agent resolves tool calls before final reply", async () => {
     }
   };
   const core = createChatAgent({
-    config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
+    config: loadConfig({ LLM_MODEL: "test-model" }),
     llm,
     outputRouter: createOutputRouter(),
     intentRouter: createIntentRouter(),
@@ -121,7 +121,7 @@ test("chat agent resolves tool calls before final reply", async () => {
 test("chat agent includes prompt tool result in first llm request", async () => {
   const requests: LLMChatInput[] = [];
   const core = createChatAgent({
-    config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
+    config: loadConfig({ LLM_MODEL: "test-model" }),
     llm: {
       async chat(input) {
         requests.push(input);
@@ -163,7 +163,7 @@ test("chat append tool request fails instead of disappearing when tool is unavai
   const requests: LLMChatInput[] = [];
   let persistedSession: LLMSessionSnapshot | undefined;
   const core = createChatAgent({
-    config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
+    config: loadConfig({ LLM_MODEL: "test-model" }),
     llm: {
       async chat(input) {
         requests.push(input);
@@ -202,7 +202,7 @@ test("chat agent prepares chat loop execution for external function-call runtime
   let prepareChatSessionCalls = 0;
   let ensureChatSessionCalls = 0;
   const core = createChatAgent({
-    config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
+    config: loadConfig({ LLM_MODEL: "test-model" }),
     llm: {
       async chat() {
         throw new Error("direct llm client should not be called");
@@ -260,22 +260,10 @@ test("chat agent prepares chat loop execution for external function-call runtime
   assert.equal(ensureChatSessionCalls, 1);
 });
 
-test("token pressure calculation is independent from preview execution", () => {
-  assert.equal(calculateTokenPressureSwitch({
-    lastInputTokens: 8000,
-    baselineInputTokens: 4000,
-    baselinePreviewTokens: 3,
-    currentPreviewTokens: 60,
-    cacheHitPrice: 0.02,
-    cacheMissPrice: 1
-  }).shouldReset, true);
-});
-
-
 test("chat agent sends tool names to injected LLM sender without rendering schemas", async () => {
   const senderInputs: LLMRequestSenderInput[] = [];
   const core = createChatAgent({
-    config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
+    config: loadConfig({ LLM_MODEL: "test-model" }),
     llm: {
       async chat() {
         throw new Error("direct llm client should not be called");

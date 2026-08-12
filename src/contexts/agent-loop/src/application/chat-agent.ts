@@ -10,7 +10,7 @@ import type { AgentEvent, AgentOutput, ChannelPlugin, ToolPlugin, ToolResult } f
 import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolResults, makePromptContext, staticPromptFingerprint, type PromptProfile } from "../../../agent-profile/src/application/build-system-prompt.js";
 import type { AgentStateController, AgentStateSnapshot } from "../domain/agent-loop-state.js";
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
-import type { LLMRequestSender } from "../../../llm-gateway/src/llm-tool-loop.js";
+import type { LLMRequestSender, LLMToolLoopRoundRequest } from "../../../llm-gateway/src/llm-tool-loop.js";
 import type { AgentRunIndicator } from "../../../agent-run-indicator/src/index.js";
 import {
   agentInitiatedBehaviorPlanFromEvent,
@@ -26,7 +26,6 @@ import {
   buildWaitChatResumeMessages,
   cloneLLMMessages,
   fixedPrefixToolInput,
-  findToolPlugin,
   hasPendingWaitChatToolCall,
   buildChatAgentLoop,
   runPromptToolRequest,
@@ -58,14 +57,12 @@ import {
   filterVisibleTools
 } from "./chat-agent-helpers.js";
 import {
-  cloneTokenPressurePreviewBaselines,
   createLLMSessionSnapshot,
   defaultModeState,
   hydrateLLMSessionSnapshot,
   isModeExpired,
   modeStateFromSession
 } from "./chat-agent-session.js";
-import { shouldResetSessionForTokenPressure } from "./chat-agent-tools.js";
 import type { LLMSessionClearReason, LLMSessionRecord, LLMSessionSnapshot } from "./chat-agent-types.js";
 import type { ProcessRestartContinuationRecord, ProcessRestartContinuationStore } from "../adapters/json-process-restart-continuation-store.js";
 import { restartSuccessOutput, restartToolName } from "../../../../capabilities/tools/restart/profile.js";
@@ -73,12 +70,6 @@ import { restartSuccessOutput, restartToolName } from "../../../../capabilities/
 type ModeState = ChatAgentModeState;
 
 export type { LLMSessionClearReason, LLMSessionSnapshot } from "./chat-agent-types.js";
-export {
-  calculateTokenPressureSwitch,
-  type TokenPressureComparison,
-  type TokenPressureComparisonInput,
-  type TokenPressurePreviewBaseline
-} from "./chat-agent-token-pressure.js";
 export * from "../../../initiative/src/adapters/json-initiated-behavior-store.js";
 export * from "../../../initiative/src/application/evaluate-triggers.js";
 export * from "../runtime/agent-heartbeat-runtime.js";
@@ -95,8 +86,6 @@ type ChatAgentConfig = {
   llm: {
     model: string;
     temperature: number;
-    tokenPressureSessionResetEnabled: boolean;
-    tokenPressureContextImportance: number;
     extraParams: Record<string, unknown>;
     followupExtraParams: Record<string, unknown>;
     stream: boolean;
@@ -131,6 +120,8 @@ export type ChatAgentDeps = {
   onLLMRequestPrepared?(input: LLMChatInput): LLMRequestLogEntry | undefined | void;
   onLLMResponseReceived?(result: LLMChatResult, request?: LLMRequestLogEntry): void;
   llmRequestSender: LLMRequestSender;
+  /** response 消息格式化完成后的递交钩子(llm-requests 的 flushResponseTranscript)。 */
+  flushResponseTranscript?(input: { round: number; result: LLMChatResult; request: LLMToolLoopRoundRequest }): void | Promise<void>;
   agentRunIndicator?: AgentRunIndicator;
   onAgentRunIndicatorError?(error: unknown): void;
   appendLoopSessionContext?<TSession extends AgentLoopMutableSession>(input: AgentLoopAppendSessionContextInput<TSession>): AgentLoopAppendSessionContextResult<TSession>;
@@ -367,15 +358,6 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
           shouldClearForInitiatedBehavior: () => Boolean(initiatedBehavior),
           isModeExpired: (session) => isModeExpired(session, time.now().epochMs),
           isStaticPromptChanged: (session) => session.mode !== "fixed_prefix" && session.staticPromptFingerprint !== fingerprint,
-          shouldResetForTokenPressure: (session) => deps.config.llm.tokenPressureSessionResetEnabled
-            && shouldResetSessionForTokenPressure({
-              session,
-              event,
-              plugin: findToolPlugin(toolPlugins, "Chat"),
-              model: deps.config.llm.model,
-              contextImportance: deps.config.llm.tokenPressureContextImportance,
-              noteLLMSessionUpdated
-            }),
           modeFromSession: modeStateFromSession,
           clearSession(reason) {
             return clearLoopSession(reason ? () => deps.onLLMSessionCleared?.(reason as LLMSessionClearReason) : undefined);
@@ -406,7 +388,6 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
                   staticPromptFingerprint: fingerprint,
                   staticPromptMessageCount: promptMessages.length,
                   requestTimestamps: [],
-                  tokenPressurePreviewBaselines: cloneTokenPressurePreviewBaselines(mode.tokenPressurePreviewBaselines),
                   mode: mode.mode,
                   modeStaticMessages: cloneLLMMessages(mode.modeStaticMessages),
                   modeStaticTokenEstimate: mode.modeStaticTokenEstimate,
@@ -589,6 +570,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
             appendSessionContext,
             llm: deps.llm,
             llmRequestSender: deps.llmRequestSender,
+            flushResponseTranscript: deps.flushResponseTranscript,
             time,
             buildTextVariables: buildTurnTextVariables,
             noteSessionUpdated: () => {
@@ -724,18 +706,6 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
           }
           if (llmResult.invalidateSession) {
             clearLoopSession(() => deps.onLLMSessionCleared?.(llmResult.clearReason ?? "prompt_static_changed"));
-          }
-          const usage = llmResult.finalResult?.usage;
-          const usageModel = llmResult.finalResult?.model ?? llmInput?.model;
-          if (loopSession && usage) {
-            if (typeof usage.totalTokens === "number" && Number.isFinite(usage.totalTokens)) {
-              loopSession.lastTotalTokens = usage.totalTokens;
-            }
-            if (typeof usage.inputTokens === "number" && Number.isFinite(usage.inputTokens)) {
-              loopSession.lastInputTokens = usage.inputTokens;
-            }
-            if (usageModel) loopSession.lastUsageModel = usageModel;
-            noteLLMSessionUpdated(loopSession);
           }
           return [];
         }

@@ -17,6 +17,8 @@ export function createTalkRuntimeRuntime(input: {
   toolPlugins: any[];
   getLLMConfig(): any;
   sendRequest(input: any): Promise<any>;
+  /** response 消息格式化完成后的递交钩子(llm-requests 的 flushResponseTranscript)。 */
+  flushResponseTranscript?(input: { round: number; result: any; request: any }): void | Promise<void>;
   agentLoopRuntime?: any;
   createLLMSession(occurredAt: string): number;
   loadActiveTalkLLMSessionTranscript(): any;

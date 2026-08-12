@@ -34,6 +34,7 @@ export function createChatAgentRuntime(input: {
     config: input.config,
     llm: input.activeLLM,
     llmRequestSender: input.llmRequests.send,
+    flushResponseTranscript: input.llmRequests.flushResponseTranscript,
     agentRunIndicator: input.agentRunIndicator,
     onAgentRunIndicatorError(error) {
       input.appendLog("error", `agent run indicator failed: ${error instanceof Error ? error.message : String(error)}`);

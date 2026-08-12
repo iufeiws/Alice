@@ -14,7 +14,6 @@ import {
   estimateMessagesTokens,
   findToolPlugin
 } from "./run-chat-loop.js";
-import type { TokenPressurePreviewBaseline } from "./chat-agent.js";
 
 export async function executeAgentInitiatedBehaviorBackendSteps(
   plan: AgentInitiatedBehaviorPlan,
@@ -86,7 +85,6 @@ export function applyBackendToolSessionControlToActiveSession(
     mode: string;
     modeStaticMessages: LLMChatInput["messages"];
     modeStaticTokenEstimate: number;
-    tokenPressurePreviewBaselines: Record<string, TokenPressurePreviewBaseline>;
     modeStartedAt?: number;
     modeExpiresAt?: number;
     fixedPrefixKind?: string;
@@ -103,7 +101,6 @@ export function applyBackendToolSessionControlToActiveSession(
     session.mode = mode.mode;
     session.modeStaticMessages = cloneLLMMessages(mode.modeStaticMessages);
     session.modeStaticTokenEstimate = mode.modeStaticTokenEstimate;
-    session.tokenPressurePreviewBaselines = {};
     session.modeStartedAt = undefined;
     session.modeExpiresAt = undefined;
     session.fixedPrefixKind = undefined;
@@ -125,7 +122,6 @@ export function applyBackendToolSessionControlToActiveSession(
   session.mode = mode;
   session.modeStaticMessages = modeStaticMessages;
   session.modeStaticTokenEstimate = estimateMessagesTokens(modeStaticMessages);
-  session.tokenPressurePreviewBaselines = {};
   session.modeStartedAt = modeStartedAt;
   session.modeExpiresAt = mode === "fixed_prefix" && typeof modeStartedAt === "number" ? modeStartedAt + ttlMs : undefined;
   session.fixedPrefixKind = fixedPrefixKind;
@@ -142,21 +138,8 @@ export function filterVisibleTools(tools: ToolPlugin[], profile: PromptProfile):
   });
 }
 
-export function finiteTokenCount(value: number | undefined): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
 export function failMissingLoopStartedAt(): never {
   throw new Error("llm_loop_started_at_missing");
-}
-
-export function isTokenPressurePreviewBaseline(value: unknown): value is TokenPressurePreviewBaseline {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const entry = value as Partial<TokenPressurePreviewBaseline>;
-  return typeof entry.inputTokens === "number"
-    && Number.isFinite(entry.inputTokens)
-    && typeof entry.previewTokens === "number"
-    && Number.isFinite(entry.previewTokens);
 }
 
 export function buildReply(

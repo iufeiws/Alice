@@ -5,7 +5,7 @@ import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js"
 import type { AgentRunIndicator, AgentRunIndicatorBeginInput, AgentRunIndicatorOutput, AgentRunIndicatorSession } from "../../../agent-run-indicator/src/index.js";
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 import type { PromptProfile } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
-import { type LLMRequestSender, type LLMToolLoopContinuation } from "../../../llm-gateway/src/llm-tool-loop.js";
+import { type LLMRequestSender, type LLMRequestSenderInput, type LLMToolLoopContinuation, type LLMToolLoopRoundRequest } from "../../../llm-gateway/src/llm-tool-loop.js";
 import { resolveChatLoopToolControl } from "./chat-loop-tool-control.js";
 import { fixedPrefixToolInput } from "./chat-loop-session-context.js";
 import { buildToolFollowupLLMMessages, type LLMCapabilityFlags } from "./tool-followup-messages.js";
@@ -17,16 +17,10 @@ import {
 
 const chatToolName = "Chat";
 
-type ChatAgentTokenPressurePreviewBaseline = {
-  inputTokens: number;
-  previewTokens: number;
-};
-
 export type ChatAgentModeState = {
   mode: string;
   modeStaticMessages: LLMChatInput["messages"];
   modeStaticTokenEstimate: number;
-  tokenPressurePreviewBaselines: Record<string, ChatAgentTokenPressurePreviewBaseline>;
   modeStartedAt?: number;
   modeExpiresAt?: number;
   fixedPrefixKind?: string;
@@ -82,6 +76,8 @@ export type ChatAgentLoopInput = {
   appendSessionContext(session: ChatAgentLoopSession): Promise<void>;
   llm: LLMClient;
   llmRequestSender: LLMRequestSender;
+  /** response 消息格式化完成后的递交钩子(内部调用 llm-requests 的 flushResponseTranscript)。 */
+  flushResponseTranscript?(input: { round: number; result: LLMChatResult; request: LLMToolLoopRoundRequest }): void | Promise<void>;
   time: CurrentTimeProvider;
   buildTextVariables(event: AgentEvent): PromptContextRuntime;
   noteSessionUpdated(): void;
@@ -194,6 +190,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
         throw error;
       }
     },
+    flushResponseTranscript: input.flushResponseTranscript,
     async afterRequest() {
       if (session.skipNextAppendLayers) session.skipNextAppendLayers = undefined;
       if (processRestartRecoveryPending) {

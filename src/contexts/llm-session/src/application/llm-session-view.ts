@@ -143,8 +143,7 @@ function transcriptResponseEntry(
     sessionId: session.id,
     time: latestResponse?.time ?? session.updatedAt,
     message,
-    finishReason: latestResponse?.finishReason,
-    usage: latestResponse?.usage
+    finishReason: latestResponse?.finishReason
   };
 }
 

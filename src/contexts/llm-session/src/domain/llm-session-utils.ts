@@ -1,4 +1,3 @@
-import type { TokenPressurePreviewBaseline } from "./llm-session.js";
 import type { LLMChatInput } from "../../../llm-gateway/src/index.js";
 import type { LLMSessionRequestInfo, LLMSessionResponseInfo, LLMSessionRoundInfo } from "./llm-session.js";
 
@@ -11,30 +10,12 @@ export function cloneJsonObject<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-export function cloneTokenPressurePreviewBaselines(value: Record<string, TokenPressurePreviewBaseline> | undefined): Record<string, TokenPressurePreviewBaseline> {
-  return cloneJsonObject(value) ?? {};
-}
-
 export function numberArray(value: unknown): number[] {
   return Array.isArray(value) ? value.filter((entry): entry is number => typeof entry === "number") : [];
 }
 
 export function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
-}
-
-export function parseTokenPressurePreviewBaselines(value: unknown): Record<string, TokenPressurePreviewBaseline> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const result: Record<string, TokenPressurePreviewBaseline> = {};
-  for (const [key, raw] of Object.entries(value)) {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
-    const entry = raw as Record<string, unknown>;
-    result[key] = {
-      inputTokens: typeof entry.inputTokens === "number" ? entry.inputTokens : 0,
-      previewTokens: typeof entry.previewTokens === "number" ? entry.previewTokens : 0
-    };
-  }
-  return result;
 }
 
 export function parseRoundInfo(value: unknown): LLMSessionRoundInfo | undefined {
@@ -83,7 +64,6 @@ export function parseResponseInfo(value: unknown): LLMSessionResponseInfo | unde
     timeUtc: entry.timeUtc,
     round: entry.round,
     finishReason: entry.finishReason,
-    usage: entry.usage,
     toolCallCount: typeof entry.toolCallCount === "number" ? entry.toolCallCount : 0
   };
 }

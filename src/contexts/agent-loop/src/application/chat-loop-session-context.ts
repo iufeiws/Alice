@@ -69,7 +69,7 @@ export function findToolPlugin(tools: ToolPlugin[], toolName: string): ToolPlugi
 }
 
 export function defaultChatAgentModeState(): ChatAgentModeState {
-  return { mode: "normal", modeStaticMessages: [], modeStaticTokenEstimate: 0, tokenPressurePreviewBaselines: {} };
+  return { mode: "normal", modeStaticMessages: [], modeStaticTokenEstimate: 0 };
 }
 
 export function cloneLLMMessages(messages: LLMChatInput["messages"]): LLMChatInput["messages"] {

@@ -4,6 +4,7 @@ import type { LLMRequestLogEntry } from "../../../contexts/llm-session/src/index
 import { createLLMSessionStore, type LLMSessionStore } from "../../../contexts/llm-session/src/adapters/sqlite-llm-session-store.js";
 import { createId } from "../../../shared/uuid/src/index.js";
 import type { LLMChatInput, LLMChatResult, LLMMessage } from "./index.js";
+import type { LLMToolLoopRoundRequest } from "./llm-tool-loop.js";
 
 /**
  * SubAgent 会话转录的 SQLite 独立库存储。
@@ -42,10 +43,12 @@ export function createLLMRequestsRuntime(input: {
 }) {
   const requestLogEntries = new WeakMap<object, LLMRequestLogEntry>();
   const subagentRequestSessions = new WeakMap<object, { append(entry: unknown): void }>();
+  // 延迟递交的 response 结果: deferResponseTranscript 时暂存, 由 flushResponseTranscript 递交最终版本。
+  const deferredResponses = new WeakMap<object, LLMChatResult>();
   // SubAgent 库连接: 惰性打开一次, 打开失败后续调用可重试(不缓存失败状态)。
   let subagentStore: LLMSessionStore | undefined;
 
-  return createLLMRequests({
+  const requests = createLLMRequests({
     getTool: input.getTool,
     onRequestPrepared(requestInput, request) {
       if (isMainAgent(requestInput.agentId)) input.agentState?.suspendInactivityTimer();
@@ -59,6 +62,12 @@ export function createLLMRequestsRuntime(input: {
     },
     onResponseReceived(requestInput, request, result) {
       if (requestInput.agentId === "chat" || requestInput.agentId === "talk") {
+        if (requestInput.deferResponseTranscript) {
+          // 延迟递交: response 消息由调用方在格式化(transform)完成后通过
+          // flushResponseTranscript 递交最终版本, 保证与提交的 transcript 一致。
+          deferredResponses.set(requestInput, result);
+          return;
+        }
         input.appendLLMResponseLog(result, requestInput.agentId, requestLogEntries.get(requestInput));
         return;
       }
@@ -91,6 +100,22 @@ export function createLLMRequestsRuntime(input: {
       if (event.kind === "response_received") input.appendLog("info", `llm response received: agent=${event.agentId} round=${event.round} mode=${mode} model=${event.model ?? fallbackModel}`);
     }
   });
+
+  /**
+   * 格式化(transform)完成后递交最终 response 消息。
+   * 暂存的 entry 基础数据(id/time/usage 等)保持不变, 仅消息替换为最终版本,
+   * 与后续 onMessagesChanged 提交的 transcript 完全一致。
+   */
+  function flushResponseTranscript(requestInput: LLMToolLoopRoundRequest, finalMessage: LLMChatResult["message"]): void {
+    const result = deferredResponses.get(requestInput);
+    if (!result) return;
+    deferredResponses.delete(requestInput);
+    if (isMainAgent(requestInput.agentId)) {
+      input.appendLLMResponseLog({ ...result, message: finalMessage }, requestInput.agentId, requestLogEntries.get(requestInput));
+    }
+  }
+
+  return { ...requests, flushResponseTranscript };
 
   function isMainAgent(agentId: string): agentId is "chat" | "talk" {
     return agentId === "chat" || agentId === "talk";

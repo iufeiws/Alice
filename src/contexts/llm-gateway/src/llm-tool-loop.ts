@@ -23,6 +23,8 @@ export type LLMRequestSenderInput = {
   streamHandlers?: LLMStreamHandlers;
   metadata?: Record<string, unknown>;
   signal?: AbortSignal;
+  /** 延迟递交 response transcript: 消息在 transform(格式化)完成后由 flushResponseTranscript 递交最终版本。 */
+  deferResponseTranscript?: boolean;
 };
 
 export type LLMRequestSender = (input: LLMRequestSenderInput) => Promise<LLMChatResult>;
@@ -95,6 +97,12 @@ export type LLMToolLoopInput = {
   };
   buildRequest(input: { round: number; messages: LLMMessage[] }): Promise<LLMToolLoopRoundRequest> | LLMToolLoopRoundRequest;
   sendRequest: LLMRequestSender;
+  /**
+   * response 消息最终化(transformAssistantMessage 格式化)后的递交钩子。
+   * 存在时 sendRequest 会以 deferResponseTranscript 延迟递交,
+   * 由本钩子在格式化完成后递交最终版本, 保证 transcript 与提交版本一致。
+   */
+  flushResponseTranscript?(input: { round: number; result: LLMChatResult; request: LLMToolLoopRoundRequest }): void | Promise<void>;
   toolRegistryName?: string;
   toolCallSource?: {
     requester?: AgentEvent["source"];
@@ -218,7 +226,9 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
         result = await input.sendRequest({
           ...request,
           round,
-          messages: cloneLLMMessages(request.messages ?? messages)
+          messages: cloneLLMMessages(request.messages ?? messages),
+          // 有 flushResponseTranscript 时延迟递交 response, 由格式化完成后统一递交最终版本。
+          deferResponseTranscript: input.flushResponseTranscript !== undefined
         });
       } catch (error) {
         if (input.shouldCancel?.()) return cancelledResult(round + 1);
@@ -234,18 +244,17 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
       }
       previousAssistantMessageSignature = assistantMessageSignature;
       await input.afterRequest?.({ round, result, messages });
+      // 递交最终(格式化后)的 assistant 消息; 与后续 onMessagesChanged 提交的版本一致。
+      await input.flushResponseTranscript?.({ round, result, request });
       if (input.shouldCancel?.()) return cancelledResult(round + 1, result);
     }
 
     const calls = result.message.toolCalls ?? [];
     if (calls.length === 0) {
+      // 完整消息追加(与 flushResponseTranscript 递交的最终版本一致), 不再重建简化对象。
       messages = [
         ...messages,
-        {
-          role: "assistant",
-          content: result.message.content,
-          reasoningContent: result.message.reasoningContent
-        }
+        cloneLLMMessage(result.message)
       ];
       await input.onMessagesChanged?.({ round, messages, reason: "completed" });
       return {
@@ -354,12 +363,8 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
       }
       messages = [
         ...messages,
-        {
-          role: "assistant",
-          content: result.message.content,
-          reasoningContent: result.message.reasoningContent ?? "",
-          toolCalls: executedCalls
-        },
+        // 完整消息追加(与 flushResponseTranscript 递交的最终版本一致), 不再重建简化对象。
+        cloneLLMMessage(result.message),
         ...toolMessages,
         ...interruptMessages
       ];
@@ -615,10 +620,14 @@ function settleExecutionReport(
 }
 
 export function cloneLLMMessages(messages: LLMMessage[]): LLMMessage[] {
-  return messages.map((message) => ({
+  return messages.map(cloneLLMMessage);
+}
+
+export function cloneLLMMessage(message: LLMMessage): LLMMessage {
+  return {
     ...message,
     toolCalls: message.toolCalls?.map((call) => ({ ...call, function: { ...call.function } }))
-  }));
+  };
 }
 
 function cloneLLMToolCalls(calls: LLMToolCall[]): LLMToolCall[] {

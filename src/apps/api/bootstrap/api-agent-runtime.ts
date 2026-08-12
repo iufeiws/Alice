@@ -45,6 +45,7 @@ export function createApiAgentRuntime(input: {
     toolPlugins: input.toolPlugins.filter((plugin: { id?: string }) => plugin.id !== "subagent"),
     getLLMConfig: input.currentTalkLLMConfig,
     sendRequest: (requestInput) => input.llmRequests.send(requestInput),
+    flushResponseTranscript: ({ request, result }) => input.llmRequests.flushResponseTranscript?.(request, result.message),
     agentLoopRuntime: input.agentLoopRuntime,
     createLLMSession: (occurredAt) => Number(input.agentLoopRuntime.createTalkLLMSession(occurredAt).id),
     loadActiveTalkLLMSessionTranscript: () => input.agentLoopRuntime.loadCurrentLLMSessionTranscript(),

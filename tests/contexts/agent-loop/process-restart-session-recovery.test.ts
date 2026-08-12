@@ -32,7 +32,7 @@ test("restart checkpoint uses the same session id as the persisted Chat transcri
   let record: ProcessRestartContinuationRecord | undefined;
   let requestCount = 0;
   const core = createChatAgent({
-    config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
+    config: loadConfig({ LLM_MODEL: "test-model" }),
     time,
     llm: {
       async chat() {
@@ -127,7 +127,7 @@ test("an unrelated persisted restart checkpoint is discarded without blocking a 
   };
   let requestCount = 0;
   const core = createChatAgent({
-    config: loadConfig({ LLM_MODEL: "test-model", LLM_TOKEN_PRESSURE_CONTEXT_IMPORTANCE: "1" }),
+    config: loadConfig({ LLM_MODEL: "test-model" }),
     time,
     llm: {
       async chat() {

@@ -43,6 +43,7 @@ export type BashSandboxConfig = {
   cacheDir: string;
   tmpDir: string;
   skillsDir: string;
+  notesDir: string;
   skillMounts: BashSandboxSkillMountConfig[];
   mounts: BashSandboxMountConfig[];
   network: "none" | "configured";
@@ -62,8 +63,8 @@ export function validateBashSandboxConfig(config: BashSandboxConfig): BashSandbo
     skillMounts: config.skillMounts.map((mount) => ({ ...mount, hostPath: path.resolve(mount.hostPath) })),
     mounts: config.mounts.map((mount) => ({ ...mount, hostPath: path.resolve(mount.hostPath) }))
   };
-  if (!normalized.workspaceDir.startsWith("/") || !normalized.cacheDir.startsWith("/") || !normalized.tmpDir.startsWith("/") || !normalized.skillsDir.startsWith("/")) {
-    throw new Error("bashSandbox workspaceDir/cacheDir/tmpDir/skillsDir must be absolute container paths");
+  if (!normalized.workspaceDir.startsWith("/") || !normalized.cacheDir.startsWith("/") || !normalized.tmpDir.startsWith("/") || !normalized.skillsDir.startsWith("/") || !normalized.notesDir.startsWith("/")) {
+    throw new Error("bashSandbox workspaceDir/cacheDir/tmpDir/skillsDir/notesDir must be absolute container paths");
   }
   rejectSensitiveHostPath(normalized.hostWorkspaceDir);
   rejectSensitiveHostPath(normalized.hostCacheDir);

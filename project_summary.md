@@ -78,9 +78,9 @@ src/
 | **conversation-hub** | 多渠道消息统一入口。`createMessageRuntime`（ingestEvent/ingestLifecycle/sendSystemNotice/processNow/flushAll）内部组装 agentLoopRuntime + heartbeat 全部任务；`sqlite-conversation-store` 为 Core 侧消息历史 |
 | **capabilities** | 插件 admin 运行时（asr/photo/tts/geo/image-recognition 等 admin-plugin-*）+ `tool-output-target.ts`（AgentOutput 投递目标解析器，产出 AgentOutput 的工具必须经此解析） |
 | **initiative** | Agent 主动行为。initiated-behavior 定义、触发评估、随机事件、admin 配置、JSON 存储 |
-| **prompt-context** | Prompt 模板变量渲染运行时（user/时间/dailyShell/memory/calendar/skills/outfit 变量树） |
+| **prompt-context** | Prompt 模板变量渲染运行时（user/时间/dailyShell/memory/calendar/skills/notes_list/outfit 变量树） |
 | **world-wanderer** | Google Street View 世界漫步空闲行为（移动 runtime、选路 policy、geo 计算） |
-| **bash-sandbox** | Docker 沙箱 bash 执行（`createBashSandboxRuntime` + `createDockerBashExecutor`、命令权限分类） |
+| **bash-sandbox** | Docker 沙箱 bash 执行（`createBashSandboxRuntime` + `createDockerBashExecutor`、命令权限分类）；`readSandboxNotesIndex` 同步读取容器内笔记目录索引（供 prompt 变量动态构建） |
 | **pi-worker** | Pi worker 客户端（授权握手、后台唤起 wake、tool relay、健康轮询） |
 | **approval** | 基于飞书动态卡片的一对一审批服务（含卡片动作回调鉴权） |
 | **skills** | 技能注册表/加载器/占位符/资源路径 |
@@ -141,6 +141,15 @@ capabilities/tools/{tool name}/
 - 产出 AgentOutput 的工具必须经 capabilities 层 tool-output-target 解析投递目标，不得自行决定渠道。
 - 工具返回无须包含无关元数据，也不得带 render 层渠道格式。
 - description 是 LLM 可见的工具接口，遵循 tool_description_guideline.md（不重复 inputSchema、无需暴露实现细节）。
+
+### 4.4.c capabilities/skills —— 项目专有技能
+
+first-party skill 位于 `capabilities/skills/{name}/SKILL.md`（frontmatter 含 `name` / `description`），由 skills 注册表扫描（每次访问实时重扫），自动出现在 `{{system_skills}}`，经 `Skill` 工具按名称加载。现有内置技能：
+
+| Skill | 职责 |
+|---|---|
+| list-installed-skills | 列出已安装的 third-party skills（`{{installed_skills}}` 动态构建） |
+| list-notes | 列出 sandbox 中 `~/.agent/notes` 下的笔记（`{{notes_list}}` 加载时动态构建 name / description / path；笔记文件带同名 frontmatter，目录在 sandbox 容器内） |
 
 ### 4.5 platform 与 shared
 

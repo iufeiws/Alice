@@ -17,6 +17,7 @@ export function testConfig(overrides: Partial<BashSandboxConfig> = {}): BashSand
     cacheDir: "/cache",
     tmpDir: "/tmp",
     skillsDir,
+    notesDir: "/home/alice/.agent/notes",
     skillMounts: [{ id: "demo", hostPath: path.join(root, "skills", "demo"), containerPath: path.posix.join(skillsDir, "demo"), readOnly: true }],
     mounts: [],
     network: "none",

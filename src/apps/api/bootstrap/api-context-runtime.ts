@@ -7,7 +7,8 @@ import { createProfileMemoryRuntime } from "../../../contexts/memory/src/profile
 import { createInitiatedBehaviorRuntime } from "../../../contexts/initiative/src/application/evaluate-triggers.js";
 import { createSkillRegistry } from "../../../contexts/skills/src/index.js";
 import { createPromptContextRuntime } from "../../../contexts/prompt-context/src/index.js";
-import { addBashSandboxSkillMount } from "../../../contexts/bash-sandbox/src/index.js";
+import { addBashSandboxSkillMount, readSandboxNotesIndex } from "../../../contexts/bash-sandbox/src/index.js";
+import { describeError } from "../../../shared/errors/src/index.js";
 
 const path = await import("node:path");
 
@@ -72,7 +73,15 @@ export function createApiContextRuntime(input: {
     diaryStore: profileMemoryRuntime.diaryStore,
     calendarStore,
     skillsRegistry,
-    skillsDirPath
+    skillsDirPath,
+    listNotes: () => {
+      try {
+        return readSandboxNotesIndex(input.config.bashSandbox, input.config.bashSandbox.notesDir);
+      } catch (error) {
+        input.appendLog("warn", `读取 sandbox 笔记索引失败: ${describeError(error)}`);
+        return [];
+      }
+    }
   });
 
   return {

@@ -34,7 +34,7 @@ function formatSkillResult(skill: LoadedSkill): string {
   return [
     `<${skill.name}>`,
     `<path>${escapeXml(skill.sandboxRoot)}</path>`,
-    escapeXml(skill.instructions),
+    skill.instructions,
     `</${skill.name}>`
   ].join("\n");
 }

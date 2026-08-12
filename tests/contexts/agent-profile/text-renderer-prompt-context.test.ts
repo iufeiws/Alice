@@ -35,3 +35,43 @@ test("prompt context runtime exposes system_skills and installed_skills from the
   assert.ok(installedSkills.includes("<name>lark-doc</name>"));
   assert.ok(!installedSkills.includes("weather"));
 });
+
+test("prompt context runtime exposes notes_list from the injected listNotes provider", () => {
+  const runtime = createPromptContextRuntime({
+    username: "YY",
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-01-01T00:00:00.000Z")),
+    dailyShellStore: { get: () => undefined },
+    coreProfileStore: { get: () => ({ appearanceDescription: "", librarySetting: "" }) },
+    memoryStore: { read: () => ({}) },
+    diaryStore: { latestWakeBoundary: () => undefined },
+    calendarStore: { listEntries: () => [] },
+    skillsDirPath: "/home/alice/.agent/skills",
+    skillsRegistry: { available: () => [] },
+    listNotes: () => [
+      { name: "feishu-sending", description: "发送要点", path: "/home/alice/.agent/notes/feishu-sending.md" }
+    ]
+  } as any);
+
+  const notes = String(runtime.getVariable("notes_list"));
+  assert.equal(runtime.renderText("{{notes_list}}"), notes);
+  assert.ok(notes.includes("<notes>"));
+  assert.ok(notes.includes("<name>feishu-sending</name>"));
+  assert.ok(notes.includes("<description>发送要点</description>"));
+  assert.ok(notes.includes("<path>/home/alice/.agent/notes/feishu-sending.md</path>"));
+});
+
+test("prompt context runtime renders an empty notes tag without a listNotes provider", () => {
+  const runtime = createPromptContextRuntime({
+    username: "YY",
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-01-01T00:00:00.000Z")),
+    dailyShellStore: { get: () => undefined },
+    coreProfileStore: { get: () => ({ appearanceDescription: "", librarySetting: "" }) },
+    memoryStore: { read: () => ({}) },
+    diaryStore: { latestWakeBoundary: () => undefined },
+    calendarStore: { listEntries: () => [] },
+    skillsDirPath: "/home/alice/.agent/skills",
+    skillsRegistry: { available: () => [] }
+  } as any);
+
+  assert.equal(runtime.renderText("{{notes_list}}"), "");
+});

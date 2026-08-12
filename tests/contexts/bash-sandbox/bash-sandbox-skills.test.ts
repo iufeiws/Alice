@@ -75,6 +75,28 @@ test("Skill tool loads by exact name and renders args without host paths", async
   assert.equal(typeof loaded.output, "string");
 });
 
+test("Skill tool returns instructions verbatim without escaping XML tags", async () => {
+  const root = tmpDir("skills-tools-verbatim");
+  const registry = createSkillRegistry({ roots: [{ root, source: "first-party" }] });
+  const runtime = createBashSandboxRuntime({
+    config: testConfig({ skillMounts: [] }),
+    executor: fakeExecutor(async () => ({ stdout: "", stderr: "", exitCode: 0, timedOut: false, durationMs: 1, truncated: false }))
+  });
+  const loader = createSkillLoader(registry, runtime, undefined, (name) =>
+    name === "notes_list" ? "<notes>\n  <note>\n    <name>demo</name>\n    <path>/home/alice/.agent/notes/demo.md</path>\n  </note>\n</notes>" : undefined
+  );
+  writeSkill(root, "notes", "name: notes\ndescription: notes list.", "笔记:\n{{notes_list}}\n");
+  const tools = createSkillsTools({ loader });
+
+  const loaded = await tools.execute({ id: "load", toolName: "Skill", input: { skill: "notes" } });
+
+  assert.equal(loaded.ok, true);
+  const output = String(loaded.output);
+  assert.match(output, /<notes>/);
+  assert.match(output, /<path>\/home\/alice\/\.agent\/notes\/demo\.md<\/path>/);
+  assert.ok(!output.includes("&lt;notes&gt;"));
+});
+
 test("Skill tool mounts loaded skill resources read-write", async () => {
   const root = tmpDir("skills-tools-mount");
   const skillRoot = writeSkill(root, "demo", "name: demo\ndescription: demo skill", "Use script.\n");

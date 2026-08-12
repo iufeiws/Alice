@@ -81,6 +81,7 @@ export function baseContext(root: string, memoryStore: ReturnType<typeof createM
         cacheDir: "/cache",
         tmpDir: "/tmp",
         skillsDir: "/home/alice/.agent/skills",
+        notesDir: "/home/alice/.agent/notes",
         skillMounts: [],
         mounts: [],
         network: "none",

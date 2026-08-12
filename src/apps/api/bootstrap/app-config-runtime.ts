@@ -264,6 +264,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
       cacheDir: env.BASH_SANDBOX_CACHE_DIR ?? "/cache",
       tmpDir: env.BASH_SANDBOX_TMP_DIR ?? "/tmp",
       skillsDir: env.BASH_SANDBOX_SKILLS_DIR ?? path.posix.join(sandboxWorkspaceDir, ".agent", "skills"),
+      notesDir: env.BASH_SANDBOX_NOTES_DIR ?? path.posix.join(sandboxWorkspaceDir, ".agent", "notes"),
       skillMounts: [],
       mounts: withDefaultMounts(
         parseBashSandboxMounts(env.BASH_SANDBOX_MOUNTS ? JSON.parse(env.BASH_SANDBOX_MOUNTS) : []),

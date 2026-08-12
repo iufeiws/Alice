@@ -1,5 +1,5 @@
 import { buildCalendarContext } from "../../../../capabilities/tools/calendar/src/index.js";
-import { formatAvailableSkillsXml } from "../../../../contexts/skills/src/index.js";
+import { formatAvailableSkillsXml, formatNotesXml, type NotesIndexEntry } from "../../../../contexts/skills/src/index.js";
 import { defaultWorldWandererPluginConfigPath, readWorldWandererConfig } from "../../../../contexts/world-wanderer/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { PromptContextContentOption, PromptContextPrimitive, PromptContextRuntime, PromptContextValue } from "../contracts/prompt-context-runtime.js";
@@ -35,7 +35,8 @@ const variableNames = [
   "calendar/context",
   "skills/dirPath",
   "system_skills",
-  "installed_skills"
+  "installed_skills",
+  "notes_list"
 ];
 
 export function createPromptContextRuntime(input: {
@@ -48,6 +49,7 @@ export function createPromptContextRuntime(input: {
   calendarStore: any;
   skillsRegistry: any;
   skillsDirPath: string;
+  listNotes?: () => NotesIndexEntry[];
   worldWandererConfigPath?: string;
 }): PromptContextRuntime {
   return createRuntime(getVariable, () => [...variableNames]);
@@ -66,6 +68,7 @@ export function createPromptContextRuntime(input: {
     if (name === "skills/dirPath") return input.skillsDirPath;
     if (name === "system_skills") return formatAvailableSkillsXml(input.skillsRegistry, "first-party", "system_skills");
     if (name === "installed_skills") return formatAvailableSkillsXml(input.skillsRegistry, "third-party", "installed_skills");
+    if (name === "notes_list") return input.listNotes ? formatNotesXml(input.listNotes()) : "";
     return undefined;
   }
 

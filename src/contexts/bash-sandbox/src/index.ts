@@ -7,3 +7,5 @@ export type { BashPermissionDecision } from "./permission.js";
 export { classifyBashCommand } from "./permission.js";
 export type { DockerExecutor, DockerExecutorResult } from "./docker-executor.js";
 export { createDockerBashExecutor, ensureDockerSandboxContainer, recreateDockerSandboxContainer } from "./docker-executor.js";
+export type { SandboxNotesEntry } from "./container-notes.js";
+export { parseSandboxNotesOutput, readSandboxNotesIndex } from "./container-notes.js";

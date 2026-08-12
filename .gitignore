@@ -36,3 +36,6 @@ assets/generated/*
 .agents/skills/anchor-skill/
 assets/*
 ref/*
+
+# ZCode CLI local state
+.zcode/

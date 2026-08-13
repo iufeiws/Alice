@@ -149,10 +149,14 @@ export async function handleAdminApiServiceRoute(context: AdminRoutesContext, re
 
   if (request.method === "GET" && request.url === "/admin/api/memory") {
     const sleepDays = getMemoryAdminRuntime(context).listSleepDays();
+    // 计划 §8.1: 只读返回最新 100 条(createdAtUtc DESC, id DESC 由 store 保证);
+    // 查询失败抛出, 由统一 handleHttpError 返回 500 JSON 错误, 不返回部分成功数据。
+    const shortMemories = context.shortMemoryStore.listLatest(100);
     writeJson(response, 200, {
       files: context.memoryStore.stats(),
       prompts: context.memoryInductionPromptStore.get(),
-      sleepDays
+      sleepDays,
+      shortMemories
     });
     return;
   }
@@ -186,9 +190,15 @@ export async function handleAdminApiServiceRoute(context: AdminRoutesContext, re
   }
 
   if (request.method === "POST" && request.url === "/admin/api/memory/clear-session") {
-    context.clearMemoryInductionSession();
+    // §8.2: 必须等待异步 clear(含 Short Memory 采集)完成后再响应; 失败由统一错误处理返回 JSON。
+    // 调用方必须返回完整 SessionClearResult, 不做向后兼容默认(§3 契约)。
+    const result = await context.clearMemoryInductionSession();
     context.appendLog("info", "memorize console session clear requested");
-    writeJson(response, 200, { ok: true });
+    writeJson(response, 200, {
+      ok: true,
+      cleared: result.cleared,
+      shortMemoryCaptured: result.shortMemoryCaptured
+    });
     return;
   }
 
@@ -348,14 +358,16 @@ export async function handleAdminApiServiceRoute(context: AdminRoutesContext, re
   }
 
   if (request.method === "POST" && request.url === "/admin/api/llm-chain/clear") {
-    context.clearLLMChainCache();
+    // §8.2: 必须等待异步 clear(含 Short Memory 采集)完成后再响应; 失败由统一错误处理返回 JSON。
+    const result = await context.clearLLMChainCache();
     context.appendLog("info", "llm current session clear requested");
-    writeJson(response, 200, { ok: true });
+    writeJson(response, 200, { ok: true, cleared: result.cleared, shortMemoryCaptured: result.shortMemoryCaptured });
     return;
   }
 
   if (request.method === "POST" && request.url === "/admin/api/llm-run/cancel") {
-    const result = context.cancelActiveLLMRun();
+    // §8.2: cancel 中实际发生 session clear 的阶段必须等待异步 clear 完成后再响应。
+    const result = await context.cancelActiveLLMRun();
     context.appendLog("warn", `llm run cancel requested: active_request=${result.hadActiveRequest}`);
     writeJson(response, 200, result);
     return;

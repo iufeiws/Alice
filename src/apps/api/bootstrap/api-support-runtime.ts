@@ -16,12 +16,17 @@ export function createApiSupportRuntime(input: {
   getLLMRequestSender(): any;
   sendMemoryFailureNotice(): Promise<void>;
   appendLog(level: "info" | "warn" | "error", message: string): void;
+  sessionClearCoordinator: any;
+  /** Main Agent clearing 占用获取口(§7.3): 转发给 Memorize memory console clearSession。 */
+  acquireMainAgentClear: (input: { kind: "chat" | "talk" | "memorize"; sessionId: string }) => any;
   piWorkerRuntime?: any;
 }) {
   const adminLLMSessionRuntime = createAdminLLMSessionRuntime({
     sessionRoot: input.apiLLMRuntime.llmSessionArchive.root,
     time: input.time,
     archive: input.apiLLMRuntime.llmSessionArchive,
+    sessionClearCoordinator: input.sessionClearCoordinator,
+    acquireMainAgentClear: input.acquireMainAgentClear,
     requestLogs: input.apiRuntimeState.llmRequestLogs,
     getActiveSession: () => input.apiLLMRuntime.llmSessionArchive.readCurrent(),
     listRecentMessages: () => input.store?.listMessages(500) ?? [],

@@ -22,6 +22,7 @@ export function createApiAgentRuntime(input: {
   conversationStore: any;
   messagingTools: any;
   llmLogRuntime: any;
+  sessionClearCoordinator: any;
   resolvePromptApiPreset(agentId: "chat" | "talk" | "memorize"): any;
   visibleToolNames(profile: any): string[];
   agentRunIndicator?: any;
@@ -47,6 +48,7 @@ export function createApiAgentRuntime(input: {
     sendRequest: (requestInput) => input.llmRequests.send(requestInput),
     flushResponseTranscript: ({ request, result }) => input.llmRequests.flushResponseTranscript?.(request, result.message),
     agentLoopRuntime: input.agentLoopRuntime,
+    sessionClearCoordinator: input.sessionClearCoordinator,
     createLLMSession: (occurredAt) => Number(input.agentLoopRuntime.createTalkLLMSession(occurredAt).id),
     loadActiveTalkLLMSessionTranscript: () => input.agentLoopRuntime.loadCurrentLLMSessionTranscript(),
     updateActiveTalkLLMSessionTranscript: (session) => input.agentLoopRuntime.updateActiveTalkLLMSessionTranscript(session),

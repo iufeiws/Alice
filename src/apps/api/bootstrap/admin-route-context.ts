@@ -2,10 +2,12 @@ import type { AppConfig } from "./app-config-runtime.js";
 import type { LLMClient } from "../../../contexts/llm-gateway/src/index.js";
 import type { LLMRequestSender } from "../../../contexts/llm-gateway/src/llm-tool-loop.js";
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
+import type { SessionClearResult } from "../../../contexts/llm-session/src/application/session-clear-coordinator.js";
 import type { ToolPlugin } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { TokenUsageQuery } from "../../../platform/storage/src/token-usage-store.js";
 import type { DiaryStore } from "../../../platform/storage/src/diary-store.js";
 import type { CalendarStore } from "../../../platform/storage/src/calendar-store.js";
+import type { ShortMemoryStore } from "../../../contexts/memory/src/short-memory-store.js";
 import type { StoredConversationMessage } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentStateController } from "../../../contexts/agent-loop/src/domain/agent-loop-state.js";
 import type { CoreProfileStore } from "../../../contexts/agent-profile/src/adapters/json-core-profile-store.js";
@@ -61,9 +63,9 @@ export type AdminRuntimeContext = {
   getPromptRenderer(): PromptContextRuntime;
   getPromptVariableTree(): PromptVariableTree;
   getTokenUsageReport(query: TokenUsageQuery): unknown;
-  clearLLMChainCache(): void;
-  cancelActiveLLMRun(): { ok: true; hadActiveRequest: boolean };
-  clearMemoryInductionSession(): void;
+  clearLLMChainCache(): SessionClearResult | Promise<SessionClearResult>;
+  cancelActiveLLMRun(): { ok: true; hadActiveRequest: boolean; cleared: boolean; shortMemoryCaptured: boolean } | Promise<{ ok: true; hadActiveRequest: boolean; cleared: boolean; shortMemoryCaptured: boolean }>;
+  clearMemoryInductionSession(): SessionClearResult | Promise<SessionClearResult>;
   outputRouter: { listChannels(): string[] };
   feishuPairingStore: { list(): Array<{ accountId?: string; channelId?: string; userId?: string; sessionId?: string }> };
   coreProfileStore: CoreProfileStore;
@@ -78,6 +80,8 @@ export type AdminRuntimeContext = {
   memoryStore: MemoryStore;
   diaryStore: DiaryStore;
   calendarStore: CalendarStore;
+  // 计划 §8.1: Memory 查询 API 的 Short Memory 只读数据源。
+  shortMemoryStore: Pick<ShortMemoryStore, "listLatest">;
   memoryInductionPromptStore: MemoryInductionPromptStore;
   memorySandbox?: MemorySandbox;
   piWorker?: {

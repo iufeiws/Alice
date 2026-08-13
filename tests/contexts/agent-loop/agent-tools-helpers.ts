@@ -6,14 +6,17 @@ import type { AgentEvent, AgentOutput, ToolCall } from "../../../src/contexts/ag
 import type { PromptProfile } from "../../../src/contexts/agent-profile/src/application/build-system-prompt.js";
 import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.js";
 import type { AgentStateStore } from "../../../src/contexts/agent-loop/src/domain/agent-loop-state.js";
+import type { SessionClearResult } from "../../../src/contexts/llm-session/src/application/session-clear-coordinator.js";
 import { runAgentFunctionCallLoop } from "../../../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js";
 import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
 
-export type TestChatAgentDeps = Omit<ChatAgentDeps, "llmRequestSender" | "getPromptRenderer" | "getPromptProfile" | "createLLMSessionId"> & Partial<Pick<ChatAgentDeps, "llmRequestSender" | "getPromptRenderer" | "createLLMSessionId">> & {
+export type TestChatAgentDeps = Omit<ChatAgentDeps, "llmRequestSender" | "getPromptRenderer" | "getPromptProfile" | "createLLMSessionId" | "onLLMSessionCleared" | "onLLMSessionRebuilt"> & Partial<Pick<ChatAgentDeps, "llmRequestSender" | "getPromptRenderer" | "createLLMSessionId">> & {
   getPromptProfile?: () => PromptProfile | Record<string, any>;
+  onLLMSessionCleared?: (reason: Parameters<ChatAgentDeps["onLLMSessionCleared"]>[0]) => void | SessionClearResult | Promise<void | SessionClearResult>;
+  onLLMSessionRebuilt?: () => void | SessionClearResult | Promise<void | SessionClearResult>;
 };
 
 export function createChatAgent(deps: TestChatAgentDeps) {
@@ -22,6 +25,7 @@ export function createChatAgent(deps: TestChatAgentDeps) {
   const loadLLMSession = deps.loadLLMSession ?? (() => persistedSession);
   const onLLMSessionUpdated = deps.onLLMSessionUpdated;
   const onLLMSessionCleared = deps.onLLMSessionCleared;
+  const onLLMSessionRebuilt = deps.onLLMSessionRebuilt;
   const getPromptProfile = deps.getPromptProfile ?? testPromptProfile;
   const requestLogs = new WeakMap<object, any>();
   const llmRequestSender = deps.llmRequestSender ?? createLLMRequests({
@@ -63,9 +67,14 @@ export function createChatAgent(deps: TestChatAgentDeps) {
       if (!deps.loadLLMSession) persistedSession = session;
       onLLMSessionUpdated?.(session);
     },
-    onLLMSessionCleared(reason) {
-      if (!deps.loadLLMSession) persistedSession = undefined;
-      onLLMSessionCleared?.(reason);
+    async onLLMSessionCleared(reason) {
+      const result = await onLLMSessionCleared?.(reason);
+      const normalizedResult = result ?? { cleared: true, shortMemoryCaptured: false };
+      if (!deps.loadLLMSession && normalizedResult.cleared) persistedSession = undefined;
+      return normalizedResult;
+    },
+    async onLLMSessionRebuilt() {
+      return await onLLMSessionRebuilt?.() ?? { cleared: true, shortMemoryCaptured: false };
     }
   });
 }

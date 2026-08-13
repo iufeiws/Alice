@@ -8,6 +8,7 @@ export function createApiSessionRuntime(input: {
   getConversationStartIndex(sessionId: number): number | undefined;
   buildTalkRuntimeMessages(sessionId: number): any;
   appendLog(level: "info" | "warn" | "error", message: string): void;
+  sessionClearCoordinator: any;
 }) {
   const llmSessionArchive = createLLMSessionArchive({
     memoryRoot: input.config.memoryFiles.root,
@@ -19,7 +20,8 @@ export function createApiSessionRuntime(input: {
     archive: llmSessionArchive,
     getConversationStartIndex: input.getConversationStartIndex,
     buildTalkRuntimeMessages: input.buildTalkRuntimeMessages,
-    appendLog: input.appendLog
+    appendLog: input.appendLog,
+    sessionClearCoordinator: input.sessionClearCoordinator
   });
 
   function restoreCurrentLLMSession(): LLMSessionRecord | undefined {

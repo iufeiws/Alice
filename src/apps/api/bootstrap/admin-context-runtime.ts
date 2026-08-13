@@ -1,9 +1,11 @@
 import type { AppConfig } from "./app-config-runtime.js";
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
+import type { SessionClearResult } from "../../../contexts/llm-session/src/application/session-clear-coordinator.js";
 import { createAdminMemoryRuntime } from "../../../contexts/memory/src/application/admin-memory-runtime.js";
 import type { AgentInitiatedBehaviorPlan } from "../../../contexts/initiative/src/domain/initiated-behavior.js";
 import type { AgentInitiatedBehaviorConfigPatch } from "../../../contexts/initiative/src/adapters/json-initiated-behavior-store.js";
 import type { LLMApiPreset } from "../../../contexts/llm-gateway/src/llm-api-profile.js";
+import type { ShortMemoryStore } from "../../../contexts/memory/src/short-memory-store.js";
 import type { PromptContextRuntime } from "../../../contexts/prompt-context/src/index.js";
 import { createAdminRouteServices } from "./admin-api-service.js";
 import type { AdminRuntimeContext, PromptVariableTree } from "./admin-route-context.js";
@@ -29,9 +31,9 @@ export function createAdminRequestHandlerRuntime(input: {
   getPromptRenderer(): PromptContextRuntime;
   getPromptVariableTree(): PromptVariableTree;
   getTokenUsageReport(query: any): unknown;
-  clearLLMChainCache(): void;
-  cancelActiveLLMRun(): { ok: true; hadActiveRequest: boolean };
-  clearMemoryInductionSession(): void;
+  clearLLMChainCache(): SessionClearResult | Promise<SessionClearResult>;
+  cancelActiveLLMRun(): { ok: true; hadActiveRequest: boolean; cleared: boolean; shortMemoryCaptured: boolean } | Promise<{ ok: true; hadActiveRequest: boolean; cleared: boolean; shortMemoryCaptured: boolean }>;
+  clearMemoryInductionSession(): SessionClearResult | Promise<SessionClearResult>;
   outputRouter: any;
   feishuPairingStore: any;
   coreProfileStore: any;
@@ -47,6 +49,7 @@ export function createAdminRequestHandlerRuntime(input: {
   diaryStore: any;
   calendarStore: any;
   memoryInductionPromptStore: any;
+  shortMemoryStore: Pick<ShortMemoryStore, "listLatest">;
   piWorker?: any;
   sleepMemoryInductionRuntime: { isActive(): boolean };
   ensureMemoryConsoleSession(windowEndAt: string, windowStartAt?: string): any;
@@ -130,6 +133,7 @@ export function createAdminRequestHandlerRuntime(input: {
     diaryStore: input.diaryStore,
     calendarStore: input.calendarStore,
     memoryInductionPromptStore: input.memoryInductionPromptStore,
+    shortMemoryStore: input.shortMemoryStore,
     memorySandbox: input.piWorker,
     piWorker: input.piWorker,
     memoryAdminRuntime,

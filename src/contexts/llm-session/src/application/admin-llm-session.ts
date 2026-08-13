@@ -8,6 +8,9 @@ export function createAdminLLMSessionRuntime(input: {
   sessionRoot(): string;
   time: any;
   archive: any;
+  sessionClearCoordinator: any;
+  /** Main Agent clearing 占用获取口(§7.3): 转发给 Memorize memory console clearSession。 */
+  acquireMainAgentClear: (input: { kind: "chat" | "talk" | "memorize"; sessionId: string }) => any;
   requestLogs: any[];
   getActiveSession(): any;
   listRecentMessages(): any[];
@@ -20,7 +23,9 @@ export function createAdminLLMSessionRuntime(input: {
 }) {
   const memoryConsoleRuntime = createMemoryConsoleRuntime({
     sessionRoot: input.sessionRoot,
-    time: input.time
+    time: input.time,
+    sessionClearCoordinator: input.sessionClearCoordinator,
+    acquireMainAgentClear: input.acquireMainAgentClear
   });
   const memoryLLMSessionRuntime = createMemoryLLMSessionRuntime({
     listSessions: (agentType, limit) => input.archive.listSessions(agentType, limit),

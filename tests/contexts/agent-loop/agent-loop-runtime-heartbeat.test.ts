@@ -267,3 +267,142 @@ test("agent heartbeat logs failed talk runs and requeues readiness", async () =>
   assert.equal(markedReady, 1);
   assert.equal(logs.some((entry) => entry.level === "error"), true);
 });
+
+test("force run 不得绕过 Main Agent 互斥门控: canRunHeartbeat=false 时返回 0 且不进入任何任务分支", async () => {
+  const calls: string[] = [];
+  const heartbeat = createAgentHeartbeatRuntime({
+    getIntervalMs: () => 1000,
+    appendLog: () => {},
+    tasks: {
+      isIdleTransitionDue: () => {
+        calls.push("isIdleTransitionDue");
+        return true;
+      },
+      onIdleTimerTransition: async () => {
+        calls.push("onIdleTimerTransition");
+        return undefined;
+      },
+      canRunHeartbeat: () => false, // clearing 占用: Main Agent 互斥门控关闭
+      hasPendingUserMessages: () => false,
+      tickAgentState: () => {
+        calls.push("tickAgentState");
+      },
+      onHeartbeatTick: () => {
+        calls.push("onHeartbeatTick");
+      },
+      buildRandomizedInitiatedBehaviorEvent: () => {
+        calls.push("buildRandomizedInitiatedBehaviorEvent");
+        return undefined;
+      },
+      runGeneratedSession: async () => {
+        calls.push("runGeneratedSession");
+        return true;
+      },
+      setAgentWaiting: () => {
+        calls.push("setAgentWaiting");
+      },
+      getTimedYieldEvent: () => {
+        calls.push("getTimedYieldEvent");
+        return undefined;
+      },
+      claimReadyTalkSession: () => {
+        calls.push("claimReadyTalkSession");
+        return undefined;
+      },
+      getSleepCocoonWakeEvent: () => undefined,
+      getSleepCocoonGoodnightEvent: () => undefined,
+      getCalendarReminderEvent: () => undefined,
+      getPendingSessionIds: () => {
+        calls.push("getPendingSessionIds");
+        return ["session-1"];
+      },
+      isProcessingSession: () => false,
+      beginProcessingSession: () => {
+        calls.push("beginProcessingSession");
+      },
+      finishProcessingSession: () => {},
+      getPendingMessageCount: () => 1,
+      shouldProcessPendingSession: () => true,
+      markSessionNotPending: () => {
+        calls.push("markSessionNotPending");
+      },
+      processPendingSession: async () => {
+        calls.push("processPendingSession");
+      },
+      runManualSession: async () => {
+        calls.push("runManualSession");
+        return true;
+      },
+      appendLog: () => {}
+    }
+  });
+
+  // force 只应绕过延迟、随机行为等策略, 不应绕过 Main Agent 互斥(问题 2):
+  // clearing 占用期间 force(processNow 路径)必须返回 0, 不进入 pending/manual 分支。
+  assert.equal(await heartbeat.run({ force: true, runManualSessionWhenIdle: true }), 0, "clearing 占用期间 force run 必须返回 0");
+  assert.deepEqual(calls, [], "force run 不得进入 idle 过渡/pending/manual/随机行为等任何任务分支");
+  heartbeat.flush();
+});
+
+test("force run 不执行 idle 过渡 hook(原语义); 非 force 心跳才执行", async () => {
+  let idleHooks = 0;
+  const heartbeat = createAgentHeartbeatRuntime({
+    getIntervalMs: () => 1000,
+    appendLog: () => {},
+    tasks: {
+      isIdleTransitionDue: () => true,
+      onIdleTimerTransition: async () => {
+        idleHooks += 1;
+        return undefined;
+      },
+      canRunHeartbeat: () => true,
+      hasPendingUserMessages: () => false,
+      runGeneratedSession: async () => false,
+      getPendingSessionIds: () => [],
+      isProcessingSession: () => false,
+      beginProcessingSession: () => {},
+      finishProcessingSession: () => {},
+      getPendingMessageCount: () => 0,
+      shouldProcessPendingSession: () => false,
+      markSessionNotPending: () => {},
+      processPendingSession: async () => {},
+      appendLog: () => {}
+    }
+  });
+
+  // 恢复原语义(HEAD): idle 过渡 hook 仅在非 force 时执行, force 不执行。
+  assert.equal(await heartbeat.run({ force: true }), 0);
+  assert.equal(idleHooks, 0, "force run 不得执行 idle 过渡 hook");
+  assert.equal(await heartbeat.run(), 0);
+  assert.equal(idleHooks, 1, "非 force 心跳执行 idle 过渡 hook");
+  heartbeat.flush();
+});
+
+test("一次 heartbeat run 逐个处理全部 pending 会话(恢复原语义, 无 break)", async () => {
+  const processed: string[] = [];
+  const heartbeat = createAgentHeartbeatRuntime({
+    getIntervalMs: () => 1000,
+    appendLog: () => {},
+    tasks: {
+      canRunHeartbeat: () => true,
+      hasPendingUserMessages: () => processed.length < 2,
+      runGeneratedSession: async () => false,
+      getPendingSessionIds: () => ["session-1", "session-2"],
+      isProcessingSession: () => false,
+      beginProcessingSession: () => {},
+      finishProcessingSession: () => {},
+      getPendingMessageCount: () => 1,
+      shouldProcessPendingSession: () => true,
+      markSessionNotPending: () => {},
+      processPendingSession: async (sessionId) => {
+        processed.push(sessionId);
+      },
+      appendLog: () => {}
+    }
+  });
+
+  // 恢复原语义(HEAD): 一次 run 逐个处理全部 pending 会话, 而不是只处理一个。
+  assert.equal(await heartbeat.run(), 2, "一次 run 处理全部 pending 会话");
+  assert.deepEqual(processed, ["session-1", "session-2"], "按 pending 顺序逐个处理");
+  heartbeat.flush();
+});

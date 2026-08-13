@@ -105,8 +105,9 @@ export function createMessageRuntimeRuntime(input: {
     onForceWake() {
       input.queueForceWakeEvent();
     },
-    clearLLMSession() {
-      input.chatAgent.clearLLMSession("mode_transition");
+    clearLLMSession(reason) {
+      // §7.1: 返回 Promise 使调用方(mode_transition/force_wake 状态切换)能够 await。
+      return input.chatAgent.clearLLMSession(reason);
     },
     appendLog: input.appendLog,
     appendMessageLog: input.appendMessageLog,

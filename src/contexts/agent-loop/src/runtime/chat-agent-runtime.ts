@@ -23,7 +23,7 @@ export function createChatAgentRuntime(input: {
   appendLLMResponseLog(result: any, agentId?: "chat" | "talk", request?: any): void;
   messagingTools: any;
   updateCurrentLLMSessionTranscript(session: any): void;
-  clearCurrentLLMSession(reason: any): void;
+  clearCurrentLLMSession(reason: any): Promise<any>;
   resolvePromptApiPreset(agentId: "chat" | "talk" | "memorize"): any;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   initialLLMSession: any;
@@ -82,14 +82,15 @@ export function createChatAgentRuntime(input: {
     onLLMSessionUpdated(session) {
       input.updateCurrentLLMSessionTranscript(session);
     },
-    onLLMSessionCleared(reason) {
+    async onLLMSessionCleared(reason) {
       input.messagingTools.noteLLMSessionCompleted();
-      input.clearCurrentLLMSession(reason);
+      return await input.clearCurrentLLMSession(reason);
     },
-    onLLMSessionRebuilt() {
-      input.clearCurrentLLMSession("mode_transition");
+    async onLLMSessionRebuilt() {
+      const result = await input.clearCurrentLLMSession("mode_transition");
       input.messagingTools.noteLLMSessionCompleted();
       input.messagingTools.noteLLMRequestStarted();
+      return result;
     },
     onLLMLog(event) {
       const mode = event.stream ? "stream" : "non-stream";

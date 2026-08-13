@@ -2,6 +2,7 @@ import { createApiContextRuntime } from "./api-context-runtime.js";
 import { createApiNoticeRuntime } from "./api-notice-runtime.js";
 import { createApiBehaviorRuntime } from "../../../contexts/initiative/src/application/api-initiated-behavior.js";
 import { createOutfitOnBodyGenerationAttempt } from "../../../contexts/capabilities/src/outfit-on-body-runtime.js";
+import type { ShortMemoryStore } from "../../../contexts/memory/src/short-memory-store.js";
 
 export function createApiControlRuntime(input: {
   config: any;
@@ -11,11 +12,13 @@ export function createApiControlRuntime(input: {
   triggerSleepMemoryInduction(): Promise<unknown>;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: any): unknown;
+  shortMemoryStore: Pick<ShortMemoryStore, "listByCreatedAtUtcRange">;
 }) {
   const apiContextRuntime = createApiContextRuntime({
     config: input.config,
     time: input.time,
-    appendLog: input.appendLog
+    appendLog: input.appendLog,
+    shortMemoryStore: input.shortMemoryStore
   });
   const apiNoticeRuntime = createApiNoticeRuntime({
     time: input.time,

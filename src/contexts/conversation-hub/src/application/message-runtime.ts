@@ -132,7 +132,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   const now = () => time.now().date;
   const random = deps.random ?? Math.random;
   const llmFailureNotice = "星界信号丢失";
-  const agentLoopRuntime = deps.agentLoopRuntime ?? createAgentLoopRuntime({
+  const agentLoopRuntime = deps.agentLoopRuntime ?? createAgentLoopRuntime();
+  // §7.1: 无论 runtime 由调用方注入还是本 runtime 自建, 都把 chat/talk 的 prepare 跑者
+  // 接到本 runtime 的 deps(测试注入裸 runtime 时同样可用; 生产值与 root 注入一致)。
+  agentLoopRuntime.setRunners({
     prepareChat: ({ event, agentLoopRunSeq }) => deps.chatAgent.prepareEventRun(event, { agentLoopRunSeq }),
     prepareTalk: ({ sessionId, signal, agentLoopRunSeq }) => deps.talkRuntime?.prepareReadyAgentLoopSession?.(sessionId, { signal, agentLoopRunSeq })
   });
@@ -188,14 +191,36 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     appendLog: deps.appendLog
   });
   let previousAgentState = deps.agentState?.getSnapshot?.().state;
-  const unsubscribeState = deps.agentState?.onChange((snapshot: AgentStateSnapshot | undefined) => {
+  // §11.2/问题 3: 状态监听器驱动 heartbeat(等待→idle 过渡清除完成才调度);
+  // flushAll 必须退订监听器(恢复 HEAD 行为), 已 flush 的 runtime 不因状态变化复活;
+  // 正常运行时监听器保持注册(既有行为不变)。门控来自 Main Agent activity 占用,
+  // 不依赖监听器 await; 监听器 fire-and-forget 调度的 heartbeat 在占用释放后恢复执行。
+  let registeredStateListener: ((snapshot: AgentStateSnapshot | undefined) => Promise<void> | void) | undefined;
+  const stateListener = async (snapshot: AgentStateSnapshot | undefined): Promise<void> => {
     if (!snapshot) return;
+    // 问题 3: 记录本次调用发起时是否仍为已注册监听器——退订前发出的 in-flight
+    // 调用在退订后不得复活 runtime(其 schedule 落在 flushAll 之后); 退订后才被
+    // 直接调用的监听器(外部持有原始引用)仍可驱动心跳(不依赖 flushAll 退订行为)。
+    const startedWhileRegistered = registeredStateListener === stateListener;
     if (previousAgentState === "waiting" && snapshot.state === "idle" && snapshot.reason === "inactive") {
-      deps.clearLLMSession?.("mode_transition");
+      // §7.1: mode_transition 清除(含 Short Memory 采集)必须完成后才进入后续 heartbeat;
+      // §10/§11.2: 清除失败时不得调度后续 heartbeat(loop 停止, 会话保持未清除), 只记录错误。
+      try {
+        await deps.clearLLMSession("mode_transition");
+      } catch (error) {
+        deps.appendLog("error", `idle transition llm session clear failed: ${error instanceof Error ? error.message : String(error)}`);
+        previousAgentState = snapshot.state;
+        return;
+      }
     }
     previousAgentState = snapshot.state;
+    if (startedWhileRegistered && registeredStateListener !== stateListener) {
+      return;
+    }
     heartbeat.schedule(0);
-  });
+  };
+  const unsubscribeState = deps.agentState?.onChange(stateListener);
+  registeredStateListener = stateListener;
   heartbeat.schedule(0);
 
   return {
@@ -279,12 +304,15 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       };
     },
     async flushAll() {
+      // 问题 3: 恢复 HEAD 行为——flushAll 同时退订状态监听器,
+      // 已 flush 的 runtime 不因状态变化复活(计时器与监听器一并停止)。
       heartbeat.flush();
       unsubscribeState?.();
+      registeredStateListener = undefined;
     }
   };
 
-  function ingestStoredEvent(event: AgentEvent): void {
+  async function ingestStoredEvent(event: AgentEvent): Promise<void> {
     deps.agentState?.noteInboundMessage();
     const contentText = summarizeEventPayload(event);
     deps.appendMessageLog({
@@ -301,8 +329,25 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     });
     if (event.payload.kind === "text" && event.payload.text.trim() === "/force_wake") {
       const wasSleeping = deps.agentState?.getSnapshot?.().state === "sleeping";
+      // §7.1/§10: force_wake 先获取 clearing 占用，再改变状态并清除会话。
+      // 已占用时拒绝本次唤醒，不得提前切换 waiting 或清除 sleep cocoon。
+      const acquisition = agentLoopRuntime.beginClearSession({
+        kind: "chat",
+        sessionId: event.externalSession.sessionId
+      });
+      if (!acquisition.acquired) {
+        deps.appendLog("warn", `force wake skipped: main agent busy ${event.externalSession.sessionId}`);
+        return;
+      }
+      try {
+        await deps.clearLLMSession("force_wake");
+      } catch (error) {
+        deps.appendLog("error", `force wake llm session clear failed: ${error instanceof Error ? error.message : String(error)}`);
+        return;
+      } finally {
+        acquisition.release();
+      }
       deps.agentState?.setState?.("waiting", { reason: "force_wake", clearSleepCocoon: true });
-      deps.clearLLMSession?.("force_wake");
       const wakeReady = wasSleeping ? deps.agentState?.waitForWake?.() : undefined;
       void Promise.resolve(wakeReady).then(
         () => deps.onForceWake?.(),
@@ -337,7 +382,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       agentLoopRuntime.noteInboundUserMessageInterrupt(event.externalSession.sessionId);
     }
     latestSessionEvents.set(event.externalSession.sessionId, event);
+    // §11.2: 每次事件入库都同步恢复 store 中已有的 pending 会话标记,
+    // 保证清除占用期间到达的消息与既有 pending 会话一并保持 pending(不丢失)。
+    // 先标记事件自身会话、再恢复 store 会话: 后续 run 按集合顺序先处理新会话。
     markPending(event.externalSession.sessionId);
+    recoverPendingSessionsFromStore();
   }
 
   function markPending(sessionId: string): void {
@@ -488,7 +537,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   }
 
   function canRunHeartbeat(): boolean {
-    if (agentLoopRuntime.isRunning()) return false;
+    // §11.2: 门控来自 Main Agent 统一占用(running 与 clearing 同权), 不依赖状态监听器 await;
+    // isLLMSessionActive 为生产 wiring 双保险(与 isMainAgentBusy 同源)。
+    if (agentLoopRuntime.isMainAgentBusy()) return false;
     if (deps.isLLMSessionActive?.()) return false;
     return deps.agentState?.canRunHeartbeat() ?? true;
   }

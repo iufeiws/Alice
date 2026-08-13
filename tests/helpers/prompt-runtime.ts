@@ -12,6 +12,7 @@ export function testPromptRuntime(variables: Record<string, PromptContextValue> 
     calendarStore: { listEntries: () => [] },
     skillsDirPath: "/home/alice/.agent/skills",
     skillsRegistry: { available: () => [] },
+    shortMemoryStore: { listByCreatedAtUtcRange: () => [] },
     worldWandererConfigPath: "/tmp/alice-test-missing-world-wanderer.json"
   });
   const flattened: Record<string, PromptContextPrimitive> = {};

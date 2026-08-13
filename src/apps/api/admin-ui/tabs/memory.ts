@@ -23,6 +23,8 @@ export function renderMemoryTab(): string {
             <div id="memoryFiles">Loading...</div>
             <h2>Last Run</h2>
             <pre id="memoryRunResult">No memory run yet.</pre>
+            <h2>Short Memory</h2>
+            <div id="shortMemories" class="logs">Loading...</div>
           </div>
         </section>`;
 }

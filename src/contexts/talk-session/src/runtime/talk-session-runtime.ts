@@ -19,7 +19,8 @@ export function createTalkRuntimeRuntime(input: {
   sendRequest(input: any): Promise<any>;
   /** response 消息格式化完成后的递交钩子(llm-requests 的 flushResponseTranscript)。 */
   flushResponseTranscript?(input: { round: number; result: any; request: any }): void | Promise<void>;
-  agentLoopRuntime?: any;
+  agentLoopRuntime: any;
+  sessionClearCoordinator: any;
   createLLMSession(occurredAt: string): number;
   loadActiveTalkLLMSessionTranscript(): any;
   updateActiveTalkLLMSessionTranscript(session: any): void;
@@ -52,9 +53,7 @@ export function createTalkRuntimeRuntime(input: {
     },
     loadActiveTalkLLMSessionTranscript: input.loadActiveTalkLLMSessionTranscript,
     updateActiveTalkLLMSessionTranscript: input.updateActiveTalkLLMSessionTranscript,
-    prepareSessionContext: input.agentLoopRuntime
-      ? (contextInput: any) => input.agentLoopRuntime.prepareSessionContext(contextInput)
-      : undefined,
+    prepareSessionContext: (contextInput: any) => input.agentLoopRuntime.prepareSessionContext(contextInput),
     visibleToolNames: input.visibleToolNames,
     toolPlugins: input.toolPlugins,
     getLLMConfig: input.getLLMConfig,
@@ -73,13 +72,27 @@ export function createTalkRuntimeRuntime(input: {
   talkRuntime = createTalkRuntime({
     store: createTalkStore(path.join("logs", "talk", "talk.sqlite")),
     time: input.time,
+    sessionClearCoordinator: input.sessionClearCoordinator,
+    // §7.2/§10: Talk 正常关闭进入 Main Agent clearing 占用(kind talk), 与 Chat/Memorize 清除互斥。
+    acquireMainAgentClear: (clearInput) => input.agentLoopRuntime.beginClearSession(clearInput),
+    // §7.2 clear() 回调步骤①: 先把活跃 Talk LLM transcript 从 runtime 重写至持久存储。
+    rewriteActiveTalkLLMSessionFromRuntime(sessionId) {
+      input.rewriteActiveTalkLLMSessionFromRuntime(sessionId);
+    },
+    // §7.2 clear() 回调步骤②: 对应 LLM session 标记 cleared 并清 current pointer。
+    // 只能直接清除(不经 coordinator, 否则与正在执行的 talk clear 请求互相等待死锁)。
+    clearActiveTalkLLMSession(sessionId) {
+      if (input.isActiveTalkLLMSession(sessionId)) {
+        input.agentLoopRuntime.clearCurrentLLMSessionDirect("talk_close");
+      }
+    },
     createLLMSession(sessionInput) {
       return input.createLLMSession(sessionInput.occurredAt);
     },
     prepareAgentLoop: (sessionId, options) => talkAgentLoop.prepareTalkAgentLoopForSession(sessionId, options),
     interruptAgentLoop(sessionId) {
       input.rewriteActiveTalkLLMSessionFromRuntime(sessionId);
-      input.agentLoopRuntime?.interrupt?.("talk_interrupt");
+      input.agentLoopRuntime.interrupt("talk_interrupt");
       talkAgentLoop.interruptTalkAgentLoop(sessionId);
     },
     onSessionOpened() {

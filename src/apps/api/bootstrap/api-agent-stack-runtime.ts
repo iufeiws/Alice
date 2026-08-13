@@ -14,6 +14,7 @@ export function createApiAgentStackRuntime(input: {
   store: any;
   agentState: any;
   time: any;
+  sessionClearCoordinator: any;
   resolvePromptApiPreset(kind: any): any;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   processRestartContinuationStore?: any;
@@ -41,6 +42,7 @@ export function createApiAgentStackRuntime(input: {
     resolvePromptApiPreset: input.resolvePromptApiPreset,
     visibleToolNames: input.apiToolingRuntime.visibleToolNames,
     agentRunIndicator: agentRunIndicatorRuntime,
+    sessionClearCoordinator: input.sessionClearCoordinator,
     appendLog: input.appendLog,
     processRestartContinuationStore: input.processRestartContinuationStore
   });

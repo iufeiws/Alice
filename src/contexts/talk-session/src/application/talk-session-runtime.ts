@@ -1,4 +1,6 @@
+import type { MainAgentClearAcquisition } from "../../../agent-loop/src/runtime/agent-loop-runtime.js";
 import type { LLMMessage } from "../../../../contexts/llm-gateway/src/index.js";
+import type { SessionClearResult } from "../../../llm-session/src/application/session-clear-coordinator.js";
 import type { TalkOutputInterrupt } from "../adapters/sqlite-talk-session-store.js";
 import {
   assertNumericSessionId,
@@ -93,26 +95,24 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
       deps.onSessionOpened?.(sessionId);
       return { sessionId };
     },
-    closeSession(input) {
-      assertSessionExists(deps.store, input.sessionId);
-      readyAgentLoopSessions.delete(input.sessionId);
-      agentLoopInterruptedSessions.delete(input.sessionId);
-      const now = current(deps.time);
-      deps.store.closeSession({
-        sessionId: input.sessionId,
-        occurredAt: input.occurredAt ?? now.occurredAt,
-        occurredAtUtc: input.occurredAtUtc ?? now.occurredAtUtc
+    closeSession(input): Promise<SessionClearResult> {
+      // §7.2: 正常关闭视为真实会话清除, 一律经统一 coordinator(采集成功才关闭)。
+      // §10: 清除入口先获取 Main Agent clearing 占用(kind talk), 成功或失败后释放;
+      // 已占用(如 Chat loop 运行中或另一清除进行中)时拒绝关闭并抛错,
+      // 不得静默降级为无占用清除(通话渠道必须收到关闭失败)。
+      const acquisition = deps.acquireMainAgentClear({
+        kind: "talk",
+        sessionId: String(input.sessionId)
       });
-      foregroundPlaybackPendingSessions.delete(input.sessionId);
-      loopPrefixMessageCounts.delete(input.sessionId);
-      recordTranscriptEnd(deps.store, {
-        sessionId: input.sessionId,
-        occurredAt: input.occurredAt ?? now.occurredAt,
-        occurredAtUtc: input.occurredAtUtc ?? now.occurredAtUtc,
-        sourceKind: "session.ended",
-        sourceId: "system:end"
-      });
-      deps.onSessionClosed?.(input.sessionId);
+      if (!acquisition.acquired) {
+        throw new Error(`talk session close rejected: main agent busy session=${input.sessionId}`);
+      }
+      // §10(占用生命周期): 占用必须保持到 clearSession settle(成功或失败)后才释放。
+      // 不能在此处 `return clearSession(...)` 再挂 finally——非 async 函数中 finally
+      // 在返回瞬间同步执行, 占用会在清除完成前提前释放; 外层保持同步, 使 acquire
+      // 被拒时 closeSession 同步抛错(通话渠道立即收到关闭失败), 清除与延迟释放
+      // 收敛到内部 async 函数(await 后 finally 才执行, settle 后才 release)。
+      return clearSessionWithAcquisition(input.sessionId, input.occurredAt, input.occurredAtUtc, acquisition);
     },
     markAgentLoopReady(sessionId) {
       assertOpenSession(deps.store, sessionId);
@@ -534,6 +534,61 @@ export function createTalkRuntime(deps: TalkRuntimeDeps): TalkRuntime {
   };
 
   return runtime;
+
+  /**
+   * 带占用生命周期的清除执行(§10): clearSession settle(成功或失败)后才 release 占用。
+   * async + try/return await/finally 保证 finally 在 Promise settle 后执行,
+   * 清除完成前 Main Agent busy 保持 true(阻塞契约), 失败路径同样 settle 后释放。
+   */
+  async function clearSessionWithAcquisition(
+    sessionId: number,
+    occurredAt: string | undefined,
+    occurredAtUtc: string | undefined,
+    acquisition: Extract<MainAgentClearAcquisition, { acquired: true }>
+  ): Promise<SessionClearResult> {
+    try {
+      return await deps.sessionClearCoordinator.clearSession({
+        kind: "talk",
+        sessionId: String(sessionId),
+        reason: "talk_close",
+        exists: () => deps.store.getSession(sessionId)?.status === "open",
+        clear: () => performTalkSessionClose(sessionId, occurredAt, occurredAtUtc)
+      });
+    } finally {
+      acquisition.release();
+    }
+  }
+
+  /**
+   * Talk 关闭五步(§7.2), 只在 coordinator 采集成功后执行:
+   * ① 活跃 Talk LLM transcript 从 runtime 重写至持久存储 →
+   * ② 对应 LLM session 标记 cleared 并清 current pointer →
+   * ③ 关闭 logs/talk/talk.sqlite 中的 Talk session →
+   * ④⑤ 关闭后的 transcript 投影到 conversation hub + Agent 状态切到 waiting(由 onSessionClosed 完成)。
+   * Short Memory 失败时本函数不执行, Talk session 保持打开(§10)。
+   */
+  function performTalkSessionClose(sessionId: number, occurredAt?: string, occurredAtUtc?: string): void {
+    deps.rewriteActiveTalkLLMSessionFromRuntime(sessionId);
+    deps.clearActiveTalkLLMSession(sessionId);
+    readyAgentLoopSessions.delete(sessionId);
+    agentLoopInterruptedSessions.delete(sessionId);
+    const now = current(deps.time);
+    deps.store.closeSession({
+      sessionId,
+      occurredAt: occurredAt ?? now.occurredAt,
+      occurredAtUtc: occurredAtUtc ?? now.occurredAtUtc
+    });
+    foregroundPlaybackPendingSessions.delete(sessionId);
+    loopPrefixMessageCounts.delete(sessionId);
+    recordTranscriptEnd(deps.store, {
+      sessionId,
+      occurredAt: occurredAt ?? now.occurredAt,
+      occurredAtUtc: occurredAtUtc ?? now.occurredAtUtc,
+      sourceKind: "session.ended",
+      sourceId: "system:end"
+    });
+    deps.onSessionClosed?.(sessionId);
+  }
 
   function markAgentLoopReady(sessionId: number, delayMs = 0): void {
     if (agentLoopInterruptedSessions.has(sessionId)) return;

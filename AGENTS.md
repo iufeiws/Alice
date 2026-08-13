@@ -3,7 +3,7 @@
 ## 项目上下文
 ystemctl --user restart alice-agent-tmux.service 用于重启服务
 Alice 是一个本地优先的个人 Agent 运行时。当前范围包括 ChatAgent、占位式 Agent 行为、OpenAI 兼容 `/v1` 客户端、飞书与微信渠道插件、本地管理后台、SQLite 消息历史、JSONL LLM 会话归档，以及文件化系统日志。
-**project_summary.md 为项目结构总结, 实施前阅读以确定改动目标, 对项目做出改动后必须对其更新**
+**project_summary.md 为项目结构总结，实施前阅读以确定改动目标；只允许记录已经实现且能由当前源码验证的结构与行为，未开发的需求、计划、设计和待办禁止写入。完成实际实现后必须同步更新 project_summary.md，仅新增或修改计划文档时不得更新。**
 
 ## 工程规则
 - 所有文档必须使用中文撰写；新增或修改 README、设计说明、变更说明、审阅记录等文档时都遵守这一规则。

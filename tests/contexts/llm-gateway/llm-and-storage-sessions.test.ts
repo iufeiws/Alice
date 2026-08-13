@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createLLMRequestsRuntime } from "../../../src/contexts/llm-gateway/src/llm-requests-runtime.js";
 import { createLLMLogRuntime } from "../../../src/contexts/llm-gateway/src/llm-log-runtime.js";
 import { createApiSessionRuntime } from "../../../src/contexts/llm-session/src/index.js";
+import type { SessionClearRequest } from "../../../src/contexts/llm-session/src/application/session-clear-coordinator.js";
 import { createLLMSessionStore } from "../../../src/contexts/llm-session/src/adapters/sqlite-llm-session-store.js";
 import { createLLMSessionFilePath, writeLLMSessionJsonl, readLLMSessionJsonl } from "../../../src/contexts/llm-session/src/adapters/jsonl-llm-session-log.js";
 import type { LLMClient } from "../../../src/contexts/llm-gateway/src/index.js";
@@ -342,7 +343,15 @@ function createChatSessionRuntime(name: string) {
     time: fixedTime("2026-06-14T01:00:00.000Z"),
     getConversationStartIndex: () => undefined,
     buildTalkRuntimeMessages: () => [],
-    appendLog() {}
+    appendLog() {},
+    // §7.1: coordinator 为统一入口, 任何 clear 路径都必须经过它。
+    sessionClearCoordinator: {
+      async clearSession(request: SessionClearRequest) {
+        if (!request.exists()) return { cleared: false, shortMemoryCaptured: false };
+        await request.clear();
+        return { cleared: true, shortMemoryCaptured: false };
+      }
+    }
   }).llmSessionRuntime;
   return {
     runtime,

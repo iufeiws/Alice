@@ -277,6 +277,12 @@ export function renderMemoryScript(): string {
         const files = payload.files || [];
         renderMemorySleepDays(payload.sleepDays || []);
         await refreshMemoryDayMessages();
+        // 计划 §8.3: 只读展示最新 100 条 Short Memory; API 已按 createdAtUtc DESC 返回,
+        // 按数组顺序展示(不 reverse/sort); createdAt 为本地时间, 内容经 escapeHtml 防注入。
+        const shortMemories = payload.shortMemories || [];
+        $("shortMemories").innerHTML = shortMemories.map((entry) => \`
+          <div class="log-line">[\${escapeHtml(entry.createdAt)}] \${escapeHtml(entry.content)}</div>
+        \`).join("");
         $("memoryFiles").innerHTML = files.map((file) => \`
           <details class="prompt-layer" open>
             <summary>

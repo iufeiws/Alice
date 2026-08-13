@@ -7,6 +7,7 @@ import { buildRawLLMRequest } from "../../../llm-gateway/src/llm-request-shape.j
 import type { LLMSessionRecord, LLMRequestLogEntry, LLMResponseLogEntry } from "../domain/llm-session.js";
 import { summarizeLLMSession } from "./llm-session-view.js";
 import { cloneJsonObject, cloneLLMTools } from "../domain/llm-session-utils.js";
+import type { SessionClearCoordinator, SessionClearResult } from "./session-clear-coordinator.js";
 
 type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
 
@@ -23,6 +24,12 @@ export function createLLMSessionRuntime(input: {
   getConversationStartIndex(sessionId: number): number | undefined;
   buildTalkRuntimeMessages(sessionId: number): LLMChatInput["messages"];
   appendLog: AppendLog;
+  /**
+   * 统一 Session Clear 协调器（§6 / §7.1）。必填依赖:
+   * clearCurrentLLMSession 一律走 coordinator 串行队列,
+   * 在 Short Memory 采集成功后才清除会话(§10); 未注入由类型系统阻止。
+   */
+  sessionClearCoordinator: SessionClearCoordinator;
 }) {
   let nextSessionId = 1;
   /** 内存权威当前会话(与指针指向的会话一致)。 */
@@ -38,6 +45,7 @@ export function createLLMSessionRuntime(input: {
     updateCurrentLLMSessionTranscript,
     updateActiveTalkLLMSessionTranscript,
     clearCurrentLLMSession,
+    clearCurrentLLMSessionDirect,
     getCurrentLLMSessionSnapshot,
     loadCurrentLLMSessionTranscript,
     restorePersistedCurrentLLMSession
@@ -299,8 +307,40 @@ export function createLLMSessionRuntime(input: {
     currentSession = next;
   }
 
-  /** clear: 先提交完整新 meta(clearedAt/clearedAtUtc/reason), 再删除指针(§7)。 */
-  function clearCurrentLLMSession(reason: LLMSessionClearReason): void {
+  /**
+   * clear: 作为 coordinator 的 clear() 回调执行(Short Memory 采集成功后才调用),
+   * 先提交完整新 meta(clearedAt/clearedAtUtc/reason), 再删除指针(§7)。
+   * 一律经过统一 coordinator, 不存在不经 coordinator 的同步清除路径。
+   */
+  function clearCurrentLLMSession(reason: LLMSessionClearReason): Promise<SessionClearResult> {
+    const session = currentSession ?? input.archive.readCurrent();
+    return input.sessionClearCoordinator.clearSession({
+      kind: "chat",
+      sessionId: String(session?.id ?? "none"),
+      reason,
+      exists: currentLLMSessionExists,
+      clear: () => clearCurrentSessionRecord(reason)
+    });
+  }
+
+  /**
+   * 直接清除(不经 coordinator、不采集 Short Memory): 设计上的有意豁免——
+   * 仅供已处于协调器 clear() 回调内部的场景使用, 例如 Talk 正常关闭的
+   * clear() 回调中把对应 LLM session 标记为 cleared 并清 current pointer
+   * (§7.2 步骤②)。再次进入 coordinator 会造成队列自等待死锁, 因此
+   * Talk 路径必须使用本入口。
+   */
+  function clearCurrentLLMSessionDirect(reason: string): void {
+    clearCurrentSessionRecord(reason);
+  }
+
+  /** current session 真实存在且未清除(§3.2): coordinator 在轮到请求执行时求值。 */
+  function currentLLMSessionExists(): boolean {
+    const session = currentSession ?? input.archive.readCurrent();
+    return Boolean(session && !session.clearedAt);
+  }
+
+  function clearCurrentSessionRecord(reason: string): void {
     const session = currentSession ?? input.archive.readCurrent();
     if (!session) {
       input.archive.clearCurrentPointer();

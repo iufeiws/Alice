@@ -1,12 +1,15 @@
 import { createCurrentTimeProvider, formatZonedIso, parseZonedIso } from "../../../../platform/time/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import * as sqlite from "../../../../platform/storage/src/sqlite-compat.js";
+import {
+  advanceAliceSchemaVersion,
+  initializeShortMemorySchema
+} from "../../../../platform/storage/src/alice-database-schema.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
 
 type DatabaseSync = any;
-const SCHEMA_VERSION = 9;
 
 export type MessageDirection = "inbound" | "outbound" | "both";
 
@@ -182,7 +185,8 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
   initializeMessageLogDatabase(logDb);
   initializeMessageDatabase(messageDb);
   migrateMessageDatabase(messageDb);
-  db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+  initializeShortMemorySchema(db);
+  advanceAliceSchemaVersion(db);
   logDb.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS message_logs_external_event_id_idx
       ON message_logs(plugin, external_event_id)

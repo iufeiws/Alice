@@ -13,6 +13,7 @@ import {
 import { createLLMSessionBrowserRuntime } from "../../../src/contexts/llm-session/src/application/browse-llm-sessions.js";
 import { createLLMSessionStore } from "../../../src/contexts/llm-session/src/adapters/sqlite-llm-session-store.js";
 import type { StoredLLMSession } from "../../../src/contexts/llm-session/src/adapters/sqlite-llm-session-store.js";
+import type { SessionClearRequest } from "../../../src/contexts/llm-session/src/application/session-clear-coordinator.js";
 import { createLLMRequestsRuntime } from "../../../src/contexts/llm-gateway/src/llm-requests-runtime.js";
 import { fs, path, fixedTime, makeTempDir } from "../llm-gateway/llm-and-storage-helpers.js";
 
@@ -38,6 +39,20 @@ function storedSession(overrides: Partial<StoredLLMSession> = {}): StoredLLMSess
     },
     messages: [],
     ...overrides
+  };
+}
+
+/**
+ * 结构等价 createSessionClearCoordinator 产物的 fake（§7.1: coordinator 为统一入口,
+ * 任何 clear 路径都必须经过它, 不存在绕过采集的兼容 fallback）。
+ */
+function fakeSessionClearCoordinator() {
+  return {
+    async clearSession(request: SessionClearRequest) {
+      if (!request.exists()) return { cleared: false, shortMemoryCaptured: false };
+      await request.clear();
+      return { cleared: true, shortMemoryCaptured: false };
+    }
   };
 }
 
@@ -126,14 +141,15 @@ test("llm session list is database-driven with time and agent type", () => {
   assert.deepEqual(memory.map((entry) => entry.agentId), ["memorize"]);
 });
 
-test("LLM session runtime current session snapshot reflects request/response/clear", () => {
+test("LLM session runtime current session snapshot reflects request/response/clear", async () => {
   const root = makeTempDir("llm-session-snapshot-cache");
   const runtime = createApiSessionRuntime({
     config: { memoryFiles: { root } },
     time: fixedTime("2026-06-14T01:00:00.000Z"),
     getConversationStartIndex: () => undefined,
     buildTalkRuntimeMessages: () => [],
-    appendLog() {}
+    appendLog() {},
+    sessionClearCoordinator: fakeSessionClearCoordinator()
   }).llmSessionRuntime;
 
   runtime.noteLLMRequest({
@@ -159,7 +175,7 @@ test("LLM session runtime current session snapshot reflects request/response/cle
   assert.equal(snapshot.messageCount, 2);
   assert.equal(snapshot.latestMessage?.content, "done");
 
-  runtime.clearCurrentLLMSession("admin_clear");
+  await runtime.clearCurrentLLMSession("admin_clear");
   assert.equal(runtime.getCurrentLLMSessionSnapshot(), undefined);
 });
 
@@ -173,7 +189,8 @@ test("LLM session runtime skips response for a non-current session", () => {
     buildTalkRuntimeMessages: () => [],
     appendLog(level: string, message: string) {
       if (level === "warn") warnings.push(message);
-    }
+    },
+    sessionClearCoordinator: fakeSessionClearCoordinator()
   }).llmSessionRuntime;
 
   runtime.noteLLMRequest({

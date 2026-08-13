@@ -64,6 +64,7 @@ import {
   modeStateFromSession
 } from "./chat-agent-session.js";
 import type { LLMSessionClearReason, LLMSessionRecord, LLMSessionSnapshot } from "./chat-agent-types.js";
+import type { SessionClearResult } from "../../../llm-session/src/application/session-clear-coordinator.js";
 import type { ProcessRestartContinuationRecord, ProcessRestartContinuationStore } from "../adapters/json-process-restart-continuation-store.js";
 import { restartSuccessOutput, restartToolName } from "../../../../capabilities/tools/restart/profile.js";
 
@@ -135,8 +136,8 @@ export type ChatAgentDeps = {
   onLLMLog?(event: { kind: "call_start" | "stream_start" | "stream_end" | "response_received" | "rate_limited" | "finish_and_wait_resume_error"; round: number; stream: boolean; model?: string; attempt?: number; error?: string }): void;
   onLLMHeartbeatStarted?(): void;
   onLLMSessionUpdated?(session: LLMSessionSnapshot & { staticPromptFingerprint: string; requestTimestamps: string[] }): void;
-  onLLMSessionCleared?(reason: LLMSessionClearReason): void;
-  onLLMSessionRebuilt?(): void;
+  onLLMSessionCleared(reason: LLMSessionClearReason): SessionClearResult | Promise<SessionClearResult>;
+  onLLMSessionRebuilt(): SessionClearResult | Promise<SessionClearResult>;
   onLLMSessionCompleted?(): void;
   createLLMSessionId(occurredAt: string): number;
   initialLLMSession?: LLMSessionSnapshot;
@@ -153,7 +154,7 @@ export interface ChatAgent {
   prepareEventRun(event: AgentEvent, options?: { agentLoopRunSeq?: number; signal?: AbortSignal }): Promise<PreparedAgentLoopRun | AgentOutput[]>;
   getState(): AgentStateSnapshot | undefined;
   registerChannel(plugin: ChannelPlugin): void;
-  clearLLMSession(reason: LLMSessionClearReason): void;
+  clearLLMSession(reason: LLMSessionClearReason): Promise<SessionClearResult>;
 }
 
 export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
@@ -195,8 +196,10 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
       channels.push(plugin);
       deps.outputRouter.register(plugin);
     },
-    clearLLMSession(reason) {
-      deps.onLLMSessionCleared?.(reason);
+    async clearLLMSession(reason) {
+      // §7.1: 生产必注入 onLLMSessionCleared(统一 clear 入口), 调用方须提供完整结果;
+      // 缺失时直接抛错, 不做 { cleared: false } 之类的静默默认。
+      return await deps.onLLMSessionCleared(reason);
     },
     async prepareEventRun(event, options = {}) {
       const decision = await deps.policy.check(event);
@@ -245,14 +248,24 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
           }
         });
       };
-      const clearLoopSession = (onCleared?: () => void): boolean => clearActiveLoopSessionContext({
-        kind: "chat",
-        getLocalSession: () => loopSession,
-        setLocalSession(nextSession) {
-          loopSession = nextSession;
-        },
-        onCleared
-      });
+      /**
+       * 清除本地 loop session 并等待 onCleared(统一 clear 入口)完成。
+       * §7.1: 所有 clear 调用点必须 await, 不得在 clear Promise 完成前返回、
+       * 开启新 loop 或进入后续 function-call loop。
+       */
+      const clearLoopSession = async (onCleared: () => SessionClearResult | Promise<SessionClearResult>): Promise<SessionClearResult | undefined> => {
+        if (!loopSession) return undefined;
+        const result = await onCleared();
+        if (!result.cleared) return result;
+        clearActiveLoopSessionContext({
+          kind: "chat",
+          getLocalSession: () => loopSession,
+          setLocalSession(nextSession) {
+            loopSession = nextSession;
+          }
+        });
+        return result;
+      };
       let initiatedBehavior = agentInitiatedBehaviorPlanFromEvent(
         event,
         deps.getAgentInitiatedBehaviorPlans?.() ?? defaultAgentInitiatedBehaviorPlans,
@@ -270,7 +283,8 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
           deps.processRestartContinuationStore?.clear(persistedProcessRestart.toolCallId);
           activeProcessRestartToolCallId = undefined;
           persistedProcessRestart = undefined;
-          clearLoopSession(() => deps.onLLMSessionCleared?.("process_restart_recovery_failed"));
+          // §7.1: process_restart_recovery_failed 的清除必须完成后才允许本 run 返回。
+          await clearLoopSession(() => deps.onLLMSessionCleared("process_restart_recovery_failed"));
           await failRunIndicatorOnRecoveryFailure(deps);
           if (interruptedEventRecovery) {
             // 恢复校验失败：被中断的消息已在处理流程中，直接放弃，不再降级重跑
@@ -360,7 +374,9 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
           isStaticPromptChanged: (session) => session.mode !== "fixed_prefix" && session.staticPromptFingerprint !== fingerprint,
           modeFromSession: modeStateFromSession,
           clearSession(reason) {
-            return clearLoopSession(reason ? () => deps.onLLMSessionCleared?.(reason as LLMSessionClearReason) : undefined);
+            const hadSession = Boolean(loopSession);
+            if (!reason) throw new Error("Chat session clear reason is required");
+            return clearLoopSession(() => deps.onLLMSessionCleared(reason as LLMSessionClearReason)).then(() => hadSession);
           },
           async prepareSession(mode) {
             const preparedSession = await prepareChatLoopSessionContext({
@@ -444,7 +460,8 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
         // await_chat 定时超时且无新消息: 直接结束会话(yield_end), 不恢复 loop。
         if (session.waitChatMode === "await_chat" && agentInitiatedTriggerEventFromRaw(event.meta.raw) === "yield.timeout") {
           clearWaitState(session);
-          clearLoopSession(() => deps.onLLMSessionCleared?.("yield_end"));
+          // §7.1: yield_end 清除完成前不得返回或开启新 loop。
+          await clearLoopSession(() => deps.onLLMSessionCleared("yield_end"));
           return;
         }
         const waitChatResumeMessages = await buildWaitResumeMessages(session);
@@ -582,12 +599,11 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
             },
             applyModeStateToNewSession(mode) {
               applyModeStateToNewSession = mode;
-              clearLoopSession();
             },
             onFixedPrefixCleared(session) {
               alignSessionStaticPromptFingerprint(session as LLMSessionRecord);
             },
-            onSessionRebuilt: deps.onLLMSessionRebuilt,
+            onSessionRebuilt: () => clearLoopSession(() => deps.onLLMSessionRebuilt()),
             isLLMRunCancelled: deps.isLLMRunCancelled,
             promptProfile,
             async buildYieldResumeMessages(session) {
@@ -661,7 +677,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
         dispose() {
           if (sessionRunStarted) deps.onLLMSessionCompleted?.();
         },
-        complete(loopResult) {
+        async complete(loopResult) {
           if (!preparedLoop) return [];
           const llmResult = preparedLoop.complete(loopResult);
           if (!llmResult.cancelled && activeProcessRestartToolCallId) {
@@ -701,11 +717,12 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
             }
           }
           if (llmResult.cancelled) {
-            clearLoopSession(() => deps.onLLMSessionCleared?.("admin_cancel"));
+            // §7.1: admin_cancel 清除完成前不得返回/继续创建下一会话。
+            await clearLoopSession(() => deps.onLLMSessionCleared("admin_cancel"));
             return [];
           }
           if (llmResult.invalidateSession) {
-            clearLoopSession(() => deps.onLLMSessionCleared?.(llmResult.clearReason ?? "prompt_static_changed"));
+            await clearLoopSession(() => deps.onLLMSessionCleared(llmResult.clearReason ?? "prompt_static_changed"));
           }
           return [];
         }

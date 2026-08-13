@@ -19,6 +19,7 @@ export function createApiToolingRuntime(input: {
   sendMemoryFailureNotice(): Promise<void>;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: any): unknown;
+  sessionClearCoordinator: any;
   getApprovalService(): any;
   piWorkerRuntime?: any;
 }) {
@@ -65,6 +66,9 @@ export function createApiToolingRuntime(input: {
     getLLMRequestSender: () => apiCapabilitiesRuntime.llmRequests.send,
     sendMemoryFailureNotice: input.sendMemoryFailureNotice,
     appendLog: input.appendLog,
+    sessionClearCoordinator: input.sessionClearCoordinator,
+    // §7.3/§10: Memorize 手工 clear 进入 Main Agent clearing 占用(kind memorize), 与 Chat/Talk 清除互斥。
+    acquireMainAgentClear: (clearInput) => input.agentLoopRuntime.beginClearSession(clearInput),
     piWorkerRuntime: input.piWorkerRuntime
   });
 

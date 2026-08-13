@@ -105,7 +105,7 @@ export type AgentLoopEnsureChatSessionContextInput<TSession = unknown, TMode = u
   isModeExpired(session: TSession): boolean;
   isStaticPromptChanged(session: TSession): boolean;
   modeFromSession(session: TSession): TMode;
-  clearSession(reason?: string): boolean;
+  clearSession(reason?: string): boolean | Promise<boolean>;
   prepareSession(mode: TMode): Promise<TSession> | TSession;
 };
 
@@ -223,19 +223,20 @@ export async function ensureAgentLoopChatSessionContext<TSession = unknown, TMod
 ): Promise<TSession> {
   let session = input.getSession();
   if (session && input.shouldClearForInitiatedBehavior(session) && !input.getPendingMode()) {
-    input.clearSession("mode_transition");
+    // §7.1: 清除 Promise 完成前不得继续创建下一会话, 因此必须 await。
+    await input.clearSession("mode_transition");
   }
 
   session = input.getSession();
   if (session && input.isModeExpired(session)) {
-    input.clearSession("mode_timeout");
+    await input.clearSession("mode_timeout");
     input.setPendingMode(input.defaultMode());
   }
 
   session = input.getSession();
   if (session && input.isStaticPromptChanged(session)) {
     const mode = input.modeFromSession(session);
-    input.clearSession("prompt_static_changed");
+    await input.clearSession("prompt_static_changed");
     input.setPendingMode(mode);
   }
 

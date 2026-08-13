@@ -85,7 +85,7 @@ export type ChatAgentLoopInput = {
   setLastCompletedToolName(name: string): void;
   applyModeStateToNewSession(mode: ChatAgentModeState): void;
   onFixedPrefixCleared?(session: ChatAgentLoopSession): void;
-  onSessionRebuilt?(): void;
+  onSessionRebuilt?(): void | Promise<void>;
   isLLMRunCancelled?(): boolean;
   promptProfile?: PromptProfile;
   buildYieldResumeMessages?(session: ChatAgentLoopSession): Promise<LLMChatInput["messages"]> | LLMChatInput["messages"];
@@ -253,7 +253,8 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
       });
       if (toolResult.clearFixedPrefix) input.onFixedPrefixCleared?.(session);
       if (execution.modeState) input.applyModeStateToNewSession(execution.modeState);
-      if (execution.sessionRebuilt) input.onSessionRebuilt?.();
+      // §7.1: session rebuild 路径(mode_transition 清除)必须完成后才继续下一轮 loop。
+      if (execution.sessionRebuilt) await input.onSessionRebuilt?.();
       return followup.messages.length > 0
         ? { ...execution, messages: followup.messages }
         : execution;

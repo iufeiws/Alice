@@ -2,9 +2,14 @@ import { buildCalendarContext } from "../../../../capabilities/tools/calendar/sr
 import { formatAvailableSkillsXml, formatNotesXml, type NotesIndexEntry } from "../../../../contexts/skills/src/index.js";
 import { defaultWorldWandererPluginConfigPath, readWorldWandererConfig } from "../../../../contexts/world-wanderer/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
+import type { ShortMemoryEntry, ShortMemoryStore } from "../../../../contexts/memory/src/short-memory-store.js";
 import type { PromptContextContentOption, PromptContextPrimitive, PromptContextRuntime, PromptContextValue } from "../contracts/prompt-context-runtime.js";
 
 const memoryTargets = ["persistent", "userPreferences", "yesterdaySummary"] as const;
+// 计划 §9.2: 以最新 wake boundary 的 occurredAtUtc 为边界, 往前 24 小时构成查询窗口起点。
+const SHORT_MEMORY_WINDOW_MS = 24 * 60 * 60 * 1000;
+// 计划 §9.3: 无 wake boundary 或窗口内无记录时返回的固定空 XML。
+const EMPTY_SHORT_MEMORIES_XML = "<short_memories></short_memories>";
 const optionFields = ["id", "name", "content", "group", "imageUrl", "onBodyImageUrl", "outfitImageGenerated", "onBodyGenerationAttempted"] as const;
 const variableNames = [
   "user",
@@ -28,6 +33,7 @@ const variableNames = [
     `memory/${target}/limit/bytes`,
     `memory/${target}/limit/kib`
   ]),
+  "memory/shortMemory/content",
   "wakeBoundary/occurredAt",
   "wakeBoundary/occurredAtUtc",
   "wakeBoundary/date",
@@ -51,6 +57,7 @@ export function createPromptContextRuntime(input: {
   skillsDirPath: string;
   listNotes?: () => NotesIndexEntry[];
   worldWandererConfigPath?: string;
+  shortMemoryStore: Pick<ShortMemoryStore, "listByCreatedAtUtcRange">;
 }): PromptContextRuntime {
   return createRuntime(getVariable, () => [...variableNames]);
 
@@ -126,10 +133,29 @@ export function createPromptContextRuntime(input: {
 
   function memoryVariable(name: string): PromptContextValue {
     const [, target, field, metric] = name.split("/");
+    if (target === "shortMemory" && field === "content") return shortMemoryContent();
     if (!memoryTargets.includes(target as (typeof memoryTargets)[number])) return undefined;
     if (field === "content") return (input.memoryStore.read() as Record<string, string | undefined>)[target] ?? "";
     if (field === "limit" && (metric === "lines" || metric === "bytes" || metric === "kib")) return 0;
     return undefined;
+  }
+
+  /**
+   * 计划 §9.2/§9.3: 最新 wake boundary 的 occurredAtUtc 前 24 小时至当前时间的闭区间查询。
+   * 时间窗口全部基于 UTC epoch 计算(与现有 sleep-window / admin-runtime 的时间处理一致),
+   * 不按字符串截取或本机时区计算; 无 wake boundary、boundary 缺 UTC 字段或未注入 store 时不查询。
+   */
+  function shortMemoryContent(): string {
+    const boundary = input.diaryStore.latestWakeBoundary() as { occurredAtUtc?: string } | undefined;
+    if (!boundary?.occurredAtUtc) return EMPTY_SHORT_MEMORIES_XML;
+    const boundaryInstant = new Date(boundary.occurredAtUtc);
+    if (!Number.isFinite(boundaryInstant.getTime())) return EMPTY_SHORT_MEMORIES_XML;
+    const now = input.time.now();
+    const entries = input.shortMemoryStore.listByCreatedAtUtcRange({
+      startAtUtc: new Date(boundaryInstant.getTime() - SHORT_MEMORY_WINDOW_MS).toISOString(),
+      endAtUtc: now.date.toISOString()
+    });
+    return formatShortMemoriesXml(entries);
   }
 
   function wakeBoundaryVariable(name: string): PromptContextValue {
@@ -196,6 +222,29 @@ function createRuntime(
 
 function formatWeekday(date: Date, timeZone: string): string {
   return new Intl.DateTimeFormat("zh-CN", { timeZone, weekday: "long" }).format(date);
+}
+
+/**
+ * 计划 §9.3: 按 store 返回顺序(createdAtUtc ASC, id ASC)输出 XML;
+ * created_at 使用条目的本地 wall-clock createdAt 原样; 空结果返回固定空 XML。
+ */
+function formatShortMemoriesXml(entries: ShortMemoryEntry[]): string {
+  if (!entries.length) return EMPTY_SHORT_MEMORIES_XML;
+  const items = entries.map((entry) => [
+    "  <short_memory>",
+    `    <created_at>${escapeXmlText(entry.createdAt)}</created_at>`,
+    `    <content>${escapeXmlText(entry.content)}</content>`,
+    "  </short_memory>"
+  ].join("\n")).join("\n");
+  return `<short_memories>\n${items}\n</short_memories>`;
+}
+
+/** XML 文本转义: 至少覆盖 & < >; & 必须最先替换避免二次转义。 */
+function escapeXmlText(value: string): string {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function formatLocalDate(date: Date, timeZone: string): string {

@@ -1,6 +1,6 @@
 # Alice 项目结构总结
 
-> 生成时间：2026-08-11。本文档是对当前仓库结构和各模块职责的高层总结，作为项目入口阅读材料；行为细节以 `src/` 源码与 `docs/` 为准。
+> 生成时间：2026-08-13。本文档是对当前仓库结构和各模块职责的高层总结，作为项目入口阅读材料；行为细节以 `src/` 源码与 `docs/` 为准。
 
 ## 1. 项目概述
 
@@ -69,16 +69,16 @@ src/
 
 | 上下文 | 职责 |
 |---|---|
-| **agent-loop** | ChatAgent 核心。`createChatAgent`（policy 检查、session 解析、intent 路由、profile/tool 过滤）→ `createAgentLoopRuntime`（串行 requestRun、interrupt、activeMainLLMSession）→ `buildChatAgentLoop`（function-call loop hooks）。心跳 `agent-heartbeat-runtime`：idle transition、randomized initiative、timed yield、talk session、sleep cocoon、calendar reminder、pending session。进程重启续跑 continuation 存储。**无 index.ts**，出口在 `application/chat-agent.ts` 的 re-export |
-| **memory** | 长期记忆/日记/睡眠 Memorize。`store.ts`（SQLite WAL，persistent/userPreferences/diary 表）、`induction.ts`（`runSleepMemoryInduction` 等，用独立 memory preset 的 LLM 跑归纳 loop）、`prompt-build`/`prompt-store`（三个 target 的归纳 prompt）、`self-talk-tool`（Memorize 私有思考工具 `self_talk`，不落盘） |
-| **llm-session** | LLM 会话管理。`sqlite-llm-session-store`（主库 `memory-files/llm-sessions.sqlite`：总表 `llm_session_meta` 六列 + 每 agent 类型 messages 分表三列）、`llm-session-pointer`（`current.json` 仅 `{sessionId, agentType}`，原子写）、`llm-session-runtime`（ensure/note/clear/delta transcript，单一内存所有者，SQLite 事务失败内存不变）、浏览/列表/admin API、一次性迁移脚本 `scripts/migrate-llm-sessions-sqlite.ts` |
+| **agent-loop** | ChatAgent 核心。`createChatAgent`（policy 检查、session 解析、intent 路由、profile/tool 过滤）→ `createAgentLoopRuntime`（串行 requestRun、interrupt、activeMainLLMSession；**MainAgentActivity 占用模型**：`isMainAgentBusy()`/`beginClearSession()`，idle/running/clearing 三态，requestRun 与统一 clear 共用占用、busy 时互斥拒绝，clear 先获取占用、结束或失败后释放，run 内 clear 为 busy 连续交接无 idle 空窗）→ `buildChatAgentLoop`（function-call loop hooks）。心跳 `agent-heartbeat-runtime`：idle transition、randomized initiative、timed yield、talk session、sleep cocoon、calendar reminder、pending session，全部受 canRunHeartbeat 门控。Agent 状态机 `AgentStateController`（idle/waiting/calling/away/sleeping 等）。进程重启续跑 continuation 存储。**无 index.ts**，出口在 `application/chat-agent.ts` 的 re-export |
+| **memory** | 长期记忆/日记/睡眠 Memorize。`store.ts`（SQLite WAL，persistent/userPreferences/diary 表）、`induction.ts`（`runSleepMemoryInduction` 等，用独立 memory preset 的 LLM 跑归纳 loop）、`prompt-build`/`prompt-store`（三个 target 的归纳 prompt）、`self-talk-tool`（Memorize 私有思考工具 `self_talk`，不落盘）。Short Memory：`short-memory-store.ts`（主库 `alice.sqlite` 的 `short_memory_entries` 表：id/created_at/created_at_utc/content + 索引，统一 schema v10 幂等迁移，BEGIN IMMEDIATE 且每事务一次 insert，listLatest/listByCreatedAtUtcRange）、`short-memory-worker.ts`（`createShortMemoryWorker` 串行采集宿主 `~/.short_memory.txt`：read→校验 `/[\p{L}\p{N}]/u`→事务 insert→原子 replace("\n")→commit，commit 失败补偿恢复原内容；`createHostShortMemoryFile` 按 `config.bashSandbox.hostWorkspaceDir` 映射容器路径并校验越界） |
+| **llm-session** | LLM 会话管理。`sqlite-llm-session-store`（主库 `memory-files/llm-sessions.sqlite`：总表 `llm_session_meta` 六列 + 每 agent 类型 messages 分表三列）、`llm-session-pointer`（`current.json` 仅 `{sessionId, agentType}`，原子写）、`llm-session-runtime`（ensure/note/clear/delta transcript，单一内存所有者，SQLite 事务失败内存不变；`clearCurrentLLMSession` 异步，经统一清除协调器，`clearCurrentLLMSessionDirect` 供 Talk 回调内直接清除避免队列自等待）、浏览/列表/admin API、一次性迁移脚本 `scripts/migrate-llm-sessions-sqlite.ts`。`application/session-clear-coordinator.ts`：Chat/Talk/Memorize 三种会话清除统一串行协调入口（exists 执行时求值、Short Memory 采集成功后才清除、失败传播但队列继续，日志不记录正文） |
 | **llm-gateway** | LLM 调用入口。`createOpenAICompatibleClient`（chat/completions + SSE + listModels）、`llm-requests.ts`（send + buildTools）、`llm-tool-loop.ts`（多轮 function-call loop，round/call 上限 100、continuation 恢复、全局 tool 注册表 `executeRegisteredLLMTool`）、运行时钩子（请求日志/usage/subagent transcript，SubAgent 转录落独立库 `memory-files/llm-subagent-sessions.sqlite`，失败降级不中断 LLM）、preset 配置（chat/talk 分离） |
 | **agent-profile** | Prompt 层管理。`domain/prompt-layer.ts` 为**唯一公共 layer 解析入口**（normalize、layer→LLMMessage、tool 参数解析）；`build-system-prompt.ts`（PromptProfile + build/append messages + layer 内嵌 tool call 回填 + staticPromptFingerprint）；`shell.ts`（每日 persona/relationship/outfit，`createDailyShellStore`；选项级 `enabled` 开关，关闭的选项不参与随机选中） |
-| **talk-session** | WebRTC 语音 talk 会话。SQLite 适配器（`logs/talk/talk.sqlite`，talk_sessions/events/transcript/outputs）、`createTalkRuntime`（open/append/delta/interrupt/claim）、`createTalkRuntimeRuntime`（+ conversation-hub 投影，会话关闭转 inbound 消息） |
-| **conversation-hub** | 多渠道消息统一入口。`createMessageRuntime`（ingestEvent/ingestLifecycle/sendSystemNotice/processNow/flushAll）内部组装 agentLoopRuntime + heartbeat 全部任务；`sqlite-conversation-store` 为 Core 侧消息历史 |
+| **talk-session** | WebRTC 语音 talk 会话。SQLite 适配器（`logs/talk/talk.sqlite`，talk_sessions/events/transcript/outputs）、`createTalkRuntime`（open/append/delta/interrupt/claim；`closeSession` 异步，经统一清除协调器，成功后按序：重写 Talk LLM transcript → 标记 LLM session cleared 并清 pointer → 关闭 talk.sqlite 会话 → conversation-hub 投影 → 切 waiting，采集失败时保持打开）、`createTalkRuntimeRuntime`（+ conversation-hub 投影，会话关闭转 inbound 消息） |
+| **conversation-hub** | 多渠道消息统一入口。`createMessageRuntime`（ingestEvent/ingestLifecycle/sendSystemNotice/processNow/flushAll）内部组装 agentLoopRuntime + heartbeat 全部任务；`canRunHeartbeat` 检查 Main Agent 占用（`isMainAgentBusy`），清除期间到达的消息只入库并标记 pending、不进入 loop，force_wake 先获取 clearing 占用再清除、成功后才唤醒；`sqlite-conversation-store` 为 Core 侧消息历史 |
 | **capabilities** | 插件 admin 运行时（asr/photo/tts/geo/image-recognition 等 admin-plugin-*）+ `tool-output-target.ts`（AgentOutput 投递目标解析器，产出 AgentOutput 的工具必须经此解析） |
 | **initiative** | Agent 主动行为。initiated-behavior 定义、触发评估、随机事件、admin 配置、JSON 存储 |
-| **prompt-context** | Prompt 模板变量渲染运行时（user/时间/dailyShell/memory/calendar/skills/notes_list/outfit 变量树） |
+| **prompt-context** | Prompt 模板变量渲染运行时（user/时间/dailyShell/memory/calendar/skills/notes_list/outfit 变量树）。Short Memory 变量 `memory/shortMemory/content`：必填依赖 `shortMemoryStore`，取最新 wake boundary 的 `occurredAtUtc` 前 24 小时至当前的闭区间记录，输出 `<short_memories>` XML（`& < >` 转义，空结果固定空 XML），是否加入 Prompt layer 完全由用户 Prompt 编辑器配置决定 |
 | **world-wanderer** | Google Street View 世界漫步空闲行为（移动 runtime、选路 policy、geo 计算） |
 | **bash-sandbox** | Docker 沙箱 bash 执行（`createBashSandboxRuntime` + `createDockerBashExecutor`、命令权限分类）；`readSandboxNotesIndex` 同步读取容器内笔记目录索引（供 prompt 变量动态构建） |
 | **pi-worker** | Pi worker 客户端（授权握手、后台唤起 wake、tool relay、健康轮询） |
@@ -181,7 +181,7 @@ first-party skill 位于 `capabilities/skills/{name}/SKILL.md`（frontmatter 含
 
 | 数据 | 位置 |
 |---|---|
-| 长期记忆/日记/Core 侧消息历史 | `memory-files/alice.sqlite` |
+| 长期记忆/日记/Core 侧消息历史/Short Memory | `memory-files/alice.sqlite`（long-term-memory / diary / persistent / userPreferences / `short_memory_entries`） |
 | 追加式消息事件/调试日志 | `logs/message/message-logs.sqlite` |
 | talk 语音会话 | `logs/talk/talk.sqlite` |
 | LLM 会话（chat/talk/memorize） | `memory-files/llm-sessions.sqlite`（总表 + agent messages 分表） |
@@ -192,6 +192,7 @@ first-party skill 位于 `capabilities/skills/{name}/SKILL.md`（frontmatter 含
 | 飞书配对 | `memory-files/indexes/feishu-paired-contacts.json` |
 | 微信 iLink 状态 | `memory-files/indexes/wechat-ilink-state.json` |
 | 每日 shell（persona/outfit） | `memory-files/shell/` |
+| Short Memory 宿主暂存文件（sandbox 容器内 `~/.short_memory.txt`） | 宿主 `path.join(config.bashSandbox.hostWorkspaceDir, ".short_memory.txt")`，默认 `.sandbox/bash/alice/.short_memory.txt` |
 | 插件配置 | `config/plugin/*/config.json` |
 
 约定：`logs/` 下数据为系统日志，不进入 LLM 上下文；清理聊天历史只清 Core 侧消息表，不清日志库（除非明确是清系统日志）。
@@ -200,7 +201,9 @@ first-party skill 位于 `capabilities/skills/{name}/SKILL.md`（frontmatter 含
 
 - URL：`http://127.0.0.1:3030/admin`，仅允许 loopback/私有网段访问。
 - 单页 HTML 由服务端 TS 字符串渲染（无框架、无构建）。
-- API 覆盖：prompt/shell 管理、memory（含 run-day/undo/redo）、LLM 会话浏览（llm-chain）、token usage、logs、插件配置（`/admin/api/plugins`，9 个插件条目）、渠道（飞书/微信 start/stop/pairings/二维码）、agent state、TTS/ASR/photo/geo 配置（持久化到 .env）。
+- API 覆盖：prompt/shell 管理、memory（含 run-day/undo/redo、Short Memory 只读区块最新 100 条）、LLM 会话浏览（llm-chain）、token usage、logs、插件配置（`/admin/api/plugins`，9 个插件条目）、渠道（飞书/微信 start/stop/pairings/二维码）、agent state、TTS/ASR/photo/geo 配置（持久化到 .env）。
+- `GET /admin/api/memory` 响应含 `shortMemories`（最新 100 条，`createdAtUtc DESC, id DESC`，同时返回本地 `createdAt` 与 UTC `createdAtUtc`）。
+- `POST /admin/api/llm-chain/clear`、`POST /admin/api/llm-run/cancel`（实际 clear 阶段）、`POST /admin/api/memory/clear-session` 均等待异步清除并返回 `{ ok, cleared, shortMemoryCaptured }`；无会话返回 `cleared: false`，失败走统一 JSON 错误。
 - 管理后台改动的设置必须持久化到 `.env` 且当前进程立即应用。
 
 ## 8. 部署与运维
@@ -225,9 +228,11 @@ first-party skill 位于 `capabilities/skills/{name}/SKILL.md`（frontmatter 含
 - 位置 `tests/`，与 src 平行组织（apps/capabilities/channels/contexts/helpers/infra/platform/scripts）。
 - `node:test` + `node:assert/strict`，`npm test` 用 tsx 串行运行；genie_tts 用 python unittest。
 - 风格：每域 `*-helpers.ts` 共享夹具；行为断言（状态码/错误码/stdout）而非固定输出格式。
+- Short Memory 相关：`short-memory-store.test.ts`、`short-memory-worker.test.ts`、`session-clear-coordinator.test.ts`、`llm-session-runtime-session-clear.test.ts`、`agent-loop-runtime-session-clear.test.ts`、`chat-agent-session-clear-wait.test.ts`、`talk-session-close-session-clear.test.ts`、`memory-console-session-clear.test.ts`、`admin-routes-clear-api.test.ts`、`prompt-context/short-memory-variable.test.ts`，以及 `admin-routes-memory.test.ts` / `admin-html-memory-shell.test.ts` 的 Short Memory 扩展用例。
 
 ## 11. 文档约定
 
 - `docs/` 按主题分目录（core/channels/capabilities/app/architecture/implement/plan/reference + archive 历史归档），规则见 `docs/README.md`：当前文档用中文并指向 `src/`、`tests/` 路径；`archive/` 不是当前行为规范。
+- 本文档只记录已经实现且能由当前源码验证的项目结构与行为；未开发的需求、计划、设计和待办禁止写入。实际实现完成后才同步更新本文档，仅新增或修改计划文档时不得更新。
 - 变更说明在 `docs/change_log/`（时间戳命名）。
 - 根级 `AGENTS.md` 为工程强制规则（prompt 构筑硬约束、Tool/Loop 硬约束、review checklist 等）。

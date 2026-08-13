@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createWebRtcVoiceRuntime } from "../../../src/apps/api/bootstrap/web-rtc-voice-runtime.js";
 import { createWebRtcVoicePlugin, defaultWebRtcVoiceConfig, encodePcmL16StreamToOpusRtpFrames, WebRtcVoiceError, type ServerAudioFrame } from "../../../src/channels/webrtc-voice/src/index.js";
 import { createTalkRuntime } from "../../../src/contexts/talk-session/src/application/talk-session-runtime.js";
+import type { SessionClearRequest } from "../../../src/contexts/llm-session/src/application/session-clear-coordinator.js";
 import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.js";
 import { createTalkStore } from "../../../src/contexts/talk-session/src/adapters/sqlite-talk-session-store.js";
 import { ControlledQueueTrack, DelayedEnqueueTrack, FakeAsrSession, FakeHangingAsrSession, FakePeer, RemotePlayingQueueTrack, collectVoiceTextInput, defaultConfig, fakeVoiceSynthesizer, makeTempDir, tempFilePath, waitFor } from "./webrtc-voice-plugin-helpers.js";
@@ -105,7 +106,18 @@ async function createCallWithInjectedTalkRuntime(suffix: string) {
   const statuses: Array<{ state: string; detail?: string }> = [];
   const talkRuntime = createTalkRuntime({
     store: createTalkStore(path.join(makeTempDir(`webrtc-talk-runtime-${suffix}`), "talk.sqlite")),
-    time: createCurrentTimeProvider("Asia/Tokyo", () => new Date("2026-06-06T15:00:00.000Z"))
+    time: createCurrentTimeProvider("Asia/Tokyo", () => new Date("2026-06-06T15:00:00.000Z")),
+    // §7.1: coordinator 为统一入口, 任何 clear 路径都必须经过它。
+    sessionClearCoordinator: {
+      async clearSession(request: SessionClearRequest) {
+        if (!request.exists()) return { cleared: false, shortMemoryCaptured: false };
+        await request.clear();
+        return { cleared: true, shortMemoryCaptured: false };
+      }
+    },
+    acquireMainAgentClear: () => ({ acquired: true, token: "test-clear", release() {} }),
+    rewriteActiveTalkLLMSessionFromRuntime() {},
+    clearActiveTalkLLMSession() {}
   });
   const asr = new FakeAsrSession([
     {

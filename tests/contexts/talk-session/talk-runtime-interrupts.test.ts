@@ -7,6 +7,10 @@ import {
   createTalkRuntime,
   createTalkStore,
   createTestRuntime,
+  fakeAcquireMainAgentClear,
+  fakeClearActiveTalkLLMSession,
+  fakeRewriteActiveTalkLLMSessionFromRuntime,
+  fakeSessionClearCoordinator,
   makeTempDir,
   path,
   sessionInput
@@ -240,7 +244,11 @@ test("talk runtime timestamps assistant transcript rows by output creation time"
   let now = new Date("2026-06-06T15:00:00.000Z");
   const runtime = createTalkRuntime({
     store,
-    time: createCurrentTimeProvider("Asia/Tokyo", () => now)
+    time: createCurrentTimeProvider("Asia/Tokyo", () => now),
+    sessionClearCoordinator: fakeSessionClearCoordinator,
+    acquireMainAgentClear: fakeAcquireMainAgentClear,
+    rewriteActiveTalkLLMSessionFromRuntime: fakeRewriteActiveTalkLLMSessionFromRuntime,
+    clearActiveTalkLLMSession: fakeClearActiveTalkLLMSession
   });
 
   runtime.openSession(sessionInput(1780830000023));
@@ -381,7 +389,14 @@ function projectClosedTalkSession(name: string) {
   });
   let now = new Date("2026-06-06T15:00:00.000Z");
   const time = createCurrentTimeProvider("Asia/Tokyo", () => now);
-  const runtime = createTalkRuntime({ store: talkStore, time });
+  const runtime = createTalkRuntime({
+    store: talkStore,
+    time,
+    sessionClearCoordinator: fakeSessionClearCoordinator,
+    acquireMainAgentClear: fakeAcquireMainAgentClear,
+    rewriteActiveTalkLLMSessionFromRuntime: fakeRewriteActiveTalkLLMSessionFromRuntime,
+    clearActiveTalkLLMSession: fakeClearActiveTalkLLMSession
+  });
 
   runtime.openSession(sessionInput(1780830000025));
   runtime.ingestInput({

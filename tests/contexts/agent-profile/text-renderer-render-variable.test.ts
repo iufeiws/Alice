@@ -22,6 +22,7 @@ function runtime() {
     calendarStore: { listEntries: () => [{ title: "买药", startAt: "2026-06-04T09:30:00.000" }] },
     skillsDirPath: "/home/alice/.agent/skills",
     skillsRegistry: { available: () => [] },
+    shortMemoryStore: { listByCreatedAtUtcRange: () => [] },
     worldWandererConfigPath: "/tmp/alice-test-missing-world-wanderer.json"
   } as any);
 }

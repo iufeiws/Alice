@@ -5,6 +5,10 @@ import {
   createTalkRuntime,
   createTalkStore,
   createTestRuntime,
+  fakeAcquireMainAgentClear,
+  fakeClearActiveTalkLLMSession,
+  fakeRewriteActiveTalkLLMSessionFromRuntime,
+  fakeSessionClearCoordinator,
   makeTempDir,
   path,
   sessionInput
@@ -44,7 +48,7 @@ test("talk runtime reports pending voice output chars for streaming buffers", ()
   assert.equal(runtime.store.pendingVoiceOutputCharCount(1780830000002), 1);
 });
 
-test("talk runtime notifies agent state callbacks on session open and close", () => {
+test("talk runtime notifies agent state callbacks on session open and close", async () => {
   const states: string[] = [];
   const store = createTalkStore(path.join(makeTempDir("talk-runtime-agent-state"), "talk.sqlite"));
   const time = createCurrentTimeProvider("Asia/Tokyo", () => new Date("2026-06-06T15:00:00.000Z"));
@@ -52,11 +56,15 @@ test("talk runtime notifies agent state callbacks on session open and close", ()
     store,
     time,
     onSessionOpened: () => states.push("calling"),
-    onSessionClosed: () => states.push("waiting")
+    onSessionClosed: () => states.push("waiting"),
+    sessionClearCoordinator: fakeSessionClearCoordinator,
+    acquireMainAgentClear: fakeAcquireMainAgentClear,
+    rewriteActiveTalkLLMSessionFromRuntime: fakeRewriteActiveTalkLLMSessionFromRuntime,
+    clearActiveTalkLLMSession: fakeClearActiveTalkLLMSession
   });
 
   runtime.openSession(sessionInput(1780830000003));
-  runtime.closeSession({ sessionId: 1780830000003 });
+  await runtime.closeSession({ sessionId: 1780830000003 });
 
   assert.deepEqual(states, ["calling", "waiting"]);
 });

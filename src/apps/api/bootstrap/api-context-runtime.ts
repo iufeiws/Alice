@@ -7,6 +7,7 @@ import { createProfileMemoryRuntime } from "../../../contexts/memory/src/profile
 import { createInitiatedBehaviorRuntime } from "../../../contexts/initiative/src/application/evaluate-triggers.js";
 import { createSkillRegistry } from "../../../contexts/skills/src/index.js";
 import { createPromptContextRuntime } from "../../../contexts/prompt-context/src/index.js";
+import type { ShortMemoryStore } from "../../../contexts/memory/src/short-memory-store.js";
 import { addBashSandboxSkillMount, readSandboxNotesIndex } from "../../../contexts/bash-sandbox/src/index.js";
 import { describeError } from "../../../shared/errors/src/index.js";
 
@@ -16,6 +17,7 @@ export function createApiContextRuntime(input: {
   config: any;
   time: any;
   appendLog(level: "info" | "warn" | "error", message: string): void;
+  shortMemoryStore: Pick<ShortMemoryStore, "listByCreatedAtUtcRange">;
 }) {
   const channelStateRuntime = createChannelStateRuntime({
     config: input.config,
@@ -74,6 +76,7 @@ export function createApiContextRuntime(input: {
     calendarStore,
     skillsRegistry,
     skillsDirPath,
+    shortMemoryStore: input.shortMemoryStore,
     listNotes: () => {
       try {
         return readSandboxNotesIndex(input.config.bashSandbox, input.config.bashSandbox.notesDir);
@@ -98,6 +101,7 @@ export function createApiContextRuntime(input: {
     sleepMemoryStateStore: profileMemoryRuntime.sleepMemoryStateStore,
     dailyShellStore: profileMemoryRuntime.dailyShellStore,
     skillsRegistry,
+    shortMemoryStore: input.shortMemoryStore,
     promptContextRuntime,
     getAgentInitiatedBehaviorPlans: initiatedBehaviorRuntime.getPlans,
     createAgentInitiatedBehaviorConfig: initiatedBehaviorRuntime.createCustom,

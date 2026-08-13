@@ -78,24 +78,74 @@ test("entering sleeping clears the LLM session", () => {
   assert.equal(calls.clearedSessions, 1);
 });
 
-test("entering sleeping sends a sleep notice", () => {
+test("entering sleeping sends a sleep notice", async () => {
   const root = makeTempDir("agent-state-runtime-sleep-notice");
   const calls = createCalls();
   const agentState = createRuntime(root, calls);
 
   agentState.setState("sleeping", { reason: "sleep_started" });
 
-  assert.equal(calls.sleepNotices, 1);
+  await waitFor(() => calls.sleepNotices === 1);
 });
 
-test("entering sleeping triggers sleep memory induction", () => {
+test("entering sleeping triggers sleep memory induction", async () => {
   const root = makeTempDir("agent-state-runtime-sleep-induction");
   const calls = createCalls();
   const agentState = createRuntime(root, calls);
 
   agentState.setState("sleeping", { reason: "sleep_started" });
 
-  assert.equal(calls.sleepInductions, 1);
+  await waitFor(() => calls.sleepInductions === 1);
+});
+
+test("entering sleeping awaits the clear before notice and induction, in order", async () => {
+  const root = makeTempDir("agent-state-runtime-sleep-clear-gate");
+  const calls = createCalls();
+  let releaseClear: (() => void) | undefined;
+  const clearGate = new Promise<void>((resolve) => {
+    releaseClear = resolve;
+  });
+  const agentState = createRuntime(root, calls, {
+    clearLLMSession: () => {
+      calls.events.push("clear");
+      return clearGate;
+    }
+  });
+
+  agentState.setState("sleeping", { reason: "sleep_started" });
+  await waitFor(() => calls.events.includes("clear"));
+
+  await sleep(60);
+  assert.deepEqual(calls.events, ["clear"], "clear Promise 完成前不得触发通知与记忆归纳(§11.2)");
+  assert.equal(calls.sleepNotices, 0, "clear 完成前不得发送睡眠通知");
+  assert.equal(calls.sleepInductions, 0, "clear 完成前不得触发记忆归纳");
+
+  releaseClear?.();
+  await waitFor(() => calls.events.includes("notice") && calls.events.includes("induction"));
+  assert.deepEqual(calls.events, ["clear", "notice", "induction"], "成功后才按序触发通知与归纳");
+});
+
+test("entering sleeping clear failure blocks notice and induction and records the error", async () => {
+  const root = makeTempDir("agent-state-runtime-sleep-clear-fail");
+  const calls = createCalls();
+  const agentState = createRuntime(root, calls, {
+    clearLLMSession: () => {
+      calls.events.push("clear");
+      return Promise.reject(new Error("sleep clear boom"));
+    }
+  });
+
+  agentState.setState("sleeping", { reason: "sleep_started" });
+  await waitFor(() => calls.events.includes("clear"));
+  await sleep(60);
+
+  assert.equal(calls.sleepNotices, 0, "清除失败时不得发送睡眠通知");
+  assert.equal(calls.sleepInductions, 0, "清除失败时不得触发记忆归纳(阻止后续 loop)");
+  assert.equal(
+    calls.logLines.some((line) => line.includes("sleep transition llm session clear failed") && line.includes("sleep clear boom")),
+    true,
+    "清除失败必须记录错误日志"
+  );
 });
 
 test("entering sleeping records an existing sleep cocoon preparation boundary", () => {
@@ -124,7 +174,9 @@ const dailyShell = {
   date: "2026-05-26"
 };
 
-function createRuntime(root: string, calls: ReturnType<typeof createCalls>) {
+function createRuntime(root: string, calls: ReturnType<typeof createCalls>, options: {
+  clearLLMSession?: () => void | Promise<void>;
+} = {}) {
   return createAgentStateRuntime({
     config: { memoryFiles: { root } },
     time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-26T00:00:00.000Z")),
@@ -145,13 +197,16 @@ function createRuntime(root: string, calls: ReturnType<typeof createCalls>) {
         return dailyShell;
       }
     }),
-    clearLLMSession() {
+    clearLLMSession: options.clearLLMSession ?? (() => {
+      calls.events.push("clear");
       calls.clearedSessions += 1;
-    },
+    }),
     async sendSleepNotice() {
+      calls.events.push("notice");
       calls.sleepNotices += 1;
     },
     async triggerSleepMemoryInduction() {
+      calls.events.push("induction");
       calls.sleepInductions += 1;
     },
     queueMorningEvent() {
@@ -160,7 +215,9 @@ function createRuntime(root: string, calls: ReturnType<typeof createCalls>) {
     attemptDailyOutfitOnBodyGeneration(daily) {
       calls.onBodyDailies.push(daily);
     },
-    appendLog() {}
+    appendLog(level, message) {
+      calls.logLines.push(`${level}:${message}`);
+    }
   });
 }
 
@@ -174,8 +231,22 @@ function createCalls() {
     clearedSessions: 0,
     sleepNotices: 0,
     sleepInductions: 0,
-    morningEvents: 0
+    morningEvents: 0,
+    events: [] as string[],
+    logLines: [] as string[]
   };
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+  const startedAt = Date.now();
+  while (!predicate()) {
+    if (Date.now() - startedAt > timeoutMs) throw new Error("condition was not met before timeout");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function writePersistedState(root: string, state: "sleeping"): void {

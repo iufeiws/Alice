@@ -22,6 +22,9 @@ import {
   promptStoragePath,
 } from "./admin-routes-helpers.js";
 import type { StoredConversationMessage } from "./admin-routes-helpers.js";
+import { formatZonedIso, parseZonedIso } from "../../../../../src/platform/time/src/index.js";
+// 类型契约：ShortMemoryEntry 定义在计划 §4.2 指定的 Memory context 模块（由实现方创建）。
+import type { ShortMemoryEntry } from "../../../../../src/contexts/memory/src/short-memory-store.js";
 
 test("memory run-day uses Memorize preset api settings", async () => {
   const fixture = createMemoryRunDayFixture();
@@ -335,6 +338,8 @@ test("memory clear-session clears the console memorize session", async () => {
     ...baseContext(root, memoryStore, promptStore),
     clearMemoryInductionSession() {
       cleared = true;
+      // §8.2: 新接口要求返回完整 SessionClearResult, 不做向后兼容默认(直接解引用)。
+      return { cleared: true, shortMemoryCaptured: false };
     }
   });
 
@@ -343,7 +348,7 @@ test("memory clear-session clears the console memorize session", async () => {
   const body = JSON.parse(response.body);
 
   assert.equal(response.statusCode, 200);
-  assert.equal(body.ok, true);
+  assert.deepEqual(body, { ok: true, cleared: true, shortMemoryCaptured: false });
   assert.equal(cleared, true);
 });
 
@@ -494,4 +499,124 @@ test("memory delete-latest-sql reports when no diary entry exists", async () => 
 
   assert.equal(response.statusCode, 400);
   assert.equal(JSON.parse(response.body).error, "no_memory_sql_record_to_delete");
+});
+
+// --- Short Memory 只读列表（计划 §8.1 / §12.7）---
+
+function shortMemoryEntry(id: number, createdAtUtc: string, content: string): ShortMemoryEntry {
+  return {
+    id,
+    createdAt: formatZonedIso(new Date(createdAtUtc), "Asia/Shanghai"),
+    createdAtUtc,
+    content
+  };
+}
+
+// 忠实模拟 §4.2 存储契约 listLatest：按 (created_at_utc DESC, id DESC) 倒序并截断到 limit。
+function fakeShortMemoryStore(entries: ShortMemoryEntry[]) {
+  const limits: number[] = [];
+  const store = {
+    listLatest(limit: number) {
+      limits.push(limit);
+      return [...entries]
+        .sort((a, b) => a.createdAtUtc === b.createdAtUtc ? b.id - a.id : a.createdAtUtc > b.createdAtUtc ? -1 : 1)
+        .slice(0, limit);
+    }
+  };
+  return { store, limits };
+}
+
+test("memory api returns the latest 100 short memories newest first", async () => {
+  const root = makeTempDir("admin-memory-short-list");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
+
+  const entries = Array.from({ length: 105 }, (_, index) =>
+    shortMemoryEntry(index + 1, new Date(Date.UTC(2026, 4, 1, 0, 0, index)).toISOString(), `entry ${index + 1}`)
+  );
+  // id 100 与 id 101 共享同一个 instant，验证同刻记录按 id 倒序稳定排序。
+  entries[100] = { ...entries[100], createdAtUtc: entries[99].createdAtUtc, createdAt: entries[99].createdAt };
+
+  const { store, limits } = fakeShortMemoryStore(entries);
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    shortMemoryStore: store
+  });
+
+  const response = createResponse();
+  await handler(createRequest("GET", "/admin/api/memory", {}), response);
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(limits, [100], "route must request the latest 100 entries");
+  assert.equal(Array.isArray(body.shortMemories), true);
+  assert.equal(body.shortMemories.length, 100);
+
+  const ids = body.shortMemories.map((entryItem: ShortMemoryEntry) => entryItem.id);
+  assert.equal(ids[0], 105);
+  assert.equal(ids.at(-1), 6);
+  assert.equal(ids.indexOf(101), 4);
+  assert.equal(ids.indexOf(100), 5);
+  for (let i = 1; i < body.shortMemories.length; i += 1) {
+    const prev = body.shortMemories[i - 1];
+    const current = body.shortMemories[i];
+    assert.ok(
+      prev.createdAtUtc > current.createdAtUtc || (prev.createdAtUtc === current.createdAtUtc && prev.id > current.id),
+      `expected newest-first order at index ${i}`
+    );
+  }
+
+  for (const entryItem of body.shortMemories) {
+    assert.equal(typeof entryItem.id, "number");
+    assert.equal(typeof entryItem.createdAt, "string");
+    assert.equal(typeof entryItem.createdAtUtc, "string");
+    assert.equal(typeof entryItem.content, "string");
+  }
+});
+
+test("memory api short memories carry createdAt and createdAtUtc for the same instant in a non-UTC timezone across a day boundary", async () => {
+  const root = makeTempDir("admin-memory-short-same-instant");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
+
+  // baseContext 配置时区为 Asia/Shanghai（+8）；UTC 2026-05-30T19:46:02.806Z 对应的
+  // 本地 wall-clock 是 2026-05-31T03:46:02.806，跨过一个自然日。
+  const utc = "2026-05-30T19:46:02.806Z";
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    shortMemoryStore: {
+      listLatest: () => [shortMemoryEntry(1, utc, "跨日记录")]
+    }
+  });
+
+  const response = createResponse();
+  await handler(createRequest("GET", "/admin/api/memory", {}), response);
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 200);
+  const entryItem = body.shortMemories[0];
+  assert.equal(entryItem.createdAt, "2026-05-31T03:46:02.806");
+  assert.equal(entryItem.createdAtUtc, utc);
+  assert.equal(parseZonedIso(entryItem.createdAt, "Asia/Shanghai").getTime(), new Date(utc).getTime());
+  assert.notEqual(entryItem.createdAt.slice(0, 10), entryItem.createdAtUtc.slice(0, 10), "UTC 与本地日期跨日");
+});
+
+test("memory api returns a JSON error when the short memory query fails", async () => {
+  const root = makeTempDir("admin-memory-short-query-fail");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
+  const handler = createAdminHandler({
+    ...baseContext(root, memoryStore, promptStore),
+    shortMemoryStore: {
+      listLatest() {
+        throw new Error("short memory query boom");
+      }
+    }
+  });
+
+  const response = createResponse();
+  await handler(createRequest("GET", "/admin/api/memory", {}), response);
+
+  assert.equal(response.statusCode, 500);
+  assert.deepEqual(JSON.parse(response.body), { ok: false, error: "internal_error" });
 });

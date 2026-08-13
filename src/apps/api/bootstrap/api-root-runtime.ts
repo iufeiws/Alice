@@ -8,6 +8,9 @@ import { createApiAgentStackRuntime } from "./api-agent-stack-runtime.js";
 import { createApiControlRuntime } from "./api-control-runtime.js";
 import { createAgentLoopRuntime } from "../../../contexts/agent-loop/src/runtime/agent-loop-runtime.js";
 import { createJsonProcessRestartContinuationStore } from "../../../contexts/agent-loop/src/adapters/json-process-restart-continuation-store.js";
+import { createSessionClearCoordinator } from "../../../contexts/llm-session/src/application/session-clear-coordinator.js";
+import { createShortMemoryStore } from "../../../contexts/memory/src/short-memory-store.js";
+import { createHostShortMemoryFile, createShortMemoryWorker } from "../../../contexts/memory/src/short-memory-worker.js";
 import { createPiLLMRelay, type PiRelayCapability } from "../../../contexts/llm-gateway/src/pi-llm-relay.js";
 import { createPiPresetSnapshot } from "../../../contexts/llm-gateway/src/pi-preset-adapter.js";
 import { createPiWorkerRuntime, createPiWorkerHttpClient, type PiWorkerHealth } from "../../../contexts/pi-worker/src/index.js";
@@ -23,12 +26,26 @@ export function createApiRootRuntime() {
   const processRestartContinuationStore = createJsonProcessRestartContinuationStore(
     path.join(foundation.config.memoryFiles.root, "agent-loop", "process-restart-continuation.json")
   );
+  // 统一 Session Clear 协调器(§6): 宿主映射文件 + 主库(memory-files/alice.sqlite,
+  // 与 memory/calendar 现有 store 同一个库) + 串行 Worker, 注入给 Chat/Talk/Memorize。
+  const shortMemoryStore = createShortMemoryStore(path.join(foundation.config.memoryFiles.root, "alice.sqlite"));
+  const shortMemoryFile = createHostShortMemoryFile({ hostWorkspaceDir: foundation.config.bashSandbox.hostWorkspaceDir });
+  const shortMemoryWorker = createShortMemoryWorker({
+    file: shortMemoryFile,
+    store: shortMemoryStore,
+    time: foundation.currentTime
+  });
+  const sessionClearCoordinator = createSessionClearCoordinator({
+    shortMemoryWorker,
+    appendLog: foundation.appendLog
+  });
   const apiLLMRuntime = createApiLLMRuntime({
     config: foundation.config,
     time: foundation.currentTime,
     tokenUsageStore: foundation.tokenUsageStore,
     apiRuntimeState,
     agentLoopRuntime,
+    sessionClearCoordinator,
     resolvePromptApiPreset: foundation.resolvePromptApiPreset,
     getConversationStartIndex: (sessionId) => apiAgentStackRuntime.talkAgentLoop.getConversationStartIndex(Number(sessionId)),
     buildTalkRuntimeMessages: (sessionId) => apiAgentStackRuntime.talkRuntime.buildNextLoopMessagePatch(sessionId).messages,
@@ -108,7 +125,9 @@ export function createApiRootRuntime() {
     getChatAgent: () => apiAgentStackRuntime.chatAgent,
     triggerSleepMemoryInduction: () => apiToolingRuntime.sleepMemoryInductionRuntime.trigger(),
     appendLog: foundation.appendLog,
-    appendMessageLog: foundation.appendMessageLog
+    appendMessageLog: foundation.appendMessageLog,
+    // 复用块 2 已创建的主库(alice.sqlite) Short Memory store, 供 prompt-context 变量查询。
+    shortMemoryStore
   });
   const apiToolingRuntime = createApiToolingRuntime({
     config: foundation.config,
@@ -138,6 +157,7 @@ export function createApiRootRuntime() {
     appendLog: foundation.appendLog,
     resolvePromptApiPreset: foundation.resolvePromptApiPreset,
     appendMessageLog: foundation.appendMessageLog,
+    sessionClearCoordinator,
     piWorkerRuntime
   });
   refreshDefaultToolRegistry = apiToolingRuntime.refreshToolRegistry;
@@ -156,6 +176,7 @@ export function createApiRootRuntime() {
     time: foundation.currentTime,
     resolvePromptApiPreset: foundation.resolvePromptApiPreset,
     appendLog: foundation.appendLog,
+    sessionClearCoordinator,
     processRestartContinuationStore
   });
   agentLoopRuntime.setRunners({

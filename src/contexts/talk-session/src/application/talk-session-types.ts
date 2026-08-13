@@ -1,5 +1,7 @@
 import type { LLMMessage } from "../../../../contexts/llm-gateway/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
+import type { MainAgentClearAcquisition } from "../../../agent-loop/src/runtime/agent-loop-runtime.js";
+import type { SessionClearCoordinator, SessionClearResult } from "../../../llm-session/src/application/session-clear-coordinator.js";
 import type {
   TalkEvent,
   TalkOutputChunk,
@@ -11,7 +13,7 @@ import type {
 export type TalkRuntime = {
   store: TalkStore;
   openSession(input: TalkSessionOpenInput): TalkSessionOpenResult;
-  closeSession(input: { sessionId: number; occurredAt?: string; occurredAtUtc?: string }): void;
+  closeSession(input: { sessionId: number; occurredAt?: string; occurredAtUtc?: string }): Promise<SessionClearResult>;
   markAgentLoopReady(sessionId: number): void;
   claimReadyAgentLoopSession(): number | undefined;
   prepareReadyAgentLoopSession(sessionId: number, options?: { signal?: AbortSignal; agentLoopRunSeq?: number }): Promise<unknown> | unknown;
@@ -103,6 +105,21 @@ export type TalkRuntimeDeps = {
   time: CurrentTimeProvider;
   breakMarker?: string;
   readyChars?: number;
+  /**
+   * 统一 Session Clear 协调器（§6 / §7.2）。必填: closeSession 一律走协调器,
+   * Short Memory 采集成功后才执行关闭五步, 不存在绕过采集的兼容 fallback。
+   */
+  sessionClearCoordinator: SessionClearCoordinator;
+  /**
+   * Main Agent 统一占用获取口(§7.2/§10): closeSession 在转交 coordinator 前获取
+   * clearing 占用(kind "talk"), 完整结束(成功或失败)后释放; 与 Chat/Memorize 清除互斥。
+   * 必填依赖，禁止缺失时绕过占用。
+   */
+  acquireMainAgentClear(input: { kind: "chat" | "talk" | "memorize"; sessionId: string }): MainAgentClearAcquisition;
+  /** clear() 回调步骤①: 将活跃 Talk LLM transcript 从 runtime 重写到持久存储。 */
+  rewriteActiveTalkLLMSessionFromRuntime(sessionId: number): void;
+  /** clear() 回调步骤②: 将对应 LLM session 标记为 cleared 并清 current pointer。 */
+  clearActiveTalkLLMSession(sessionId: number): void;
   createLLMSession?(input: {
     occurredAt: string;
     occurredAtUtc?: string;

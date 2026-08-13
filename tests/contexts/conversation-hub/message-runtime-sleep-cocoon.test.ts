@@ -41,6 +41,7 @@ test("messageRuntime_forceWakeCommand_queuesSleepCocoonForceWakeEvent", async ()
         }
       };
     },
+    clearLLMSession() {},
     getSleepCocoonMorningEvent() {
       const event = morningEvent;
       morningEvent = undefined;

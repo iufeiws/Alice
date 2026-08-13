@@ -1,5 +1,6 @@
 import type { AgentEvent, AgentOutput } from "../../../agent-loop/src/contracts/agent-contracts.js";
 import type { AgentLoopRuntime, PreparedAgentLoopRun } from "../../../agent-loop/src/runtime/agent-loop-runtime.js";
+import type { LLMSessionClearReason } from "../../../agent-loop/src/application/chat-agent-types.js";
 import type { AgentStateController } from "../../../../contexts/agent-loop/src/domain/agent-loop-state.js";
 import type { AgentInitiatedBehaviorPlan } from "../../../../contexts/initiative/src/domain/initiated-behavior.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
@@ -34,7 +35,7 @@ export type MessageRuntimeDeps = {
   } | undefined;
   onForceWake?: () => void;
   onInboundUserMessage?: (input: { sessionId: string; receivedAt: string; receivedAtUtc?: string }) => void;
-  clearLLMSession?(reason: string): void;
+  clearLLMSession(reason: LLMSessionClearReason): void | Promise<void>;
   isLLMSessionActive?: () => boolean;
   agentLoopRuntime?: AgentLoopRuntime;
   talkRuntime?: {

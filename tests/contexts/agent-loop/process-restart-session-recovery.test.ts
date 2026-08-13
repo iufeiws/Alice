@@ -4,6 +4,7 @@ import { loadConfig } from "../../../src/apps/api/bootstrap/app-config-runtime.j
 import { createRestartTools } from "../../../src/capabilities/tools/restart/src/index.js";
 import { createLLMSessionArchive } from "../../../src/contexts/llm-session/src/application/archive-llm-session.js";
 import { createLLMSessionRuntime } from "../../../src/contexts/llm-session/src/application/llm-session-runtime.js";
+import type { SessionClearRequest } from "../../../src/contexts/llm-session/src/application/session-clear-coordinator.js";
 import type { ProcessRestartContinuationRecord } from "../../../src/contexts/agent-loop/src/adapters/json-process-restart-continuation-store.js";
 import { createIntentRouter } from "../../../src/contexts/agent-loop/src/application/intent-router.js";
 import { createSessionResolver } from "../../../src/contexts/agent-loop/src/application/session-resolver.js";
@@ -26,7 +27,15 @@ test("restart checkpoint uses the same session id as the persisted Chat transcri
     archive,
     getConversationStartIndex() { return undefined; },
     buildTalkRuntimeMessages() { return []; },
-    appendLog() {}
+    appendLog() {},
+    // §7.1: clear 必须经过统一 coordinator, 不存在绕过采集的兼容 fallback。
+    sessionClearCoordinator: {
+      async clearSession(request: SessionClearRequest) {
+        if (!request.exists()) return { cleared: false, shortMemoryCaptured: false };
+        await request.clear();
+        return { cleared: true, shortMemoryCaptured: false };
+      }
+    }
   });
   const savedRecords: ProcessRestartContinuationRecord[] = [];
   let record: ProcessRestartContinuationRecord | undefined;

@@ -18,7 +18,8 @@ test("prompt context runtime exposes system_skills and installed_skills from the
         { name: "weather", description: "天气查询", source: "first-party" },
         { name: "lark-doc", description: "飞书文档", source: "third-party" }
       ]
-    }
+    },
+    shortMemoryStore: { listByCreatedAtUtcRange: () => [] }
   } as any);
 
   const systemSkills = String(runtime.getVariable("system_skills"));
@@ -47,6 +48,7 @@ test("prompt context runtime exposes notes_list from the injected listNotes prov
     calendarStore: { listEntries: () => [] },
     skillsDirPath: "/home/alice/.agent/skills",
     skillsRegistry: { available: () => [] },
+    shortMemoryStore: { listByCreatedAtUtcRange: () => [] },
     listNotes: () => [
       { name: "feishu-sending", description: "发送要点", path: "/home/alice/.agent/notes/feishu-sending.md" }
     ]
@@ -70,7 +72,8 @@ test("prompt context runtime renders an empty notes tag without a listNotes prov
     diaryStore: { latestWakeBoundary: () => undefined },
     calendarStore: { listEntries: () => [] },
     skillsDirPath: "/home/alice/.agent/skills",
-    skillsRegistry: { available: () => [] }
+    skillsRegistry: { available: () => [] },
+    shortMemoryStore: { listByCreatedAtUtcRange: () => [] }
   } as any);
 
   assert.equal(runtime.renderText("{{notes_list}}"), "");

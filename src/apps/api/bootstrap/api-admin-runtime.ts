@@ -51,12 +51,13 @@ export function createApiAdminRuntime(input: {
     getPromptRenderer: () => input.apiContextRuntime.promptContextRuntime,
     getPromptVariableTree: () => promptVariableTree(input.apiContextRuntime.promptContextRuntime),
     getTokenUsageReport: input.getTokenUsageReport,
-    clearLLMChainCache: () => input.chatAgent.clearLLMSession("admin_clear"),
-    cancelActiveLLMRun: () => {
+    // §7.1/§8.2: 管理后台 clear/cancel 必须等待异步 clear(含 Short Memory 采集)完成。
+    clearLLMChainCache: async () => input.chatAgent.clearLLMSession("admin_clear"),
+    cancelActiveLLMRun: async () => {
       const hadActiveRequest = input.cancelLLMRequest();
-      input.chatAgent.clearLLMSession("admin_cancel");
+      const clearResult = await input.chatAgent.clearLLMSession("admin_cancel");
       input.apiCapabilitiesRuntime.messagingTools.noteLLMSessionCompleted();
-      return { ok: true, hadActiveRequest };
+      return { ok: true, hadActiveRequest, cleared: clearResult.cleared, shortMemoryCaptured: clearResult.shortMemoryCaptured };
     },
     clearMemoryInductionSession: () => input.adminLLMSessionRuntime.memoryConsoleRuntime.clearSession(),
     outputRouter: input.outputRouter,
@@ -74,6 +75,7 @@ export function createApiAdminRuntime(input: {
     diaryStore: input.apiContextRuntime.diaryStore,
     calendarStore: input.apiContextRuntime.calendarStore,
     memoryInductionPromptStore: input.apiContextRuntime.memoryInductionPromptStore,
+    shortMemoryStore: input.apiContextRuntime.shortMemoryStore,
     piWorker: input.piWorkerRuntime ? {
       runtime: input.piWorkerRuntime,
       containerRoot: input.config.bashSandbox.workspaceDir,

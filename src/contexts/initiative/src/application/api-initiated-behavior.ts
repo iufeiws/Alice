@@ -8,7 +8,7 @@ export function createApiBehaviorRuntime(input: {
   getDiaryStore(): any;
   getCalendarStore(): any;
   getDailyShellStore(): any;
-  clearLLMSession(): void;
+  clearLLMSession(): void | Promise<void>;
   sendSleepNotice(): Promise<void>;
   triggerSleepMemoryInduction(): Promise<unknown>;
   getDefaultTarget(): any;

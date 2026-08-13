@@ -113,6 +113,7 @@ export function baseContext(root: string, memoryStore: ReturnType<typeof createM
         calendarStore: this.calendarStore,
         skillsDirPath: this.config.bashSandbox.skillsDir,
         skillsRegistry: { available: () => [] },
+        shortMemoryStore: { listByCreatedAtUtcRange: () => [] },
         worldWandererConfigPath: this.pluginConfigs?.worldWanderer?.configPath
       });
     },
@@ -145,6 +146,7 @@ export function baseContext(root: string, memoryStore: ReturnType<typeof createM
       }
     },
     memoryInductionPromptStore: promptStore,
+    shortMemoryStore: { listLatest: () => [] },
     runMemoryInductionForMessages: async () => ({ ok: false, startedAt: "", windowEndAt: "", messageCount: 0, results: [] }),
     getDailyShell: () => "",
     dailyShellStore: {

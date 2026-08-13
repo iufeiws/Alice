@@ -7,7 +7,22 @@ import {
 } from "../../../src/contexts/llm-session/src/index.js";
 import { createLLMSessionStore } from "../../../src/contexts/llm-session/src/adapters/sqlite-llm-session-store.js";
 import type { LLMSessionStore, StoredLLMSession } from "../../../src/contexts/llm-session/src/adapters/sqlite-llm-session-store.js";
+import type { SessionClearRequest } from "../../../src/contexts/llm-session/src/application/session-clear-coordinator.js";
 import { fs, path, fixedTime, makeTempDir } from "../llm-gateway/llm-and-storage-helpers.js";
+
+/**
+ * 结构等价 createSessionClearCoordinator 产物的 fake（§7.1: coordinator 为统一入口,
+ * 任何 clear 路径都必须经过它, 不存在绕过采集的兼容 fallback）。
+ */
+function fakeSessionClearCoordinator() {
+  return {
+    async clearSession(request: SessionClearRequest) {
+      if (!request.exists()) return { cleared: false, shortMemoryCaptured: false };
+      await request.clear();
+      return { cleared: true, shortMemoryCaptured: false };
+    }
+  };
+}
 
 function dbPathFor(memoryRoot: string): string {
   return path.join(memoryRoot, "llm-sessions.sqlite");
@@ -42,7 +57,9 @@ function makeEnv(memoryRoot: string, store?: LLMSessionStore) {
     archive,
     getConversationStartIndex: () => undefined,
     buildTalkRuntimeMessages: () => [],
-    appendLog() {}
+    appendLog() {},
+    // §7.1: clear 必须经过统一 coordinator, 不存在绕过采集的兼容 fallback。
+    sessionClearCoordinator: fakeSessionClearCoordinator()
   });
   return { archive, runtime, warnings, time };
 }
@@ -414,7 +431,8 @@ test("allows talk transcript replacement only through explicit replace", () => {
     archive,
     getConversationStartIndex: () => 0,
     buildTalkRuntimeMessages: () => [{ role: "user", content: "runtime rebuilt" }],
-    appendLog() {}
+    appendLog() {},
+    sessionClearCoordinator: fakeSessionClearCoordinator()
   });
   runtime.noteLLMRequest(chatRequest(1, [{ role: "user", content: "start" }], { agentId: "talk", id: 1 }), "talk");
   const talkId = currentSessionId(runtime);
@@ -484,7 +502,7 @@ test("restores the last successful recovery point after restart", () => {
   assert.equal(snapshot.messageCount, 2);
 });
 
-test("deletes pointer only after clear metadata is committed", () => {
+test("deletes pointer only after clear metadata is committed", async () => {
   const memoryRoot = makeTempDir("runtime-clear-pointer");
   const realStore = createLLMSessionStore(dbPathFor(memoryRoot));
   const { wrapped, fail, heal } = failingStore(realStore);
@@ -492,13 +510,13 @@ test("deletes pointer only after clear metadata is committed", () => {
   runtime.noteLLMRequest(chatRequest(1, [{ role: "user", content: "hello" }]), "chat");
   const id = currentSessionId(runtime);
   fail("updateMeta", "replace");
-  assert.throws(() => runtime.clearCurrentLLMSession("admin_clear"), /injected store failure/);
+  await assert.rejects(() => runtime.clearCurrentLLMSession("admin_clear"), /injected store failure/);
   assert.ok(fs.existsSync(pointerPath(memoryRoot)), "pointer must survive a failed clear commit");
   let reader = createLLMSessionStore(dbPathFor(memoryRoot));
   assert.equal((reader.read(String(id))?.meta as any).clearedAt, undefined, "clear meta must not be committed when the write fails");
   reader.close();
   heal();
-  runtime.clearCurrentLLMSession("admin_clear");
+  await runtime.clearCurrentLLMSession("admin_clear");
   assert.equal(fs.existsSync(pointerPath(memoryRoot)), false, "pointer is removed only after the clear metadata commit");
   reader = createLLMSessionStore(dbPathFor(memoryRoot));
   assert.equal((reader.read(String(id))?.meta as any).clearedAt, "2026-06-14T01:00:00.000");

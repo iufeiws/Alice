@@ -7,7 +7,7 @@ export function createAgentStateRuntime(input: {
   time: any;
   getDiaryStore(): any;
   getDailyShellStore(): any;
-  clearLLMSession(): void;
+  clearLLMSession(): void | Promise<void>;
   sendSleepNotice(): Promise<void>;
   triggerSleepMemoryInduction(): Promise<unknown>;
   queueMorningEvent(): void;
@@ -23,7 +23,7 @@ export function createAgentStateRuntime(input: {
   });
 
   let previousAgentBehaviorState = agentState.getSnapshot().state;
-  agentState.onChange((snapshot) => {
+  agentState.onChange(async (snapshot) => {
     if (snapshot.state === "sleeping" && previousAgentBehaviorState !== "sleeping") {
       const now = input.time.now();
       const diaryStore = input.getDiaryStore();
@@ -42,9 +42,18 @@ export function createAgentStateRuntime(input: {
           nowUtc: now.date.toISOString()
         });
       }
-      input.clearLLMSession();
-      if (snapshot.reason === "sleep_started") void input.sendSleepNotice();
-      void input.triggerSleepMemoryInduction();
+      // §7.1: mode_transition 清除进入统一协调器(含 Short Memory 采集)。
+      // §10/§11.2: 必须先 await 清除完成, 成功后才触发睡眠通知与记忆归纳;
+      // 清除失败时记录错误, 不触发通知与归纳(阻止后续 loop)。
+      try {
+        await input.clearLLMSession();
+      } catch (error) {
+        input.appendLog("error", `sleep transition llm session clear failed: ${error instanceof Error ? error.message : String(error)}`);
+        previousAgentBehaviorState = snapshot.state;
+        return;
+      }
+      if (snapshot.reason === "sleep_started") await input.sendSleepNotice();
+      await input.triggerSleepMemoryInduction();
     }
     if (previousAgentBehaviorState === "sleeping" && snapshot.state === "waiting") {
       if (snapshot.reason === "woke") {

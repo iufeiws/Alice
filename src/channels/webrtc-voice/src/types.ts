@@ -151,7 +151,7 @@ export type WebRtcVoiceTtsArchiveInput = {
 
 export type WebRtcVoiceTalkRuntime = {
   openSession?(input: unknown): void | { sessionId?: number } | Promise<void | { sessionId?: number }>;
-  closeSession?(input: unknown): void | Promise<void>;
+  closeSession?(input: unknown): void | Promise<unknown>;
   ingestInput?(event: { kind: string; [key: string]: unknown }): void | Promise<void>;
   commitStableInputBatch?(batch: {
     sessionId: number;

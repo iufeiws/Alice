@@ -46,7 +46,7 @@ export function createApiServerStackRuntime(input: {
     chatAgent: input.chatAgent,
     agentState: input.agentState,
     outputRouter: input.outputRouter,
-    isLLMSessionActive: () => input.agentLoopRuntime.isRunning(),
+    isLLMSessionActive: () => input.agentLoopRuntime.isMainAgentBusy(),
     initiatedBehaviorRunStore: input.apiContextRuntime.initiatedBehaviorRunStore,
     getAgentInitiatedBehaviorPlans: input.apiContextRuntime.getAgentInitiatedBehaviorPlans,
     getDefaultMessagingTarget: () => input.apiContextRuntime.defaultTargetResolver.getDefaultMessagingTarget() as any,

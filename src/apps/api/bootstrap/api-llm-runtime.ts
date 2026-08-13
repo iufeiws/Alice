@@ -7,6 +7,7 @@ export function createApiLLMRuntime(input: {
   tokenUsageStore: any;
   apiRuntimeState: any;
   agentLoopRuntime: any;
+  sessionClearCoordinator: any;
   resolvePromptApiPreset(kind: any): any;
   getConversationStartIndex(sessionId: number): number | undefined;
   buildTalkRuntimeMessages(sessionId: number): any;
@@ -15,6 +16,7 @@ export function createApiLLMRuntime(input: {
   const apiSessionRuntime = createApiSessionRuntime({
     config: input.config,
     time: input.time,
+    sessionClearCoordinator: input.sessionClearCoordinator,
     getConversationStartIndex: input.getConversationStartIndex,
     buildTalkRuntimeMessages: input.buildTalkRuntimeMessages,
     appendLog: input.appendLog

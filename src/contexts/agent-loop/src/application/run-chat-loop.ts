@@ -85,7 +85,7 @@ export type ChatAgentLoopInput = {
   setLastCompletedToolName(name: string): void;
   applyModeStateToNewSession(mode: ChatAgentModeState): void;
   onFixedPrefixCleared?(session: ChatAgentLoopSession): void;
-  onSessionRebuilt?(): void | Promise<void>;
+  onSessionRebuilt?(): unknown | Promise<unknown>;
   isLLMRunCancelled?(): boolean;
   promptProfile?: PromptProfile;
   buildYieldResumeMessages?(session: ChatAgentLoopSession): Promise<LLMChatInput["messages"]> | LLMChatInput["messages"];

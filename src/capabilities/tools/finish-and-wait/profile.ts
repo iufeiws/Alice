@@ -8,19 +8,22 @@ export const awaitChatWaitSeconds = maxYieldWaitSeconds;
 export const finishAndWaitTool: ToolDefinition = {
   name: "Yield",
   suppressExecutionCard: true,
-  description: "等待回复或结束聊天。action=schedule 定时(秒)后再次返回, 中途有新消息时提前返回; action=await_chat 固定等待 15 分钟, 有新消息时提前返回, 超时无消息则结束; action=finish 直接结束",
+  // schedule 已禁用，不暴露给 LLM；保留原描述便于恢复时参考。
+  // description: "等待回复或结束聊天。action=schedule 定时(秒)后再次返回, 中途有新消息时提前返回; action=await_chat 固定等待 15 分钟, 有新消息时提前返回, 超时无消息则结束; action=finish 直接结束",
+  description: "等待回复或结束聊天。action=await_chat 固定等待 15 分钟, 有新消息时提前返回, 超时无消息则结束; action=finish 直接结束",
   inputSchema: {
     type: "object",
     oneOf: [
-      {
-        description: "schedule: 定时(秒)后再次返回, 中途有新消息时提前返回",
-        properties: {
-          action: { const: "schedule" },
-          timer: { type: "integer", minimum: minYieldWaitSeconds, maximum: maxYieldWaitSeconds }
-        },
-        required: ["action", "timer"],
-        additionalProperties: false
-      },
+      // schedule 已禁用，不暴露给 LLM；保留原 schema 分支，不删除。
+      // {
+      //   description: "schedule: 定时(秒)后再次返回, 中途有新消息时提前返回",
+      //   properties: {
+      //     action: { const: "schedule" },
+      //     timer: { type: "integer", minimum: minYieldWaitSeconds, maximum: maxYieldWaitSeconds }
+      //   },
+      //   required: ["action", "timer"],
+      //   additionalProperties: false
+      // },
       {
         description: "await_chat: 固定等待 15 分钟, 有新消息时提前返回, 超时无消息则结束",
         properties: { action: { const: "await_chat" } },

@@ -121,7 +121,7 @@ src/
 | sleep-cocoon | `sleep_cocoon` | 睡眠茧：in 钻进入睡（随机 ±15 分钟）/ out 取消 |
 | bookcase | `Bookcase` | 书橱抽书讲故事 / 还书（assets/tools/bookcase/booksummaries.sqlite） |
 | wardrobe | `Wardrobe` | 查看/切换服装（list/mirror/switch/random，可触发 on-body 生成） |
-| finish-and-wait | `Yield` | 等待或结束：schedule（10s–15min 定时返回）/ await_chat（固定 15 分钟）/ finish；连续 schedule 且无 subagent 运行时拒绝（防空转） |
+| finish-and-wait | `Yield` | 等待或结束：对 LLM 暴露 await_chat（固定 15 分钟）/ finish；schedule（10s–15min 定时返回）实现保留但不在 profile 中暴露；连续 schedule 且无 subagent 运行时拒绝（防空转） |
 
 
 结构约束：

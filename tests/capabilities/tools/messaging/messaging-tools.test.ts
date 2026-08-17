@@ -49,6 +49,13 @@ test("finishAndWaitTools_schedule_returnsYieldMeta", async () => {
 
 test("finishAndWaitTools validates actions and wait range", async () => {
   const tools = createFinishAndWaitTools();
+  const waitTool = tools.listTools().find((tool) => tool.name === "Yield");
+  assert.ok(waitTool);
+  assert.equal(waitTool.description.includes("schedule"), false);
+  assert.deepEqual(
+    (waitTool.inputSchema as { oneOf?: Array<{ properties?: { action?: { const?: string } } }> }).oneOf?.map((schema) => schema.properties?.action?.const),
+    ["await_chat", "finish"]
+  );
   for (const timer of [10, 900]) {
     const result = await tools.execute({ id: `schedule_${timer}`, toolName: "Yield", input: { action: "schedule", timer } });
     assert.equal(result.ok, true);

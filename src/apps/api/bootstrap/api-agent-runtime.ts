@@ -46,7 +46,7 @@ export function createApiAgentRuntime(input: {
     toolPlugins: input.toolPlugins.filter((plugin: { id?: string }) => plugin.id !== "subagent"),
     getLLMConfig: input.currentTalkLLMConfig,
     sendRequest: (requestInput) => input.llmRequests.send(requestInput),
-    flushResponseTranscript: ({ request, result }) => input.llmRequests.flushResponseTranscript?.(request, result.message),
+    flushResponseTranscript: (flushInput) => input.llmRequests.flushResponseTranscript?.(flushInput),
     agentLoopRuntime: input.agentLoopRuntime,
     sessionClearCoordinator: input.sessionClearCoordinator,
     createLLMSession: (occurredAt) => Number(input.agentLoopRuntime.createTalkLLMSession(occurredAt).id),

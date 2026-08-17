@@ -222,14 +222,15 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
       result = cloneLLMChatResult(resumedContinuation.result);
       completeAfterToolCalls = resumedContinuation.completeAfterToolCalls;
     } else {
+      const requestInput = {
+        ...request,
+        round,
+        messages: cloneLLMMessages(request.messages ?? messages),
+        // 有 flushResponseTranscript 时延迟递交 response, 由格式化完成后统一递交。
+        deferResponseTranscript: input.flushResponseTranscript !== undefined
+      };
       try {
-        result = await input.sendRequest({
-          ...request,
-          round,
-          messages: cloneLLMMessages(request.messages ?? messages),
-          // 有 flushResponseTranscript 时延迟递交 response, 由格式化完成后统一递交最终版本。
-          deferResponseTranscript: input.flushResponseTranscript !== undefined
-        });
+        result = await input.sendRequest(requestInput);
       } catch (error) {
         if (input.shouldCancel?.()) return cancelledResult(round + 1);
         throw error;
@@ -245,7 +246,7 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
       previousAssistantMessageSignature = assistantMessageSignature;
       await input.afterRequest?.({ round, result, messages });
       // 递交最终(格式化后)的 assistant 消息; 与后续 onMessagesChanged 提交的版本一致。
-      await input.flushResponseTranscript?.({ round, result, request });
+      await input.flushResponseTranscript?.({ round, result, request: requestInput });
       if (input.shouldCancel?.()) return cancelledResult(round + 1, result);
     }
 

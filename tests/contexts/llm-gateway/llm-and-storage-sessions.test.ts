@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createLLMRequestsRuntime } from "../../../src/contexts/llm-gateway/src/llm-requests-runtime.js";
 import { createLLMLogRuntime } from "../../../src/contexts/llm-gateway/src/llm-log-runtime.js";
+import { runLLMToolLoop } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
 import { createApiSessionRuntime } from "../../../src/contexts/llm-session/src/index.js";
 import type { SessionClearRequest } from "../../../src/contexts/llm-session/src/application/session-clear-coordinator.js";
 import { createLLMSessionStore } from "../../../src/contexts/llm-session/src/adapters/sqlite-llm-session-store.js";
@@ -205,6 +206,77 @@ test("LLM requests runtime passes request-scoped log entry to response logging",
   });
 
   assert.deepEqual(responseRequestIds, [10]);
+});
+
+test("LLM requests runtime records deferred chat and talk responses after tool-loop formatting", async () => {
+  const responseRequestIds: Array<number | undefined> = [];
+  const responseResults: unknown[] = [];
+  const client: LLMClient = {
+    async chat() {
+      return {
+        model: "chat-model",
+        message: { role: "assistant", content: "done" },
+        finishReason: "stop",
+        usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 }
+      };
+    }
+  };
+  for (const agentId of ["chat", "talk"] as const) {
+    const runtime = createLLMRequestsRuntime({
+      getTool: () => undefined,
+      appendLLMRequestLog() {
+        return {
+          id: 10,
+          agentId,
+          sessionId: 123,
+          time: "2026-06-14T01:00:00.000",
+          messages: []
+        };
+      },
+      appendLLMResponseLog(result, _agentId, request) {
+        responseRequestIds.push(request?.id);
+        responseResults.push(result);
+      },
+      appendLLMUsageLog() {},
+      recordTokenUsageEvent() {},
+      time: fixedTime("2026-06-14T01:00:00.000Z"),
+      resolvePromptApiPreset: () => ({ model: "fallback" }),
+      appendLog() {}
+    });
+
+    const result = await runLLMToolLoop({
+      initialMessages: [{ role: "user", content: "hello" }],
+      buildRequest({ messages }) {
+        return {
+          agentId,
+          client,
+          messages,
+          model: "chat-model",
+          toolNames: []
+        };
+      },
+      sendRequest: runtime.send,
+      flushResponseTranscript: runtime.flushResponseTranscript,
+      transformAssistantMessage({ message }) {
+        return { ...message, content: String(message.content).toUpperCase() };
+      }
+    });
+
+    assert.equal(result.finalMessage.content, "DONE");
+  }
+
+  assert.deepEqual(responseRequestIds, [10, 10]);
+  assert.deepEqual(responseResults, [{
+    model: "chat-model",
+    message: { role: "assistant", content: "DONE", toolCalls: undefined },
+    finishReason: "stop",
+    usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 }
+  }, {
+    model: "chat-model",
+    message: { role: "assistant", content: "DONE", toolCalls: undefined },
+    finishReason: "stop",
+    usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 }
+  }]);
 });
 
 test("main LLM requests suspend inactivity until successful settlement", async () => {

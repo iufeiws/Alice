@@ -1,5 +1,5 @@
 import type { LLMChatInput, LLMChatResult, LLMStreamHandlers, LLMToolSpec } from "./index.js";
-import type { LLMRequestSender, LLMRequestSenderInput } from "./llm-tool-loop.js";
+import type { LLMRequestSender, LLMRequestSenderInput, LLMToolLoopRoundRequest } from "./llm-tool-loop.js";
 import {
   createParenthesizedContentStripper,
   defaultLLMMessageSanitizationOptions,
@@ -35,7 +35,7 @@ export type LLMRequests = {
   isCancelRequested(): boolean;
   resetCancel(): void;
   /** 延迟递交的 response 最终化(格式化完成后)递交; 由调用方在 transform 后调用。 */
-  flushResponseTranscript?(requestInput: object, finalMessage: LLMChatResult["message"]): void;
+  flushResponseTranscript?(input: { round: number; result: LLMChatResult; request: LLMToolLoopRoundRequest }): void;
 };
 
 export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {

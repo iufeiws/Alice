@@ -106,12 +106,12 @@ export function createLLMRequestsRuntime(input: {
    * 暂存的 entry 基础数据(id/time/usage 等)保持不变, 仅消息替换为最终版本,
    * 与后续 onMessagesChanged 提交的 transcript 完全一致。
    */
-  function flushResponseTranscript(requestInput: LLMToolLoopRoundRequest, finalMessage: LLMChatResult["message"]): void {
-    const result = deferredResponses.get(requestInput);
+  function flushResponseTranscript(flushInput: { round: number; result: LLMChatResult; request: LLMToolLoopRoundRequest }): void {
+    const result = deferredResponses.get(flushInput.request);
     if (!result) return;
-    deferredResponses.delete(requestInput);
-    if (isMainAgent(requestInput.agentId)) {
-      input.appendLLMResponseLog({ ...result, message: finalMessage }, requestInput.agentId, requestLogEntries.get(requestInput));
+    deferredResponses.delete(flushInput.request);
+    if (isMainAgent(flushInput.request.agentId)) {
+      input.appendLLMResponseLog({ ...result, message: flushInput.result.message }, flushInput.request.agentId, requestLogEntries.get(flushInput.request));
     }
   }
 

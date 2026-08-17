@@ -79,7 +79,7 @@ src/
 | **capabilities** | 插件 admin 运行时（asr/photo/tts/geo/image-recognition 等 admin-plugin-*）+ `tool-output-target.ts`（AgentOutput 投递目标解析器，产出 AgentOutput 的工具必须经此解析） |
 | **initiative** | Agent 主动行为。initiated-behavior 定义、触发评估、随机事件、admin 配置、JSON 存储 |
 | **prompt-context** | Prompt 模板变量渲染运行时（user/时间/dailyShell/memory/calendar/skills/notes_list/outfit 变量树）。Short Memory 变量 `memory/shortMemory/content`：必填依赖 `shortMemoryStore`，取最新 wake boundary 的 `occurredAtUtc` 前 24 小时至当前的闭区间记录，输出 `<short_memories>` XML（`& < >` 转义，空结果固定空 XML），是否加入 Prompt layer 完全由用户 Prompt 编辑器配置决定 |
-| **world-wanderer** | Google Street View 世界漫步空闲行为（移动 runtime、选路 policy、geo 计算） |
+| **world-wanderer** | Google Street View 世界漫步空闲行为（移动 runtime、选路 policy、geo 计算）；选路优先近期未走过的有向 pano 边，当前出口的有向边全部耗尽时每次 idle 最多搜索一次附近可移动 pano，搜索失败则保留旧链接回退，因此兼容死路原路返回与小型 pano 环路脱困 |
 | **bash-sandbox** | Docker 沙箱 bash 执行（`createBashSandboxRuntime` + `createDockerBashExecutor`、命令权限分类）；`readSandboxNotesIndex` 同步读取容器内笔记目录索引（供 prompt 变量动态构建） |
 | **pi-worker** | Pi worker 客户端（授权握手、后台唤起 wake、tool relay、健康轮询） |
 | **approval** | 基于飞书动态卡片的一对一审批服务（含卡片动作回调鉴权） |

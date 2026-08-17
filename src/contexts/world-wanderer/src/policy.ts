@@ -17,21 +17,36 @@ export function chooseNextLink(input: {
   targetLocation?: GoogleStreetViewLocation;
   avoidPanoIds?: Set<string>;
   random: () => number;
-}): { link: GoogleStreetViewPanoGraphLink } | undefined {
+}): { kind: "move" | "escape"; link: GoogleStreetViewPanoGraphLink } | undefined {
   const links = input.currentPano.links.filter((link) => link.panoId !== input.currentPano.panoId && !input.avoidPanoIds?.has(link.panoId));
   if (!links.length) return undefined;
   const recentSet = new Set(input.state.pathStack.slice(-input.config.recentHistoryLimit).map((entry) => entry.panoId));
+  const traversedEdges = recentDirectedEdges(input.state.pathStack.slice(-input.config.recentHistoryLimit));
+  const unexploredLinks = links.filter((link) => !traversedEdges.has(directedEdgeKey(input.currentPano.panoId, link.panoId)));
   const reverseLink = visibleReverseLink(links, input.state.pathStack);
   const previousRoadText = reverseLink?.text;
-  const scored = links.map((link) => ({
+  const scored = (unexploredLinks.length ? unexploredLinks : links).map((link) => ({
     link,
     score: scoreLink(link, input.currentPano.location, input.state, recentSet, input.config, previousRoadText, input.targetLocation)
   }));
   const selected = softmaxSelect(scored, input.config.selectionTemperature, input.random);
   if (!selected) return undefined;
   return {
+    kind: unexploredLinks.length ? "move" : "escape",
     link: selected.link
   };
+}
+
+function recentDirectedEdges(pathStack: WorldWandererPathEntry[]): Set<string> {
+  const edges = new Set<string>();
+  for (let index = 1; index < pathStack.length; index += 1) {
+    edges.add(directedEdgeKey(pathStack[index - 1]!.panoId, pathStack[index]!.panoId));
+  }
+  return edges;
+}
+
+function directedEdgeKey(fromPanoId: string, toPanoId: string): string {
+  return `${fromPanoId}\u0000${toPanoId}`;
 }
 
 function scoreLink(

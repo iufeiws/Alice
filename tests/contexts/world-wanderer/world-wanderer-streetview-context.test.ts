@@ -4,7 +4,8 @@ import {
   createWorldWandererRuntime,
   readWorldWandererConfig,
   readWorldWandererState,
-  writeWorldWandererConfig
+  writeWorldWandererConfig,
+  writeWorldWandererState
 } from "../../../src/contexts/world-wanderer/src/index.js";
 import {
   graphGoogleStreetView,
@@ -104,6 +105,223 @@ async function runNearbyWorldWanderer() {
   const state = await runtime.runIdleTransition({ delayMs: 0 });
   return { coordinateCalls, next, state };
 }
+
+test("world wanderer escapes a recently exhausted local pano loop through a nearby linked pano", async () => {
+  const { configPath, dbPath } = worldWandererPaths();
+  writeWorldWandererConfig(configPath, worldWandererConfig({ speedMetersPerSecond: 0 }));
+
+  const graph = new Map([
+    ["a", pano("a", 41, 29, [{ panoId: "b", heading: 90, text: "Loop" }])],
+    ["b", pano("b", 41, 29.001, [{ panoId: "a", heading: 270, text: "Loop" }])],
+    ["escape", pano("escape", 41.0003, 29.001, [{ panoId: "next", heading: 0, text: "New road" }])],
+    ["next", pano("next", 41.0013, 29.001, [])]
+  ]);
+  writeWorldWandererState(dbPath, {
+    location: graph.get("b")!.location,
+    lastHeading: 90,
+    panoId: "b",
+    pathStack: [
+      { time: "2026-06-17T00:00:00.000Z", panoId: "a", lat: 41, lng: 29, lastHeading: 90 },
+      { time: "2026-06-17T00:00:01.000Z", panoId: "b", lat: 41, lng: 29.001, lastHeading: 90 },
+      { time: "2026-06-17T00:00:02.000Z", panoId: "a", lat: 41, lng: 29, lastHeading: 270 },
+      { time: "2026-06-17T00:00:03.000Z", panoId: "b", lat: 41, lng: 29.001, lastHeading: 90 }
+    ]
+  });
+  const coordinateCalls: Array<{ lat: number; lng: number }> = [];
+  const runtime = createWorldWandererRuntime({
+    configPath,
+    dbPath,
+    now: () => new Date("2026-06-17T00:01:00.000Z"),
+    random: () => 0,
+    googleStreetView: {
+      async getPanoGraphByCoordinates(input) {
+        coordinateCalls.push(input);
+        return graph.get("escape")!;
+      },
+      async getPanoGraphByPanoId(input) {
+        const result = graph.get(input.panoId);
+        if (!result) throw new Error("missing pano");
+        return result;
+      }
+    }
+  });
+
+  const state = await runtime.runIdleTransition({ delayMs: 1 });
+
+  assert.ok(state);
+  assert.equal(state.panoId, "next");
+  assert.deepEqual(pathPanoIds(state), ["escape", "next"]);
+  assert.equal(coordinateCalls.length, 1);
+});
+
+test("world wanderer attempts nearby loop escape only once per idle transition", async () => {
+  const { configPath, dbPath } = worldWandererPaths();
+  writeWorldWandererConfig(configPath, worldWandererConfig({ speedMetersPerSecond: 0 }));
+
+  const graph = new Map([
+    ["a", pano("a", 41, 29, [{ panoId: "b", heading: 90, text: "Loop" }])],
+    ["b", pano("b", 41, 29.001, [{ panoId: "a", heading: 270, text: "Loop" }])]
+  ]);
+  writeWorldWandererState(dbPath, {
+    location: graph.get("b")!.location,
+    lastHeading: 90,
+    panoId: "b",
+    pathStack: [
+      { time: "2026-06-17T00:00:00.000Z", panoId: "a", lat: 41, lng: 29, lastHeading: 90 },
+      { time: "2026-06-17T00:00:01.000Z", panoId: "b", lat: 41, lng: 29.001, lastHeading: 90 },
+      { time: "2026-06-17T00:00:02.000Z", panoId: "a", lat: 41, lng: 29, lastHeading: 270 },
+      { time: "2026-06-17T00:00:03.000Z", panoId: "b", lat: 41, lng: 29.001, lastHeading: 90 }
+    ]
+  });
+  let coordinateCalls = 0;
+  const runtime = createWorldWandererRuntime({
+    configPath,
+    dbPath,
+    now: () => new Date("2026-06-17T00:01:00.000Z"),
+    random: () => 0,
+    googleStreetView: {
+      async getPanoGraphByCoordinates() {
+        coordinateCalls += 1;
+        return graph.get("a")!;
+      },
+      async getPanoGraphByPanoId(input) {
+        if (input.panoId === "a") throw new Error("linked pano unavailable");
+        const result = graph.get(input.panoId);
+        if (!result) throw new Error("missing pano");
+        return result;
+      }
+    }
+  });
+
+  const state = await runtime.runIdleTransition({ delayMs: 1 });
+
+  assert.equal(state?.panoId, "b");
+  assert.equal(coordinateCalls, 8);
+});
+
+test("world wanderer searches nearby only once when the current pano has no links", async () => {
+  const { configPath, dbPath } = worldWandererPaths();
+  writeWorldWandererConfig(configPath, worldWandererConfig({ speedMetersPerSecond: 0 }));
+
+  const isolated = pano("isolated", 41, 29, []);
+  writeWorldWandererState(dbPath, {
+    location: isolated.location,
+    lastHeading: 90,
+    panoId: isolated.panoId,
+    pathStack: [
+      { time: "2026-06-17T00:00:00.000Z", panoId: isolated.panoId, lat: 41, lng: 29, lastHeading: 90 }
+    ]
+  });
+  let coordinateCalls = 0;
+  const runtime = createWorldWandererRuntime({
+    configPath,
+    dbPath,
+    now: () => new Date("2026-06-17T00:01:00.000Z"),
+    random: () => 0,
+    googleStreetView: {
+      async getPanoGraphByCoordinates() {
+        coordinateCalls += 1;
+        return isolated;
+      },
+      async getPanoGraphByPanoId() {
+        return isolated;
+      }
+    }
+  });
+
+  const state = await runtime.runIdleTransition({ delayMs: 1 });
+
+  assert.equal(state?.panoId, "isolated");
+  assert.equal(coordinateCalls, 8);
+});
+
+test("world wanderer escapes a loop discovered after moving during the idle transition", async () => {
+  const { configPath, dbPath } = worldWandererPaths();
+  writeWorldWandererConfig(configPath, worldWandererConfig({ speedMetersPerSecond: 10, maxPanosPerIdle: 10 }));
+
+  const graph = new Map([
+    ["a", pano("a", 41, 29, [{ panoId: "b", heading: 90, text: "Loop" }])],
+    ["b", pano("b", 41, 29.001, [{ panoId: "a", heading: 270, text: "Loop" }])],
+    ["escape", pano("escape", 41.0003, 29, [{ panoId: "next", heading: 0, text: "New road" }])],
+    ["next", pano("next", 41.0013, 29, [])]
+  ]);
+  writeWorldWandererState(dbPath, {
+    location: graph.get("a")!.location,
+    lastHeading: 90,
+    panoId: "a",
+    pathStack: [
+      { time: "2026-06-17T00:00:00.000Z", panoId: "a", lat: 41, lng: 29, lastHeading: 90 }
+    ]
+  });
+  let coordinateCalls = 0;
+  const runtime = createWorldWandererRuntime({
+    configPath,
+    dbPath,
+    now: () => new Date("2026-06-17T00:01:00.000Z"),
+    random: () => 0,
+    googleStreetView: {
+      async getPanoGraphByCoordinates() {
+        coordinateCalls += 1;
+        return graph.get("escape")!;
+      },
+      async getPanoGraphByPanoId(input) {
+        const result = graph.get(input.panoId);
+        if (!result) throw new Error("missing pano");
+        return result;
+      }
+    }
+  });
+
+  const state = await runtime.runIdleTransition({ delayMs: 100_000 });
+
+  assert.equal(state?.panoId, "next");
+  assert.deepEqual(state && pathPanoIds(state), ["escape", "next"]);
+  assert.equal(coordinateCalls, 1);
+});
+
+test("world wanderer follows a revisited link when nearby loop escape is unavailable", async () => {
+  const { configPath, dbPath } = worldWandererPaths();
+  writeWorldWandererConfig(configPath, worldWandererConfig({ speedMetersPerSecond: 0 }));
+
+  const graph = new Map([
+    ["a", pano("a", 41, 29, [{ panoId: "b", heading: 90, text: "Loop" }])],
+    ["b", pano("b", 41, 29.001, [{ panoId: "a", heading: 270, text: "Loop" }])]
+  ]);
+  writeWorldWandererState(dbPath, {
+    location: graph.get("b")!.location,
+    lastHeading: 90,
+    panoId: "b",
+    pathStack: [
+      { time: "2026-06-17T00:00:00.000Z", panoId: "a", lat: 41, lng: 29, lastHeading: 90 },
+      { time: "2026-06-17T00:00:01.000Z", panoId: "b", lat: 41, lng: 29.001, lastHeading: 90 },
+      { time: "2026-06-17T00:00:02.000Z", panoId: "a", lat: 41, lng: 29, lastHeading: 270 },
+      { time: "2026-06-17T00:00:03.000Z", panoId: "b", lat: 41, lng: 29.001, lastHeading: 90 }
+    ]
+  });
+  let coordinateCalls = 0;
+  const runtime = createWorldWandererRuntime({
+    configPath,
+    dbPath,
+    now: () => new Date("2026-06-17T00:01:00.000Z"),
+    random: () => 0,
+    googleStreetView: {
+      async getPanoGraphByCoordinates() {
+        coordinateCalls += 1;
+        return graph.get("a")!;
+      },
+      async getPanoGraphByPanoId(input) {
+        const result = graph.get(input.panoId);
+        if (!result) throw new Error("missing pano");
+        return result;
+      }
+    }
+  });
+
+  const state = await runtime.runIdleTransition({ delayMs: 1 });
+
+  assert.equal(state?.panoId, "a");
+  assert.equal(coordinateCalls, 8);
+});
 
 test("world wanderer preserves previous position when streetview graph lookup fails", async () => {
   const { configPath, dbPath } = worldWandererPaths();

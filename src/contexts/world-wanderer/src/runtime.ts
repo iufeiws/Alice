@@ -44,6 +44,7 @@ export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWander
         let replacePath = false;
         let pathStack = previous.pathStack;
         let targetReached = false;
+        let nearbyEscapeAttempted = false;
         if (!pathStack.length) {
           const entry = pathEntryFromPano({ pano: currentPano, lastHeading: previous.lastHeading, time: updatedAt });
           pathStack = [entry];
@@ -56,6 +57,7 @@ export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWander
           targetReached = true;
         }
         if (!hasMovableLinks(currentPano)) {
+          nearbyEscapeAttempted = true;
           const nearbyPano = await findNearbyLinkedPano(currentPano.location);
           if (nearbyPano) {
             deps.appendLog?.("info", `world wanderer nearby linked pano selected: from=${currentPano.panoId} pano=${nearbyPano.panoId} links=${nearbyPano.links.length}`);
@@ -88,7 +90,8 @@ export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWander
               random
             });
             if (!decision) {
-              if (movedPanos > 0) break moveLoop;
+              if (movedPanos > 0 || nearbyEscapeAttempted) break moveLoop;
+              nearbyEscapeAttempted = true;
               const nearbyPano = await findNearbyLinkedPano(currentPano.location, new Set(pathStack.map((entry) => entry.panoId)));
               if (!nearbyPano) break moveLoop;
               deps.appendLog?.("info", `world wanderer nearby linked pano selected: from=${currentPano.panoId} pano=${nearbyPano.panoId} links=${nearbyPano.links.length}`);
@@ -98,6 +101,19 @@ export function createWorldWandererRuntime(deps: WorldWandererDeps): WorldWander
               newPathEntries = [entry];
               replacePath = true;
               continue moveLoop;
+            }
+            if (decision.kind === "escape" && !nearbyEscapeAttempted) {
+              nearbyEscapeAttempted = true;
+              const nearbyPano = await findNearbyLinkedPano(currentPano.location, new Set(pathStack.map((entry) => entry.panoId)));
+              if (nearbyPano) {
+                deps.appendLog?.("info", `world wanderer nearby linked pano selected: from=${currentPano.panoId} pano=${nearbyPano.panoId} links=${nearbyPano.links.length}`);
+                currentPano = nearbyPano;
+                const entry = pathEntryFromPano({ pano: currentPano, lastHeading, time: updatedAt });
+                pathStack = [entry];
+                newPathEntries = [entry];
+                replacePath = true;
+                continue moveLoop;
+              }
             }
             try {
               nextPano = await deps.googleStreetView.getPanoGraphByPanoId({ panoId: decision.link.panoId });

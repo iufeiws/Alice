@@ -21,6 +21,7 @@ import { defaultWorldWandererPluginConfigPath } from "../../../../contexts/world
 import type { GoogleStreetViewPlugin } from "../../../../channels/google-streetview/src/index.js";
 import type { ImageRecognitionTarget } from "../../../../channels/image-recognition/src/index.js";
 import type { PromptContextRuntime } from "../../../../contexts/prompt-context/src/index.js";
+import type { ShortMemoryStore } from "../../../../contexts/memory/src/short-memory-store.js";
 import { createRandomEventSandboxRuntime } from "../../../../contexts/initiative/src/application/random-event-sandbox-runtime.js";
 import type { PiWorkerRuntime } from "../../../../contexts/pi-worker/src/index.js";
 import { createSubAgentTool } from "../../subagent/src/index.js";
@@ -47,6 +48,7 @@ export function createToolRuntime(input: {
   getWorldWandererStreetViewReferenceImage?(): Promise<string | undefined> | string | undefined;
   skillsRegistry: SkillRegistry;
   promptContextRuntime: PromptContextRuntime;
+  shortMemoryStore: Pick<ShortMemoryStore, "listLatest">;
   randomEventStore: any;
   getApprovalService(): any;
   appendLog: AppendLog;
@@ -71,6 +73,7 @@ export function createToolRuntime(input: {
     getUserName: () => input.config.project.username,
     getShellSwitchLogs: () => input.dailyShellStore.listSwitchLogs(500),
     getSleepCocoonEnteredAt: () => input.diaryStore.listSleepBoundaries().at(-1)?.occurredAt,
+    getLatestShortMemoryCreatedAtUtc: () => input.shortMemoryStore.listLatest(1)[0]?.createdAtUtc,
     getDefaultTarget() {
       return input.getDefaultTarget();
     },

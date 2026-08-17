@@ -374,7 +374,7 @@ test("check_chat returns current time from configured timezone provider", async 
   assert.equal(result.ok, true);
 });
 
-function createSleepCocoonTodayTools(name: string, withSleepPointer = true) {
+function createSleepCocoonTodayTools(name: string, withSleepPointer = true, latestShortMemoryCreatedAtUtc?: string) {
   const store = createAliceStore(path.join(makeTempDir(name), "alice.sqlite"), {
     time: createCurrentTimeProvider("Asia/Shanghai")
   });
@@ -412,6 +412,7 @@ function createSleepCocoonTodayTools(name: string, withSleepPointer = true) {
     outputRouter: { async send() {} },
     time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-05-25T06:00:00.000Z")),
     ...(withSleepPointer ? { getSleepCocoonEnteredAt: () => "2026-05-25T12:00:00.000" } : {}),
+    ...(latestShortMemoryCreatedAtUtc ? { getLatestShortMemoryCreatedAtUtc: () => latestShortMemoryCreatedAtUtc } : {}),
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
@@ -423,6 +424,35 @@ test("check_chat today starts ten messages before sleep cocoon pointer", async (
 
   const today = await tools.execute({ id: "call_today", toolName: "Chat", input: { action: "poll",  scope: "today" } });
   assert.equal(today.ok, true);
+});
+
+test("check_chat today starts at latest short memory when it is later than sleep context", async () => {
+  const tools = createSleepCocoonTodayTools(
+    "messaging-today-short-memory-later",
+    true,
+    "2026-05-25T03:05:00.000Z"
+  );
+
+  const today = await tools.execute({ id: "call_today_memory_later", toolName: "Chat", input: { action: "poll", scope: "today" } });
+
+  assert.equal(today.ok, true);
+  assert.doesNotMatch(String(today.output), /pre sleep context 4/);
+  assert.match(String(today.output), /pre sleep context 5/);
+  assert.match(String(today.output), /after sleep cocoon/);
+});
+
+test("check_chat today keeps sleep context start when it is later than latest short memory", async () => {
+  const tools = createSleepCocoonTodayTools(
+    "messaging-today-sleep-context-later",
+    true,
+    "2026-05-25T02:00:00.000Z"
+  );
+
+  const today = await tools.execute({ id: "call_today_sleep_later", toolName: "Chat", input: { action: "poll", scope: "today" } });
+
+  assert.equal(today.ok, true);
+  assert.doesNotMatch(String(today.output), /after old today anchor/);
+  assert.match(String(today.output), /pre sleep context 1/);
 });
 
 test("check_chat todayold keeps the old today anchor", async () => {

@@ -21,6 +21,7 @@ export function createApiCapabilitiesRuntime(input: {
   coreProfileStore: any;
   skillsRegistry: any;
   promptContextRuntime: any;
+  shortMemoryStore: any;
   agentState: any;
   getDefaultTarget(): any;
   getGoogleStreetView(): any;
@@ -105,6 +106,7 @@ export function createApiCapabilitiesRuntime(input: {
     coreProfileStore: input.coreProfileStore,
     skillsRegistry: input.skillsRegistry,
     promptContextRuntime: input.promptContextRuntime,
+    shortMemoryStore: input.shortMemoryStore,
     randomEventStore: input.randomEventStore,
     getApprovalService: input.getApprovalService,
     agentState: input.agentState,

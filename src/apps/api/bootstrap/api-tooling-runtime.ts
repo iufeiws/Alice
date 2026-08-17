@@ -36,6 +36,7 @@ export function createApiToolingRuntime(input: {
     coreProfileStore: input.apiContextRuntime.coreProfileStore,
     skillsRegistry: input.apiContextRuntime.skillsRegistry,
     promptContextRuntime: input.apiContextRuntime.promptContextRuntime,
+    shortMemoryStore: input.apiContextRuntime.shortMemoryStore,
     agentState: input.agentState,
     getDefaultTarget: input.getDefaultTarget,
     getGoogleStreetView: input.getGoogleStreetView,

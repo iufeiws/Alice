@@ -129,14 +129,18 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
         const beforeSleep = deps.store
           .listMessagesByCreatedAtRange(undefined, sleepCocoonRangeStart)
           .slice(-todaySleepContextMessageCount);
-        const afterSleep = deps.store.listMessagesByCreatedAtRange(sleepCocoonRangeStart, maxRangeEndTime);
-        messages = [...beforeSleep, ...afterSleep];
-        sinceDate = messages.length > 0 ? parseMessageTime(messages[0].createdAt, time.timeZone) : sleepCocoonDate;
+        sinceDate = beforeSleep.length > 0
+          ? parseMessageTime(beforeSleep[0].createdAt, time.timeZone)
+          : sleepCocoonDate;
       } else {
-        const after = todayMessagingAnchor(time.timeZone, time.now().date).getTime();
-        sinceDate = new Date(after);
-        messages = deps.store.listMessagesByCreatedAtRange(sinceDate.toISOString(), maxRangeEndTime);
+        sinceDate = todayMessagingAnchor(time.timeZone, time.now().date);
       }
+      const latestShortMemoryCreatedAtUtc = deps.getLatestShortMemoryCreatedAtUtc?.();
+      if (latestShortMemoryCreatedAtUtc) {
+        const latestShortMemoryDate = parseMessageTime(latestShortMemoryCreatedAtUtc, time.timeZone);
+        if (latestShortMemoryDate.getTime() > sinceDate.getTime()) sinceDate = latestShortMemoryDate;
+      }
+      messages = deps.store.listMessagesByCreatedAtRange(sinceDate.toISOString(), maxRangeEndTime);
     } else {
       const after = todayMessagingAnchor(time.timeZone, time.now().date).getTime();
       sinceDate = new Date(after);

@@ -17,7 +17,7 @@ export function createApiContextRuntime(input: {
   config: any;
   time: any;
   appendLog(level: "info" | "warn" | "error", message: string): void;
-  shortMemoryStore: Pick<ShortMemoryStore, "listByCreatedAtUtcRange">;
+  shortMemoryStore: Pick<ShortMemoryStore, "listByCreatedAtUtcRange" | "listLatest">;
 }) {
   const channelStateRuntime = createChannelStateRuntime({
     config: input.config,

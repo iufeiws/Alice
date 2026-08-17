@@ -12,7 +12,7 @@ export function createApiControlRuntime(input: {
   triggerSleepMemoryInduction(): Promise<unknown>;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: any): unknown;
-  shortMemoryStore: Pick<ShortMemoryStore, "listByCreatedAtUtcRange">;
+  shortMemoryStore: Pick<ShortMemoryStore, "listByCreatedAtUtcRange" | "listLatest">;
 }) {
   const apiContextRuntime = createApiContextRuntime({
     config: input.config,

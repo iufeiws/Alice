@@ -21,7 +21,7 @@ export type ShortMemoryWorker = {
   captureBeforeSessionClear(): Promise<ShortMemoryCaptureResult>;
 };
 
-const SHORT_MEMORY_FILE_NAME = ".short_memory.txt";
+const SHORT_MEMORY_FILE_NAME = ".short_memory";
 const SHORT_MEMORY_RESET_CONTENT = "\n";
 const SHORT_MEMORY_VALID_CONTENT = /[\p{L}\p{N}]/u;
 
@@ -111,7 +111,7 @@ function rollbackQuietly(tx: ShortMemoryTransaction): void {
 }
 
 /**
- * 宿主映射文件（§5.2）：容器内 ~/.short_memory.txt 对应宿主 hostWorkspaceDir/.short_memory.txt。
+ * 宿主映射文件（§5.2）：容器内 ~/.short_memory 对应宿主 hostWorkspaceDir/.short_memory。
  * 读取、写入、rename 或权限错误均直接抛出；文件不存在返回 { exists: false, content: "" }。
  */
 export function createHostShortMemoryFile(input: {

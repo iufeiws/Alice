@@ -6,12 +6,12 @@
 - 日期：2026-08-13
 - 适用范围：Chat、Talk、Memorize 会话清除链路
 - 数据库：`memory-files/alice.sqlite`
-- Sandbox 文件：容器内 `/home/alice/.short_memory.txt`，即 `~/.short_memory.txt`
-- 宿主读取路径：`path.join(config.bashSandbox.hostWorkspaceDir, ".short_memory.txt")`，默认 `.sandbox/bash/alice/.short_memory.txt`
+- Sandbox 文件：容器内 `/home/alice/.short_memory`，即 `~/.short_memory`
+- 宿主读取路径：`path.join(config.bashSandbox.hostWorkspaceDir, ".short_memory")`，默认 `.sandbox/bash/alice/.short_memory`
 
 ## 2. 背景与目标
 
-Alice 需要允许 sandbox 内的 Agent 在当前会话存活期间，将尚未整理的短期记忆写入 `~/.short_memory.txt`。当一个真实存在的会话即将被清除时，Alice 必须先检查该文件，将有效内容保存到 `alice.sqlite`，再把文件重置为仅包含一个换行符的状态，最后才允许会话完成清除。
+Alice 需要允许 sandbox 内的 Agent 在当前会话存活期间，将尚未整理的短期记忆写入 `~/.short_memory`。当一个真实存在的会话即将被清除时，Alice 必须先检查该文件，将有效内容保存到 `alice.sqlite`，再把文件重置为仅包含一个换行符的状态，最后才允许会话完成清除。
 
 本功能的触发条件是**会话清除**，不是 Agent 状态切换。Agent 进入 `idle`、`sleeping` 或其他状态本身均不得直接触发 Short Memory 采集。
 
@@ -43,7 +43,7 @@ export type ClearableSessionKind = "chat" | "talk" | "memorize";
 - 会话尚未被标记为已清除或关闭；
 - 调用方即将执行不可重复的清除提交。
 
-当 current session 不存在、Talk session 已关闭、Memorize session 不存在或已经带有 `clearedAt` 时，清除操作返回 `cleared: false`，不得读取或修改 `~/.short_memory.txt`。
+当 current session 不存在、Talk session 已关闭、Memorize session 不存在或已经带有 `clearedAt` 时，清除操作返回 `cleared: false`，不得读取或修改 `~/.short_memory`。
 
 ### 3.3 有效内容
 
@@ -161,13 +161,13 @@ export function createHostShortMemoryFile(input: {
 }): ShortMemoryFile;
 ```
 
-`createHostShortMemoryFile()` 必须使用 `path.resolve(hostWorkspaceDir, ".short_memory.txt")`，并校验结果仍位于 `hostWorkspaceDir` 内。生产 wiring 传入 `config.bashSandbox.hostWorkspaceDir`，不得使用进程用户的 `$HOME` 或 `~` 展开结果。
+`createHostShortMemoryFile()` 必须使用 `path.resolve(hostWorkspaceDir, ".short_memory")`，并校验结果仍位于 `hostWorkspaceDir` 内。生产 wiring 传入 `config.bashSandbox.hostWorkspaceDir`，不得使用进程用户的 `$HOME` 或 `~` 展开结果。
 
 ### 5.2 宿主文件行为
 
 约束：
 
-- 容器内路径固定为 `path.posix.join(config.bashSandbox.workspaceDir, ".short_memory.txt")`；宿主直接读取与之对应的 `path.resolve(config.bashSandbox.hostWorkspaceDir, ".short_memory.txt")`。
+- 容器内路径固定为 `path.posix.join(config.bashSandbox.workspaceDir, ".short_memory")`；宿主直接读取与之对应的 `path.resolve(config.bashSandbox.hostWorkspaceDir, ".short_memory")`。
 - 文件不存在时返回 `{ exists: false, content: "" }`，不视为错误。
 - 文件必须按 UTF-8 完整读取。
 - `replace()` 必须在同一目录写临时文件并通过 rename 原子替换目标文件。
@@ -460,7 +460,7 @@ Prompt 编辑器显示并提供该变量。变量最终是否被引用、位于�
 - [ ] 两个时间字段来自同一个 `CurrentTimeProvider.now()` 结果，并与 `messages` 的双时间字段规则一致。
 - [ ] `created_at_utc` 是 UTC `Z` 时间，`created_at` 是该 instant 在配置时区下的 wall-clock 时间。
 - [ ] SQLite INSERT 成功且文件重置成功后，会话才被清除。
-- [ ] 成功采集后 `~/.short_memory.txt` 的字节内容严格等于 `0x0A`。
+- [ ] 成功采集后 `~/.short_memory` 的字节内容严格等于 `0x0A`。
 - [ ] 空白、纯符号和纯 emoji 不入库，也不修改原文件。
 
 ### 11.2 会话行为
@@ -531,7 +531,7 @@ Prompt 编辑器显示并提供该变量。变量最终是否被引用、位于�
 11. commit 失败并恢复原内容。
 12. commit 与 restore 同时失败时组合错误可观察。
 13. 两个 capture 并发时严格串行。
-14. 容器路径与宿主 `hostWorkspaceDir/.short_memory.txt` 指向同一挂载文件。
+14. 容器路径与宿主 `hostWorkspaceDir/.short_memory` 指向同一挂载文件。
 15. 本地时间和 UTC 时间只取一次当前 instant，并按配置时区正确转换。
 
 ### 12.3 Coordinator 单元测试

@@ -128,7 +128,7 @@ test("captureBeforeSessionClear returns missing when the file does not exist and
   const result = await worker.captureBeforeSessionClear();
   assert.deepEqual(result, { captured: false, reason: "missing" });
   assert.deepEqual(store.listLatest(10), []);
-  assert.equal(fs.existsSync(path.join(hostWorkspaceDir, ".short_memory.txt")), false, "不得创建文件");
+  assert.equal(fs.existsSync(path.join(hostWorkspaceDir, ".short_memory")), false, "不得创建文件");
 });
 
 // §12.2-2 空字符串与仅换行（含纯空白）
@@ -235,7 +235,7 @@ test("captureBeforeSessionClear resets the file to exactly one newline byte afte
   const hostRoot = makeTempDir("worker-reset-host");
   const hostWorkspaceDir = path.join(hostRoot, "alice");
   fs.mkdirSync(hostWorkspaceDir, { recursive: true });
-  fs.writeFileSync(path.join(hostWorkspaceDir, ".short_memory.txt"), "宿主内容\n", "utf8");
+  fs.writeFileSync(path.join(hostWorkspaceDir, ".short_memory"), "宿主内容\n", "utf8");
   const store2 = createShortMemoryStore(path.join(hostRoot, "alice.sqlite"));
   const hostWorker = createShortMemoryWorker({
     file: createHostShortMemoryFile({ hostWorkspaceDir }),
@@ -243,7 +243,7 @@ test("captureBeforeSessionClear resets the file to exactly one newline byte afte
     time: testTime()
   });
   await hostWorker.captureBeforeSessionClear();
-  const bytes = fs.readFileSync(path.join(hostWorkspaceDir, ".short_memory.txt"));
+  const bytes = fs.readFileSync(path.join(hostWorkspaceDir, ".short_memory"));
   assert.ok(bytes.equals(Buffer.from([0x0a])), "宿主文件字节必须严格等于 0x0A");
 });
 
@@ -260,7 +260,7 @@ test("captureBeforeSessionClear propagates host file read failures", async () =>
   // 真实宿主文件：目标路径是目录时读取必须报错并向上传播
   const hostRoot = makeTempDir("worker-read-error-host");
   const hostWorkspaceDir = path.join(hostRoot, "alice");
-  fs.mkdirSync(path.join(hostWorkspaceDir, ".short_memory.txt"), { recursive: true });
+  fs.mkdirSync(path.join(hostWorkspaceDir, ".short_memory"), { recursive: true });
   const hostWorker = createShortMemoryWorker({
     file: createHostShortMemoryFile({ hostWorkspaceDir }),
     store: createShortMemoryStore(path.join(hostRoot, "alice.sqlite")),
@@ -388,21 +388,21 @@ test("captureBeforeSessionClear runs strictly serially under concurrent requests
   assert.deepEqual(secondResult, { captured: false, reason: "empty" }, "第二个 capture 应读取到已重置的空文件");
 });
 
-// §12.2-14 容器路径与宿主 hostWorkspaceDir/.short_memory.txt 指向同一挂载文件
+// §12.2-14 容器路径与宿主 hostWorkspaceDir/.short_memory 指向同一挂载文件
 test("host file maps the container path to hostWorkspaceDir and stays inside it", async () => {
   const root = makeTempDir("worker-host-mapping");
   const hostWorkspaceDir = path.join(root, "sandbox", "bash", "alice");
   fs.mkdirSync(hostWorkspaceDir, { recursive: true });
   const workspaceDir = "/home/alice";
-  const containerPath = path.posix.join(workspaceDir, ".short_memory.txt");
-  assert.equal(containerPath, "/home/alice/.short_memory.txt");
-  const hostPath = path.resolve(hostWorkspaceDir, ".short_memory.txt");
+  const containerPath = path.posix.join(workspaceDir, ".short_memory");
+  assert.equal(containerPath, "/home/alice/.short_memory");
+  const hostPath = path.resolve(hostWorkspaceDir, ".short_memory");
   const file = createHostShortMemoryFile({ hostWorkspaceDir });
   await file.replace("memo\n");
   assert.equal(fs.readFileSync(hostPath, "utf8"), "memo\n", "必须写入 hostWorkspaceDir 下的映射路径");
   // 挂载对应：容器路径相对 workspaceDir 的偏移在宿主下解析到同一文件
   const containerRelative = path.posix.relative(workspaceDir, containerPath);
-  assert.equal(containerRelative, ".short_memory.txt");
+  assert.equal(containerRelative, ".short_memory");
   assert.equal(path.resolve(hostWorkspaceDir, containerRelative), hostPath);
   const read = await file.read();
   assert.deepEqual(read, { exists: true, content: "memo\n" });

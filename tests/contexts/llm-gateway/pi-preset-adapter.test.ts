@@ -13,8 +13,8 @@ const preset = {
   supportsImage: true,
   supportsAudio: false,
   maxTokens: 1024,
-  extraParams: { top_p: 0.8 },
-  followupExtraParams: {}
+    extraParams: { top_p: 0.8 },
+    followupExtraParams: {}
 };
 
 test("Pi preset snapshot retains only approved upstream fields", () => {
@@ -27,6 +27,7 @@ test("Pi preset snapshot retains only approved upstream fields", () => {
     temperature: 0.3,
     maxTokens: 1024,
     timeoutMs: 10_000,
+    useProxy: false,
     supportsImage: true,
     extraParams: { top_p: 0.8 }
   });

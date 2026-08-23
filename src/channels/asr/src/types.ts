@@ -16,6 +16,7 @@ export type AsrApiPreset = {
   model: string;
   temperature?: number;
   timeoutMs?: number;
+  useProxy?: boolean;
   stream?: boolean;
   extraParams?: Record<string, unknown>;
   followupExtraParams?: Record<string, unknown>;

@@ -28,6 +28,7 @@ test("llmApiPreset_initialRender_exposesPresetEditor", () => {
     "API Key",
     "Max Tokens (optional)",
     "Timeout Ms",
+    "Use Proxy",
     "Extra Params JSON",
     "Follow-up Extra Params JSON"
   ]);

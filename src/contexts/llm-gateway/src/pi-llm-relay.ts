@@ -66,6 +66,7 @@ export function createPiLLMRelay(input: {
           baseURL: preset.baseURL,
           apiKey: preset.apiKey,
           timeoutMs: preset.timeoutMs,
+          useProxy: preset.useProxy === true,
           fetchImpl: input.fetchImpl
         })
       } satisfies PiRelayCapability;

@@ -1,3 +1,5 @@
+import { Agent } from "undici";
+
 /**
  * Raw OpenAI-compatible upstream transport owned by the LLM gateway.
  *
@@ -19,10 +21,13 @@ export function createOpenAIUpstreamRequester(config: {
   baseURL: string;
   apiKey?: string;
   timeoutMs?: number;
+  /** When false (the default), bypass the process-wide outbound proxy. */
+  useProxy?: boolean;
   fetchImpl?: typeof fetch;
 }): OpenAIUpstreamRequest {
   const fetchImpl = config.fetchImpl ?? fetch;
   const baseURL = config.baseURL.replace(/\/+$/, "");
+  const dispatcher = config.useProxy === true ? undefined : newDirectDispatcher();
   return async function requestUpstream(input) {
     for (let attempt = 1; attempt <= openAIRetryAttempts; attempt += 1) {
       const controller = new AbortController();
@@ -36,7 +41,7 @@ export function createOpenAIUpstreamRequester(config: {
       };
 
       try {
-        const response = await fetchImpl(`${baseURL}${input.path}`, {
+        const requestInit: RequestInit & { dispatcher?: unknown } = {
           ...input.init,
           signal: controller.signal,
           headers: {
@@ -44,7 +49,9 @@ export function createOpenAIUpstreamRequester(config: {
             ...(config.apiKey ? { authorization: `Bearer ${config.apiKey}` } : {}),
             ...(input.init.headers ?? {})
           }
-        });
+        };
+        if (dispatcher) requestInit.dispatcher = dispatcher;
+        const response = await fetchImpl(`${baseURL}${input.path}`, requestInit);
         if (attempt < openAIRetryAttempts && isRetryableOpenAIStatus(response.status) && !input.signal?.aborted) {
           cleanup();
           try {
@@ -64,6 +71,10 @@ export function createOpenAIUpstreamRequester(config: {
     }
     throw new Error("unreachable OpenAI fetch retry state");
   };
+}
+
+function newDirectDispatcher(): unknown {
+  return new Agent();
 }
 
 function isRetryableOpenAIStatus(status: number): boolean {

@@ -158,6 +158,7 @@ async function testAsrPlugin(context: AdminRoutesContext, input: Record<string, 
           model: preset.model,
           temperature: preset.temperature,
           timeoutMs: preset.timeoutMs,
+          useProxy: preset.useProxy === true,
           extraParams: preset.extraParams
         });
       },

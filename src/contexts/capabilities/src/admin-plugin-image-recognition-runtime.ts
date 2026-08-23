@@ -118,6 +118,7 @@ async function testImageRecognitionPlugin(context: AdminRoutesContext, input: Re
           model: preset.model,
           temperature: preset.temperature,
           timeoutMs: preset.timeoutMs,
+          useProxy: preset.useProxy === true,
           extraParams: preset.extraParams
         });
       },

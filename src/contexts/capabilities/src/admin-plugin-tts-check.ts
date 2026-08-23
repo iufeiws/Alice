@@ -32,6 +32,7 @@ export async function testTtsPlugin(context: AdminRoutesContext, input: Record<s
         model: preset.model,
         temperature: preset.temperature,
         timeoutMs: preset.timeoutMs,
+        useProxy: preset.useProxy === true,
         extraParams: preset.extraParams
       })),
       resolveApiPreset(name) {

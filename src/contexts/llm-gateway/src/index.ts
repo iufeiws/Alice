@@ -121,6 +121,7 @@ export type OpenAICompatibleConfig = {
   model: string;
   temperature?: number;
   timeoutMs?: number;
+  useProxy?: boolean;
   extraParams?: Record<string, unknown>;
   messageSanitization?: LLMMessageSanitizationOptions;
 };
@@ -193,7 +194,12 @@ type OpenAIToolCall = NonNullable<
 
 export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LLMClient {
   const baseURL = config.baseURL.replace(/\/+$/, "");
-  const requestUpstream = createOpenAIUpstreamRequester({ baseURL, apiKey: config.apiKey, timeoutMs: config.timeoutMs });
+  const requestUpstream = createOpenAIUpstreamRequester({
+    baseURL,
+    apiKey: config.apiKey,
+    timeoutMs: config.timeoutMs,
+    useProxy: config.useProxy
+  });
 
   async function request<T>(path: string, init: RequestInit, signal?: AbortSignal): Promise<T> {
     const { response, cleanup } = await requestUpstream({ path, init, signal });

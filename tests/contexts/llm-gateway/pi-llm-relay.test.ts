@@ -14,6 +14,7 @@ const preset: PiPresetSnapshot = {
   model: "model-a",
   temperature: 0.2,
   timeoutMs: 10_000,
+  useProxy: false,
   supportsImage: false,
   extraParams: {}
 };

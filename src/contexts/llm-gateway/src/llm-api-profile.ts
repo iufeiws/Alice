@@ -13,6 +13,7 @@ export type LLMApiPreset = {
   maxTokens?: number;
   timeoutMs: number;
   stream: boolean;
+  useProxy?: boolean;
   supportsImage: boolean;
   supportsAudio: boolean;
   extraParams: Record<string, unknown>;
@@ -79,6 +80,7 @@ export function createLLMClientFromPreset(preset: LLMApiPreset): ReturnType<type
     model: preset.model,
     temperature: preset.temperature,
     timeoutMs: preset.timeoutMs,
+    useProxy: preset.useProxy === true,
     extraParams: preset.extraParams
   });
 }
@@ -94,6 +96,7 @@ function normalizeLLMApiPreset(value: Partial<LLMApiPreset>): LLMApiPreset | und
     maxTokens: Number.isInteger(Number(value.maxTokens)) && Number(value.maxTokens) > 0 ? Number(value.maxTokens) : undefined,
     timeoutMs: Number.isFinite(Number(value.timeoutMs)) ? Number(value.timeoutMs) : 60_000,
     stream: value.stream !== false,
+    useProxy: value.useProxy === true,
     supportsImage: value.supportsImage === true,
     supportsAudio: value.supportsAudio === true,
     extraParams: value.extraParams && typeof value.extraParams === "object" && !Array.isArray(value.extraParams) ? value.extraParams : {},

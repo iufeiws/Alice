@@ -8,6 +8,7 @@ export type PiPresetSnapshot = {
   temperature: number;
   maxTokens?: number;
   timeoutMs: number;
+  useProxy: boolean;
   supportsImage: boolean;
   extraParams: Record<string, unknown>;
 };
@@ -21,6 +22,7 @@ export function createPiPresetSnapshot(preset: LLMApiPreset): PiPresetSnapshot {
     temperature: preset.temperature,
     maxTokens: preset.maxTokens,
     timeoutMs: preset.timeoutMs,
+    useProxy: preset.useProxy === true,
     supportsImage: preset.supportsImage === true,
     extraParams: { ...preset.extraParams }
   };

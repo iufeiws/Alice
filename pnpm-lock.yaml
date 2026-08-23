@@ -29,6 +29,9 @@ importers:
       silk-wasm:
         specifier: ^3.3.2
         version: 3.7.1
+      undici:
+        specifier: 7.3.0
+        version: 7.3.0
       werift:
         specifier: ^0.23.0
         version: 0.23.0
@@ -36,6 +39,9 @@ importers:
       '@types/better-sqlite3':
         specifier: ^7.6.13
         version: 7.6.13
+      '@types/node':
+        specifier: ^25.9.1
+        version: 25.9.1
       '@types/qrcode':
         specifier: ^1.5.6
         version: 1.5.6
@@ -912,6 +918,10 @@ packages:
 
   undici-types@7.24.6:
     resolution: {integrity: sha512-WRNW+sJgj5OBN4/0JpHFqtqzhpbnV0GuB+OozA9gCL7a993SmU+1JBZCzLNxYsbMfIeDL+lTsphD5jN5N+n0zg==}
+
+  undici@7.3.0:
+    resolution: {integrity: sha512-Qy96NND4Dou5jKoSJ2gm8ax8AJM/Ey9o9mz7KN1bb9GP+G0l20Zw8afxTnY2f4b7hmhn/z8aC2kfArVQlAhFBw==}
+    engines: {node: '>=20.18.1'}
 
   util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
@@ -1822,6 +1832,8 @@ snapshots:
   typescript@5.9.3: {}
 
   undici-types@7.24.6: {}
+
+  undici@7.3.0: {}
 
   util-deprecate@1.0.2: {}
 

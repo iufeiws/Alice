@@ -29,6 +29,7 @@ const preset = {
   temperature: 0.2,
   maxTokens: 256,
   timeoutMs: 30_000,
+  useProxy: false,
   supportsImage: false,
   extraParams: {}
 };

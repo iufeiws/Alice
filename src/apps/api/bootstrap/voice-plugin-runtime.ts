@@ -59,6 +59,7 @@ function createAsrLlmClientFromPreset(preset: TtsApiPreset, env: Record<string, 
     model: preset.model,
     temperature: preset.temperature,
     timeoutMs: preset.timeoutMs,
+    useProxy: preset.useProxy === true,
     extraParams: preset.extraParams
   });
 }
@@ -72,6 +73,7 @@ function createTtsLlmClientFromPreset(preset: TtsApiPreset, env: Record<string, 
     model: preset.model,
     temperature: preset.temperature,
     timeoutMs: preset.timeoutMs,
+    useProxy: preset.useProxy === true,
     extraParams: preset.extraParams
   });
   return {

@@ -76,6 +76,7 @@ export function createApiCapabilitiesRuntime(input: {
           model: preset.model,
           temperature: preset.temperature,
           timeoutMs: preset.timeoutMs,
+          useProxy: preset.useProxy === true,
           extraParams: preset.extraParams
         });
       },

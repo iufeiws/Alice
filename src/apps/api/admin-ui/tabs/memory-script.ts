@@ -80,6 +80,7 @@ export function renderMemoryScript(): string {
           temperature: $("temperature").value,
           maxTokens: $("maxTokens").value,
           timeoutMs: $("timeoutMs").value,
+          useProxy: $("useProxy").checked,
           stream: $("streamEnabled").checked,
           supportsImage: $("supportsImage").checked,
           supportsAudio: $("supportsAudio").checked,
@@ -95,6 +96,7 @@ export function renderMemoryScript(): string {
           $(id)?.addEventListener("input", () => markLLMApiPreset("dirty"));
         });
         $("streamEnabled")?.addEventListener("change", () => markLLMApiPreset("dirty"));
+        $("useProxy")?.addEventListener("change", () => markLLMApiPreset("dirty"));
         $("supportsImage")?.addEventListener("change", () => markLLMApiPreset("dirty"));
         $("supportsAudio")?.addEventListener("change", () => markLLMApiPreset("dirty"));
       }
@@ -111,6 +113,7 @@ export function renderMemoryScript(): string {
         $("temperature").value = String(preset.temperature ?? "");
         $("maxTokens").value = String(preset.maxTokens ?? "");
         $("timeoutMs").value = String(preset.timeoutMs ?? "");
+        $("useProxy").checked = preset.useProxy === true;
         $("streamEnabled").checked = preset.stream !== false;
         $("supportsImage").checked = preset.supportsImage === true;
         $("supportsAudio").checked = preset.supportsAudio === true;
@@ -127,6 +130,7 @@ export function renderMemoryScript(): string {
         $("temperature").value = "0.2";
         $("maxTokens").value = "";
         $("timeoutMs").value = "60000";
+        $("useProxy").checked = false;
         $("streamEnabled").checked = true;
         $("supportsImage").checked = false;
         $("supportsAudio").checked = false;

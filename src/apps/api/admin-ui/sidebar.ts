@@ -37,6 +37,7 @@ export function renderAdminSidebar(): string {
               <input id="maxTokens" name="maxTokens" type="number" min="1" step="1" inputmode="numeric" />
               <label for="timeoutMs">Timeout Ms</label>
               <input id="timeoutMs" name="timeoutMs" inputmode="numeric" />
+              <label><input id="useProxy" name="useProxy" type="checkbox" /> Use Proxy</label>
               <label><input id="streamEnabled" name="stream" type="checkbox" /> Streaming</label>
               <label><input id="supportsImage" name="supportsImage" type="checkbox" /> Supports Images</label>
               <label><input id="supportsAudio" name="supportsAudio" type="checkbox" /> Supports Audio</label>

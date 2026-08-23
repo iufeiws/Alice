@@ -76,6 +76,7 @@ export type TtsApiPreset = {
   model: string;
   temperature?: number;
   timeoutMs?: number;
+  useProxy?: boolean;
   extraParams?: Record<string, unknown>;
 };
 

@@ -14,6 +14,7 @@ export type LLMApiPreset = {
   maxTokens?: number;
   timeoutMs: number;
   stream: boolean;
+  useProxy?: boolean;
   supportsImage?: boolean;
   supportsAudio?: boolean;
   extraParams: Record<string, unknown>;
@@ -41,6 +42,7 @@ export function parseLLMApiPresetBody(context: AdminRoutesContext, body: Record<
       : numberFromUnknown(body.maxTokens, Number.NaN);
   const timeoutMs = numberFromUnknown(body.timeoutMs, existing?.timeoutMs ?? 60_000);
   const stream = body.stream === undefined ? existing?.stream ?? true : booleanFromUnknown(body.stream);
+  const useProxy = body.useProxy === undefined ? existing?.useProxy ?? false : booleanFromUnknown(body.useProxy);
   const supportsImage = body.supportsImage === undefined ? existing?.supportsImage ?? false : booleanFromUnknown(body.supportsImage);
   const supportsAudio = body.supportsAudio === undefined ? existing?.supportsAudio ?? false : booleanFromUnknown(body.supportsAudio);
   const extraParamsResult = parseJsonObject(optionalString(body.extraParams) ?? "{}");
@@ -52,7 +54,7 @@ export function parseLLMApiPresetBody(context: AdminRoutesContext, body: Record<
   if (!Number.isFinite(timeoutMs) || timeoutMs < 1_000) return { error: "invalid_timeout_ms" };
   if (!extraParamsResult.ok) return { error: "invalid_extra_params" };
   if (!followupExtraParamsResult.ok) return { error: "invalid_followup_extra_params" };
-  return { name, baseURL, apiKey, model, temperature, maxTokens, timeoutMs, stream, supportsImage, supportsAudio, extraParams: extraParamsResult.value, followupExtraParams: followupExtraParamsResult.value };
+  return { name, baseURL, apiKey, model, temperature, maxTokens, timeoutMs, stream, useProxy, supportsImage, supportsAudio, extraParams: extraParamsResult.value, followupExtraParams: followupExtraParamsResult.value };
 }
 
 export function readLLMApiPresets(context: AdminRoutesContext): LLMApiPreset[] {
@@ -136,6 +138,7 @@ function normalizeLLMApiPreset(value: Partial<LLMApiPreset>): LLMApiPreset | und
     maxTokens: Number.isInteger(Number(value.maxTokens)) && Number(value.maxTokens) > 0 ? Number(value.maxTokens) : undefined,
     timeoutMs: Number.isFinite(Number(value.timeoutMs)) ? Number(value.timeoutMs) : 60_000,
     stream: value.stream !== false,
+    useProxy: value.useProxy === true,
     supportsImage: value.supportsImage === true,
     supportsAudio: value.supportsAudio === true,
     extraParams: value.extraParams && typeof value.extraParams === "object" && !Array.isArray(value.extraParams) ? value.extraParams : {},
@@ -158,6 +161,7 @@ function defaultMemorizeApiPreset(context: AdminRoutesContext): LLMApiPreset | u
     temperature: config.temperature,
     timeoutMs: config.timeoutMs,
     stream: config.stream,
+    useProxy: false,
     supportsImage: false,
     supportsAudio: false,
     extraParams: config.extraParams,

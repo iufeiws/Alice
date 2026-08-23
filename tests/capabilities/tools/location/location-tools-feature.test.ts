@@ -33,7 +33,7 @@ test("Panorama is listed only while world wanderer is enabled", () => {
   assert.deepEqual(tools.listTools().map((tool) => tool.name), ["Panorama"]);
 });
 
-test("Panorama schema uses oneOf with current/teleport/navigation variants", () => {
+test("Panorama schema uses an action enum with optional coordinates", () => {
   const root = tmpDir();
   const configPath = path.join(root, "config.json");
   const dbPath = path.join(root, "alice.sqlite");
@@ -48,30 +48,23 @@ test("Panorama schema uses oneOf with current/teleport/navigation variants", () 
 
   const inputSchema = tools.listTools()[0].inputSchema as {
     type: string;
-    oneOf: Array<{
-      properties: Record<string, { const?: string; type?: string; minimum?: number; maximum?: number }>;
-      required: string[];
-      additionalProperties: boolean;
-    }>;
+    properties: Record<string, { type?: string; enum?: string[]; minimum?: number; maximum?: number }>;
+    required: string[];
+    additionalProperties: boolean;
+    oneOf?: unknown;
   };
   assert.equal(inputSchema.type, "object");
-  assert.equal(inputSchema.oneOf.length, 3);
-  assert.equal(inputSchema.oneOf[0].properties.action.const, "current");
-  assert.deepEqual(inputSchema.oneOf[0].required, ["action"]);
-  assert.equal(inputSchema.oneOf[0].additionalProperties, false);
-
-  for (const variant of [inputSchema.oneOf[1], inputSchema.oneOf[2]]) {
-    assert.deepEqual(variant.required, ["action", "lat", "lng"]);
-    assert.equal(variant.additionalProperties, false);
-    assert.equal(variant.properties.lat.type, "number");
-    assert.equal(variant.properties.lat.minimum, -90);
-    assert.equal(variant.properties.lat.maximum, 90);
-    assert.equal(variant.properties.lng.type, "number");
-    assert.equal(variant.properties.lng.minimum, -180);
-    assert.equal(variant.properties.lng.maximum, 180);
-  }
-  assert.equal(inputSchema.oneOf[1].properties.action.const, "teleport");
-  assert.equal(inputSchema.oneOf[2].properties.action.const, "navigation");
+  assert.equal(inputSchema.properties.action.type, "string");
+  assert.deepEqual(inputSchema.properties.action.enum, ["current", "teleport", "navigation"]);
+  assert.deepEqual(inputSchema.required, ["action"]);
+  assert.equal(inputSchema.additionalProperties, false);
+  assert.equal(inputSchema.properties.lat.type, "number");
+  assert.equal(inputSchema.properties.lat.minimum, -90);
+  assert.equal(inputSchema.properties.lat.maximum, 90);
+  assert.equal(inputSchema.properties.lng.type, "number");
+  assert.equal(inputSchema.properties.lng.minimum, -180);
+  assert.equal(inputSchema.properties.lng.maximum, 180);
+  assert.equal(inputSchema.oneOf, undefined);
 });
 
 test("check_location is treated as an unknown tool", async () => {

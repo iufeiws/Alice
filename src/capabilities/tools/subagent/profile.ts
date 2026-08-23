@@ -17,14 +17,15 @@ export const subAgentTool: ToolDefinition = {
   description: actionDescriptions.join("\n"),
   inputSchema: {
     type: "object",
-    oneOf: [
-      { description: actionDescriptions[0], properties: { action: { const: "spawn" }, message: { type: "string", minLength: 1 }, timeoutSeconds: { type: "number", minimum: 1 } }, required: ["action", "message"], additionalProperties: false },
-      { description: actionDescriptions[1], properties: { action: { const: "messages" }, sessionId: { type: "string", minLength: 1 }, access: { type: "string", minLength: 1 } }, required: ["action", "sessionId", "access"], additionalProperties: false },
-      { description: actionDescriptions[2], properties: { action: { const: "send" }, sessionId: { type: "string", minLength: 1 }, message: { type: "string", minLength: 1 }, timeoutSeconds: { type: "number", minimum: 1 } }, required: ["action", "sessionId", "message"], additionalProperties: false },
-      { description: actionDescriptions[3], properties: { action: { const: "status" }, sessionId: { type: "string", minLength: 1 } }, required: ["action", "sessionId"], additionalProperties: false },
-      { description: actionDescriptions[4], properties: { action: { const: "wait" }, sessionId: { type: "string", minLength: 1 }, timeoutSeconds: { type: "number", minimum: 1 } }, required: ["action", "sessionId"], additionalProperties: false },
-      { description: actionDescriptions[5], properties: { action: { const: "cancel" }, sessionId: { type: "string", minLength: 1 } }, required: ["action", "sessionId"], additionalProperties: false },
-      { description: actionDescriptions[6], properties: { action: { const: "fork" }, sessionId: { type: "string", minLength: 1 }, entryId: { type: "string", minLength: 1 } }, required: ["action", "sessionId"], additionalProperties: false }
-    ]
+    properties: {
+      action: { type: "string", enum: ["spawn", "messages", "send", "status", "wait", "cancel", "fork"] },
+      message: { type: "string", minLength: 1 },
+      sessionId: { type: "string", minLength: 1 },
+      access: { type: "string", minLength: 1 },
+      timeoutSeconds: { type: "number", minimum: 1 },
+      entryId: { type: "string", minLength: 1 }
+    },
+    required: ["action"],
+    additionalProperties: false
   }
 };

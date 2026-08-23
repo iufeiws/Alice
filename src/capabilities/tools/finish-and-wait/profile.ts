@@ -13,29 +13,10 @@ export const finishAndWaitTool: ToolDefinition = {
   description: "等待回复或结束聊天。action=await_chat 固定等待 15 分钟, 有新消息时提前返回, 超时无消息则结束; action=finish 直接结束",
   inputSchema: {
     type: "object",
-    oneOf: [
-      // schedule 已禁用，不暴露给 LLM；保留原 schema 分支，不删除。
-      // {
-      //   description: "schedule: 定时(秒)后再次返回, 中途有新消息时提前返回",
-      //   properties: {
-      //     action: { const: "schedule" },
-      //     timer: { type: "integer", minimum: minYieldWaitSeconds, maximum: maxYieldWaitSeconds }
-      //   },
-      //   required: ["action", "timer"],
-      //   additionalProperties: false
-      // },
-      {
-        description: "await_chat: 固定等待 15 分钟, 有新消息时提前返回, 超时无消息则结束",
-        properties: { action: { const: "await_chat" } },
-        required: ["action"],
-        additionalProperties: false
-      },
-      {
-        description: "finish: 直接结束",
-        properties: { action: { const: "finish" } },
-        required: ["action"],
-        additionalProperties: false
-      }
-    ]
+    properties: {
+      action: { type: "string", enum: ["await_chat", "finish"] }
+    },
+    required: ["action"],
+    additionalProperties: false
   }
 };

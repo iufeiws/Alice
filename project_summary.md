@@ -123,6 +123,8 @@ src/
 | wardrobe | `Wardrobe` | 查看/切换服装（list/mirror/switch/random，可触发 on-body 生成） |
 | finish-and-wait | `Yield` | 等待或结束：对 LLM 暴露 await_chat（固定 15 分钟）/ finish；schedule（10s–15min 定时返回）实现保留但不在 profile 中暴露；连续 schedule 且无 subagent 运行时拒绝（防空转） |
 
+`Yield`、`SubAgent`、`Panorama` 的 tool 输入 schema 使用 `action` 字符串 `enum` 与可选参数；各 action 的实际参数要求仍由工具执行层校验，不使用 `oneOf`。
+
 
 结构约束：
 capabilities/tools/{tool name}/

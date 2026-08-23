@@ -75,8 +75,29 @@ test("SubAgent exposes only the seven public actions with their fixed descriptio
     "cancel：请求取消 session 当前运行或排队的任务，成功返回 cancelled，session 保持可复用。",
     "fork：从指定 session 创建独立的新 session，可用 entryId 指定历史分支点，成功返回新 sessionId。"
   ].join("\n"));
-  const actions = (subAgentTool.inputSchema.oneOf as Array<{ properties: { action: { const: string } } }>).map((entry) => entry.properties.action.const);
-  assert.deepEqual(actions, ["spawn", "messages", "send", "status", "wait", "cancel", "fork"]);
+  const inputSchema = subAgentTool.inputSchema as {
+    type: string;
+    properties: Record<string, { type?: string; enum?: string[]; minLength?: number; minimum?: number }>;
+    required: string[];
+    additionalProperties: boolean;
+    oneOf?: unknown;
+  };
+  assert.equal(inputSchema.type, "object");
+  assert.equal(inputSchema.properties.action.type, "string");
+  assert.deepEqual(inputSchema.properties.action.enum, ["spawn", "messages", "send", "status", "wait", "cancel", "fork"]);
+  assert.equal(inputSchema.properties.message.type, "string");
+  assert.equal(inputSchema.properties.message.minLength, 1);
+  assert.equal(inputSchema.properties.sessionId.type, "string");
+  assert.equal(inputSchema.properties.sessionId.minLength, 1);
+  assert.equal(inputSchema.properties.access.type, "string");
+  assert.equal(inputSchema.properties.access.minLength, 1);
+  assert.equal(inputSchema.properties.timeoutSeconds.type, "number");
+  assert.equal(inputSchema.properties.timeoutSeconds.minimum, 1);
+  assert.equal(inputSchema.properties.entryId.type, "string");
+  assert.equal(inputSchema.properties.entryId.minLength, 1);
+  assert.deepEqual(inputSchema.required, ["action"]);
+  assert.equal(inputSchema.additionalProperties, false);
+  assert.equal(inputSchema.oneOf, undefined);
 });
 
 test("SubAgent projects messages, status, wait, cancel and fork without internal fields", async () => {

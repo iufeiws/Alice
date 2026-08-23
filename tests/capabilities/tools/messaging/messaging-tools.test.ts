@@ -52,10 +52,19 @@ test("finishAndWaitTools validates actions and wait range", async () => {
   const waitTool = tools.listTools().find((tool) => tool.name === "Yield");
   assert.ok(waitTool);
   assert.equal(waitTool.description.includes("schedule"), false);
-  assert.deepEqual(
-    (waitTool.inputSchema as { oneOf?: Array<{ properties?: { action?: { const?: string } } }> }).oneOf?.map((schema) => schema.properties?.action?.const),
-    ["await_chat", "finish"]
-  );
+  const inputSchema = waitTool.inputSchema as {
+    type: string;
+    properties: { action: { type?: string; enum?: string[] } };
+    required: string[];
+    additionalProperties: boolean;
+    oneOf?: unknown;
+  };
+  assert.equal(inputSchema.type, "object");
+  assert.equal(inputSchema.properties.action.type, "string");
+  assert.deepEqual(inputSchema.properties.action.enum, ["await_chat", "finish"]);
+  assert.deepEqual(inputSchema.required, ["action"]);
+  assert.equal(inputSchema.additionalProperties, false);
+  assert.equal(inputSchema.oneOf, undefined);
   for (const timer of [10, 900]) {
     const result = await tools.execute({ id: `schedule_${timer}`, toolName: "Yield", input: { action: "schedule", timer } });
     assert.equal(result.ok, true);

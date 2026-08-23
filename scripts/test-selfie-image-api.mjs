@@ -121,12 +121,12 @@ function buildPrompt(poseText) {
   const personality = readShellPart("personalities", shell.personalityId);
   return [
     template
-      .replaceAll("{{time}}", formatPromptTime(new Date()))
-      .replaceAll("{{pose}}", poseText)
-      .replaceAll("{{char}}", extractCharacterFeatures(renderProfilePrompt(profile)))
-      .replaceAll("{{persenality}}", formatNamedBlock(personality.name, personality.content))
-      .replaceAll("{{personality}}", formatNamedBlock(personality.name, personality.content))
-      .replaceAll("{{dress}}", formatNamedBlock(outfit.name, outfit.content)),
+      .replaceAll("${{time}}", formatPromptTime(new Date()))
+      .replaceAll("${{pose}}", poseText)
+      .replaceAll("${{char}}", extractCharacterFeatures(renderProfilePrompt(profile)))
+      .replaceAll("${{persenality}}", formatNamedBlock(personality.name, personality.content))
+      .replaceAll("${{personality}}", formatNamedBlock(personality.name, personality.content))
+      .replaceAll("${{dress}}", formatNamedBlock(outfit.name, outfit.content)),
     "",
     "API test constraints:",
     `- Generate one fast low-quality draft at ${size}.`,

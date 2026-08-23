@@ -41,7 +41,7 @@ test("initiated behavior assistant messages execute tool calls", async () => {
       toolCalls: [{
         id: "call_Chat",
         type: "function",
-        function: { name: "Chat", arguments: "{\"target\":\"{{user}}\"}" }
+        function: { name: "Chat", arguments: "{\"target\":\"${{user}}\"}" }
       }]
     }]
   });
@@ -71,8 +71,8 @@ test("initiated behavior prompt layers execute every assistant tool call", async
       role: "assistant",
       content: "",
       toolCalls: [
-        { id: "call_one", type: "function", function: { name: "Chat", arguments: "{\"target\":\"{{user}}\"}" } },
-        { id: "call_two", type: "function", function: { name: "Chat", arguments: "{\"query\":\"{{user}}\"}" } }
+        { id: "call_one", type: "function", function: { name: "Chat", arguments: "{\"target\":\"${{user}}\"}" } },
+        { id: "call_two", type: "function", function: { name: "Chat", arguments: "{\"query\":\"${{user}}\"}" } }
       ]
     }]
   });

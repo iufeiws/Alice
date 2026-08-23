@@ -35,17 +35,36 @@ test("prompt variable tree reads through runtime", () => {
   assert.equal(typeof (tree.memory as any).userPreferences.content, "string");
 });
 
-test("prompt runtime isolates scoped variables and rejects unresolved variables", () => {
+test("prompt runtime renders the new syntax and preserves unresolved variables with a warning", () => {
+  const warnings: string[] = [];
+  const base = createPromptContextRuntime({
+    username: "小王",
+    time: createCurrentTimeProvider("Asia/Shanghai", () => new Date("2026-06-03T23:30:00.000Z")),
+    dailyShellStore: { get: () => undefined },
+    coreProfileStore: { get: () => ({}) },
+    memoryStore: { read: () => ({}) },
+    diaryStore: { latestWakeBoundary: () => undefined },
+    calendarStore: { listEntries: () => [] },
+    skillsDirPath: "/home/alice/.agent/skills",
+    skillsRegistry: { available: () => [] },
+    shortMemoryStore: { listByCreatedAtUtcRange: () => [] },
+    warn: (message: string) => warnings.push(message)
+  } as any);
+
+  assert.equal(base.renderText("${{user}}  ${{message}}"), "小王  ${{message}}");
+  assert.deepEqual(warnings, ["unresolved prompt variable: message; kept unchanged"]);
+  assert.equal(base.renderText("{{user}}"), "{{user}}");
+});
+
+test("prompt runtime isolates scoped variables", () => {
   const base = runtime();
   const loop = base.withVariables({ pose: "看镜头", round: 2 });
 
-  assert.equal(loop.renderText("{{user}} {{pose}} round={{round}}"), "小王 看镜头 round=2");
+  assert.equal(loop.renderText("${{user}} ${{pose}} round=${{round}}"), "小王 看镜头 round=2");
   assert.equal(loop.getVariable("pose"), "看镜头");
   assert.equal(base.getVariable("pose"), undefined);
-  assert.throws(() => base.renderText("{{pose}}"), /unresolved prompt variable: pose/);
 
   const nested = loop.withVariables({ pose: "挥手", user: null });
-  assert.equal(nested.renderText("{{pose}}"), "挥手");
+  assert.equal(nested.renderText("${{pose}}"), "挥手");
   assert.equal(nested.getVariable("user"), null);
-  assert.throws(() => nested.renderText("{{user}}"), /unresolved prompt variable: user/);
 });

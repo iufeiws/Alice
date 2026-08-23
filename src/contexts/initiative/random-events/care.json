@@ -12,7 +12,7 @@
         "enabled": true
       },
       "role": "assistant",
-      "content": "来问一下{{user}}现在在做什么吧"
+      "content": "来问一下${{user}}现在在做什么吧"
     }
   ]
 }

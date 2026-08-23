@@ -34,9 +34,9 @@ export const bookcaseToolText = {
 
 export const bookcaseInstructionBlockLines = [
   "  <instructions>",
-  "    - 用第一人称视角为{{user}}讲述这个故事；从梗概中选择一个主角作为爱丽丝，另一个与主角有紧密关系的角色作为{{user}}, 保持外壳设定的称呼。",
+  "    - 用第一人称视角为${{user}}讲述这个故事；从梗概中选择一个主角作为爱丽丝，另一个与主角有紧密关系的角色作为${{user}}, 保持外壳设定的称呼。",
   "    - 语言使用中文。",
   "    - 在故事的最后说出故事的引用来源",
-  "    - 讲完故事必须使用toolcall action = return 归还书籍, 如果弄丢了{{user}}会生气 ",
+  "    - 讲完故事必须使用toolcall action = return 归还书籍, 如果弄丢了${{user}}会生气 ",
   "  </instructions>"
 ];

@@ -112,7 +112,7 @@
 - `domain/prompt-layer.ts`: prompt layer parser 和类型。所有 prompt layer 解析必须走这里。
 - `domain/shell.ts`: shell、outfit、daily shell 的领域类型和 store contract。
 - `application/build-system-prompt.ts`: PromptProfile normalization、visible tools 判断、LLM messages 构建。
-- `../prompt-context/src/`: `{{variable}}` 渲染、变量读取与变量树的统一入口。
+- `../prompt-context/src/`: `${{variable}}` 渲染、变量读取与变量树的统一入口。
 - `application/prompt-tool-preview-runtime.ts`: prompt preview 和 tool preview 应用服务。负责构造 preview context、渲染 visible tool specs、保护 preview 中的 `Chat` action=send。
 - `adapters/json-prompt-profile-store.ts`: prompt/profile JSON 存储路径和读写 adapter。
 - `adapters/json-core-profile-store.ts`: core profile JSON store，例如 appearanceDescription。

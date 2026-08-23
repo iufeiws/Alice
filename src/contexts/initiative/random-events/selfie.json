@@ -12,7 +12,7 @@
         "enabled": true
       },
       "role": "assistant",
-      "content": "问问{{user}}想不想让我拍张照给他看吧"
+      "content": "问问${{user}}想不想让我拍张照给他看吧"
     }
   ]
 }

@@ -179,7 +179,7 @@ async function runTtsPluginTest() {
         main: {
           translationEnabled: true,
           apiPresetName: "voice",
-          prompt: "Translate for {{user}} at {{date}}:"
+          prompt: "Translate for ${{user}} at ${{date}}:"
         }
       }
     },

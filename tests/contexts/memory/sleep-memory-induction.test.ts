@@ -34,7 +34,7 @@ test("sleepInduction_closedBoundaryWindow_recordsCurrentTimestampBeforeQuery", a
     messages: [{
       meta: { title: "Files", enabled: true },
       role: "user",
-      content: "{{memorize/files/persistent/filePath}}"
+      content: "${{memorize/files/persistent/filePath}}"
     }]
   });
 

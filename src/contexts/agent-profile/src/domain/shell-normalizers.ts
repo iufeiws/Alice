@@ -15,7 +15,7 @@ export function renderShellTemplate(shell: {
     outfit_name: shell.outfit.name,
     outfit_content: shell.outfit.content
   };
-  return template.replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (match, key: string) => variables[key] ?? match);
+  return template.replace(/\$\{\{([a-zA-Z0-9_]+)\}\}/g, (match, key: string) => variables[key] ?? match);
 }
 
 export function normalizeSwitchLogEntry(value: unknown): ShellSwitchLogEntry | undefined {

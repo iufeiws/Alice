@@ -52,14 +52,14 @@ export function writeReferenceFiles(root: string): void {
   fs.mkdirSync(root, { recursive: true });
   fs.writeFileSync(path.join(root, "selfie-prompt.txt"), [
     "当前时间:",
-    "{{time}}",
+    "${{time}}",
     "角色动作:",
-    "{{pose}}",
+    "${{pose}}",
     "角色特征:",
-    "{{appearance}}",
-    "{{dailyShell/persona/content}}",
+    "${{appearance}}",
+    "${{dailyShell/persona/content}}",
     "服装特征:",
-    "{{outfit/content}}"
+    "${{outfit/content}}"
   ].join("\n"));
   fs.writeFileSync(path.join(root, "alice-character-reference.jpg"), "alice-image");
   fs.writeFileSync(path.join(root, "magic-library-reference.jpg"), "library-image");

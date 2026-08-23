@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createDailyShellStore } from "../../../src/contexts/agent-profile/src/domain/shell.js";
+import { createDailyShellStore, renderDailyShell } from "../../../src/contexts/agent-profile/src/domain/shell.js";
 import { makeTempDir, replaceShellCategory } from "./prompt-profile-helpers.js";
 
 const fs = await import("node:fs");
@@ -86,11 +86,24 @@ test("dailyShellPromptTemplate_savedTemplate_persistsConfig", () => {
     { id: "p2", name: "P Two", content: "personality two" },
     { id: "p1", name: "P One", content: "personality one" }
   ]);
-  store.savePromptTemplate("P={{personality_name}}\nR={{relationship_name}}\nO={{outfit_name}}");
+  store.savePromptTemplate("P=${{personality_name}}\nR=${{relationship_name}}\nO=${{outfit_name}}");
 
   const config = store.getConfig(new Date("2026-05-26T12:00:00.000Z"), "Asia/Shanghai");
   assert.ok(config.promptTemplate);
   assert.ok(fs.readFileSync(path.join(root, "src", "contexts", "agent-profile", "prompts", "shell-prompt-template.txt"), "utf8"));
+});
+
+test("dailyShellPromptTemplate_rendersOnlyTheNewPlaceholderSyntax", () => {
+  const shell = {
+    date: "2026-05-26",
+    createdAt: "2026-05-26T20:00:00.000",
+    personality: { id: "p1", name: "P One", content: "personality one" },
+    relationship: { id: "r1", name: "R One", content: "relationship one" },
+    outfit: { id: "o1", name: "O One", content: "outfit one" }
+  };
+
+  assert.equal(renderDailyShell(shell, "${{personality_name}} / ${{outfit_content}}"), "P One / outfit one");
+  assert.equal(renderDailyShell(shell, "{{personality_name}}"), "{{personality_name}}");
 });
 
 test("dailyShellStore_activeOptionEdited_keepsSameDailyShell", () => {

@@ -85,7 +85,7 @@ test("Skill tool returns instructions verbatim without escaping XML tags", async
   const loader = createSkillLoader(registry, runtime, undefined, (name) =>
     name === "notes_list" ? "<notes>\n  <note>\n    <name>demo</name>\n    <path>/home/alice/.agent/notes/demo.md</path>\n  </note>\n</notes>" : undefined
   );
-  writeSkill(root, "notes", "name: notes\ndescription: notes list.", "笔记:\n{{notes_list}}\n");
+  writeSkill(root, "notes", "name: notes\ndescription: notes list.", "笔记:\n${{notes_list}}\n");
   const tools = createSkillsTools({ loader });
 
   const loaded = await tools.execute({ id: "load", toolName: "Skill", input: { skill: "notes" } });
@@ -146,7 +146,7 @@ test("Skill tool returns spec error codes", async () => {
 
 test("Skill loader expands prompt context variables and keeps unresolved placeholders literal", () => {
   const root = tmpDir("skills-placeholders");
-  writeSkill(root, "installed", "name: installed\ndescription: Show installed skills.", "已安装:\n{{installed_skills}}\n{{unknown_variable}}\n");
+  writeSkill(root, "installed", "name: installed\ndescription: Show installed skills.", "已安装:\n${{installed_skills}}\n${{unknown_variable}}\n");
   const registry = createSkillRegistry({ roots: [{ root, source: "first-party" }] });
   const runtime = createBashSandboxRuntime({
     config: testConfig({ skillMounts: [] }),

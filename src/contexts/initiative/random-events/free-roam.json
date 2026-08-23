@@ -12,7 +12,7 @@
         "enabled": true
       },
       "role": "assistant",
-      "content": "看看有什么可以做的, 或者找找{{user}}把"
+      "content": "看看有什么可以做的, 或者找找${{user}}把"
     }
   ]
 }

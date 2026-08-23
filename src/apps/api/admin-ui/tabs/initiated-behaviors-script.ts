@@ -216,9 +216,9 @@ export function renderInitiatedBehaviorsScript(): string {
         return rendered;
       }
       function renderPromptPreviewText(value) {
-        return String(value || "").replace(/\{\{\s*([a-zA-Z0-9_/]+)\s*\}\}/g, (_, key) => {
+        return String(value || "").replace(/\$\{\{\s*([a-zA-Z0-9_/]+)\s*\}\}/g, (match, key) => {
           const resolved = promptVariables && Object.prototype.hasOwnProperty.call(promptVariables, key) ? promptVariables[key] : undefined;
-          if (resolved === undefined || resolved === null) return "{{" + key + "}}";
+          if (resolved === undefined || resolved === null) return match;
           return typeof resolved === "string" ? resolved : JSON.stringify(resolved);
         });
       }

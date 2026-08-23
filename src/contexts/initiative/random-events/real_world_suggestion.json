@@ -12,7 +12,7 @@
         "enabled": true
       },
       "role": "assistant",
-      "content": "给{{user}}*一个*提议, 可能的提案:\n- 晚饭吃XXX \n- 想喝奶茶吗? \n- 你玩过XXX吗? \n确保仅一个"
+      "content": "给${{user}}*一个*提议, 可能的提案:\n- 晚饭吃XXX \n- 想喝奶茶吗? \n- 你玩过XXX吗? \n确保仅一个"
     }
   ]
 }

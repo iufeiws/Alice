@@ -48,7 +48,7 @@ test("memorizePromptEditor_initialRender_exposesMemoryPromptControls", () => {
   assertExcludesAll(html, ["Memorize Error Layer", "memoryPrompts.errorLayer"]);
   assertExcludesAll(html, [
     "<h2>Memorize Layers</h2>",
-    "{{memorize/window/startAt}}"
+    "${{memorize/window/startAt}}"
   ]);
 });
 

@@ -84,7 +84,8 @@ export function createApiContextRuntime(input: {
         input.appendLog("warn", `读取 sandbox 笔记索引失败: ${describeError(error)}`);
         return [];
       }
-    }
+    },
+    warn: (message) => input.appendLog("warn", message)
   });
 
   return {

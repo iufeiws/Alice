@@ -237,7 +237,7 @@ test("LLM request sender leaves extra params unrendered", async () => {
     extraParams: {
       tool_choice: {
         type: "function",
-        function: { name: "{{toolName}}" }
+        function: { name: "${{toolName}}" }
       }
     },
     toolNames: ["submit_audio_context"],
@@ -259,7 +259,7 @@ test("LLM request sender leaves extra params unrendered", async () => {
   assert.deepEqual(request.extraParams, {
     tool_choice: {
       type: "function",
-          function: { name: "{{toolName}}" }
+          function: { name: "${{toolName}}" }
     }
   });
 });
@@ -409,7 +409,7 @@ test("LLMRequests builds tools by name with stable order", async () => {
   const requests = createLLMRequests({
     getTool(name) {
       return {
-        first: { name: "first", description: "First {{name}}", inputSchema: { type: "object", properties: { a: { const: "{{value}}" } } } },
+        first: { name: "first", description: "First ${{name}}", inputSchema: { type: "object", properties: { a: { const: "${{value}}" } } } },
         second: { name: "second", description: "Second", inputSchema: { type: "object" } }
       }[name];
     }
@@ -418,7 +418,7 @@ test("LLMRequests builds tools by name with stable order", async () => {
   const tools = requests.buildTools(["second", "first", "second"], testPromptRuntime({ name: "tool", value: "v" }));
   assert.deepEqual(tools.map((tool) => tool.function.name), ["second", "first"]);
   assert.equal(tools[1].function.description, "First tool");
-  assert.deepEqual(tools[1].function.parameters?.properties, { a: { const: "{{value}}" } });
+  assert.deepEqual(tools[1].function.parameters?.properties, { a: { const: "${{value}}" } });
 });
 
 test("LLMRequests rejects unknown tools", async () => {

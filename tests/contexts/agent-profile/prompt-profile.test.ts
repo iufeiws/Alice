@@ -36,11 +36,11 @@ test("promptProfileStore_validProfile_persistsLayerDocuments", () => {
   const saved = store.save({
     ...store.get(),
     visibleTools: { feishu: false },
-    layers: layer(message("Custom", "system", "Hi {{user}} at {{date_time}}"))
+    layers: layer(message("Custom", "system", "Hi ${{user}} at ${{date_time}}"))
   });
 
   assert.equal(saved.visibleTools.feishu, false);
-  assert.equal(createPromptProfileStore(filePath).get().layers.messages[0].content, "Hi {{user}} at {{date_time}}");
+  assert.equal(createPromptProfileStore(filePath).get().layers.messages[0].content, "Hi ${{user}} at ${{date_time}}");
   assert.equal(fs.existsSync(path.join(root, "src", "contexts", "agent-profile", "prompts", "prompt-profile.json")), true);
   assert.equal(fs.existsSync(path.join(root, "config", "prompt-profile.json")), false);
 });
@@ -84,7 +84,7 @@ test("promptMessages_names_areStoredMessageFields", () => {
     ...defaultPromptProfile(),
     layers: layer(
       message("Unnamed", "user", "hello"),
-      { ...message("Named", "user", "hello"), name: "{{user}}_speaker" },
+      { ...message("Named", "user", "hello"), name: "${{user}}_speaker" },
       { ...message("Assistant", "assistant", ""), name: "Alice" }
     )
   };
@@ -98,7 +98,7 @@ test("promptMessages_names_areStoredMessageFields", () => {
 test("promptMessages_assistantToolCalls_pairWithActualToolResults", async () => {
   const toolMessage: PromptMessage = {
     ...message("Tool Request", "assistant", ""),
-    reasoningContent: "thinking for {{user}}",
+    reasoningContent: "thinking for ${{user}}",
     toolCalls: [{ id: "call_prompt_1", type: "function", function: { name: "Chat", arguments: "{\"action\":\"poll\"}" } }]
   };
   const messages = await buildPromptMessagesWithToolResults(
@@ -137,7 +137,7 @@ test("promptMessages_multipleToolCalls_preserveArrayOrder", async () => {
 test("appendPromptMessages_executeAssistantToolCalls", async () => {
   const append: PromptMessage = {
     ...message("Append Tool Request", "assistant", ""),
-    reasoningContent: "append thinking for {{user}}",
+    reasoningContent: "append thinking for ${{user}}",
     toolCalls: [{ id: "call_append_1", type: "function", function: { name: "Chat", arguments: "{\"action\":\"poll\"}" } }]
   };
   const messages = await buildAppendPromptMessagesWithToolResults(

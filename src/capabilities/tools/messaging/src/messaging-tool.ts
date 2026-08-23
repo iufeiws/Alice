@@ -53,7 +53,7 @@ const recentCheckChatMessageCount = 50;
 const recentUserReplyWindow = 10;
 const todaySleepContextMessageCount = 10;
 const maxRangeEndTime = "9999-12-31T23:59:59.999Z";
-const userSpeakerPlaceholder = "{{user}}";
+const userSpeakerPlaceholder = "${{user}}";
 
 export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlugin {
   const time = deps.time ?? createCurrentTimeProvider("UTC");

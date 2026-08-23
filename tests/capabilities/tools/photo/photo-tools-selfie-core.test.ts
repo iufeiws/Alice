@@ -274,7 +274,7 @@ test("selfie_storedOnBodyReference_usesStandardPrompt", async () => {
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
       selfieAssetRoot: assetRootFromOutputDir(outputRoot),
-      selfieOnBodyPrompt: "on-body prompt {{pose}} {{outfit/content}}",
+      selfieOnBodyPrompt: "on-body prompt ${{pose}} ${{outfit/content}}",
       selfieExecutor: async (input) => {
         executorInput = input;
         fs.writeFileSync(path.join(input.workDir, input.fileName), fakeJpegBytes);
@@ -318,7 +318,7 @@ test("selfie_generatedOutfitImage_usesCurrentOutfitAsReference", async () => {
       selfieReferenceDir: referenceRoot,
       selfieOutputDir: outputRoot,
       selfieAssetRoot: assetRootFromOutputDir(outputRoot),
-      selfieOnBodyPrompt: "generated outfit prompt {{pose}}",
+      selfieOnBodyPrompt: "generated outfit prompt ${{pose}}",
       selfieExecutor: async (input) => {
         referenceImages = input.referenceImages;
         fs.writeFileSync(path.join(input.workDir, input.fileName), fakeJpegBytes);

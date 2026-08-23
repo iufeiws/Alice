@@ -7,7 +7,7 @@ description: 列出 sandbox 中 ~/.agent/notes 下的笔记，包含每个笔记
 
 以下是 sandbox 中 `~/.agent/notes`（容器内 `/home/alice/.agent/notes`）下的笔记：
 
-{{notes_list}}
+${{notes_list}}
 
 ## 说明
 

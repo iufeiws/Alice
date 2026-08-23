@@ -25,10 +25,10 @@ test("LLM tool gateway resolves scoped prompt variables", () => {
   const requests = createLLMRequests({
     getTool: () => ({
       name: "RuntimeTool",
-      description: "pose={{pose}}",
+      description: "pose=${{pose}}",
       inputSchema: {
         type: "object",
-        properties: { value: { type: "string", description: "round={{round}}" } }
+        properties: { value: { type: "string", description: "round=${{round}}" } }
       },
       execute: async () => ({ callId: "unused", ok: true })
     })
@@ -47,7 +47,7 @@ test("TTS gateway resolves scoped prompt variables before its LLM request", asyn
 
   await resolveTtsText("你好", {
     translationEnabled: true,
-    prompt: "Translate with {{speakingStyle}}.",
+    prompt: "Translate with ${{speakingStyle}}.",
     apiPresetName: "test"
   } as any, {
     baseSynthesizer: async () => ({ assetId: "unused", filePath: "unused" }),
@@ -106,14 +106,14 @@ test("ASR and image-recognition gateways reject prompts without a runtime", asyn
     () => transcribeMultimodalLlm({ audioFile: new Uint8Array([1]), filename: "audio.wav" }, {
       enabled: true,
       defaultProvider: "multimodal_llm",
-      providers: { multimodalLlm: { prompt: "{{runtimeValue}}" } }
+      providers: { multimodalLlm: { prompt: "${{runtimeValue}}" } }
     }, {}),
     /prompt_context_runtime_required/
   );
 
   const imageResult = await recognizeImageWithPlugin(
     { imageFile: new Uint8Array([1]), filename: "image.jpg" },
-    { enabled: true, prompt: "{{runtimeValue}}" },
+    { enabled: true, prompt: "${{runtimeValue}}" },
     {}
   );
   assert.deepEqual(imageResult, {

@@ -18,7 +18,7 @@ test("Memorize prompt uses one Layer for every target", () => {
   const prompts = promptStore.save({
     meta: { owner: "memorize" },
     messages: [
-      { meta: { title: "Prompt", enabled: true }, role: "user", content: "{{memorize/messages/content}}" },
+      { meta: { title: "Prompt", enabled: true }, role: "user", content: "${{memorize/messages/content}}" },
       {
         meta: { title: "Tool call", enabled: true },
         role: "assistant",
@@ -27,7 +27,7 @@ test("Memorize prompt uses one Layer for every target", () => {
         toolCalls: [{
           id: "memorize_test_call",
           type: "function",
-          function: { name: "Read", arguments: "{\"path\":\"{{memorize/timezone}}\"}" }
+          function: { name: "Read", arguments: "{\"path\":\"${{memorize/timezone}}\"}" }
         }]
       },
       { meta: { title: "Disabled", enabled: false }, role: "system", content: "hidden" }

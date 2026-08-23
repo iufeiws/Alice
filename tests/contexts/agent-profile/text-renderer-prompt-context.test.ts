@@ -26,9 +26,9 @@ test("prompt context runtime exposes system_skills and installed_skills from the
   const installedSkills = String(runtime.getVariable("installed_skills"));
 
   assert.equal(runtime.listVariables().length > 0, true);
-  assert.equal(runtime.renderText("{{system_skills}}"), systemSkills);
-  assert.equal(runtime.renderText("{{installed_skills}}"), installedSkills);
-  assert.equal(runtime.renderText("{{skills/dirPath}}"), "/custom-home/.agent/skills");
+  assert.equal(runtime.renderText("${{system_skills}}"), systemSkills);
+  assert.equal(runtime.renderText("${{installed_skills}}"), installedSkills);
+  assert.equal(runtime.renderText("${{skills/dirPath}}"), "/custom-home/.agent/skills");
   assert.ok(systemSkills.includes("<system_skills>"));
   assert.ok(systemSkills.includes("<name>weather</name>"));
   assert.ok(!systemSkills.includes("lark-doc"));
@@ -55,7 +55,7 @@ test("prompt context runtime exposes notes_list from the injected listNotes prov
   } as any);
 
   const notes = String(runtime.getVariable("notes_list"));
-  assert.equal(runtime.renderText("{{notes_list}}"), notes);
+  assert.equal(runtime.renderText("${{notes_list}}"), notes);
   assert.ok(notes.includes("<notes>"));
   assert.ok(notes.includes("<name>feishu-sending</name>"));
   assert.ok(notes.includes("<description>发送要点</description>"));
@@ -76,5 +76,5 @@ test("prompt context runtime renders an empty notes tag without a listNotes prov
     shortMemoryStore: { listByCreatedAtUtcRange: () => [] }
   } as any);
 
-  assert.equal(runtime.renderText("{{notes_list}}"), "");
+  assert.equal(runtime.renderText("${{notes_list}}"), "");
 });

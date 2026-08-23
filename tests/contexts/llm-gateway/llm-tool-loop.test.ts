@@ -189,3 +189,40 @@ test("LLM tool loop returns tool execution errors to the LLM and continues", asy
   assert.equal(requests, 2);
   assert.equal(result.stopReason, "completed");
 });
+
+test("LLM tool loop preserves legacy mustache text returned by a tool", async () => {
+  registerLLMToolLoopTools("llm-tool-loop-legacy-mustache-test", [{
+    id: "test",
+    listTools: () => [{ name: "External", description: "external", inputSchema: { type: "object" } }],
+    async execute(call) {
+      return { callId: call.id, ok: true, output: "external result: {{message}}" };
+    }
+  }]);
+
+  const result = await runLLMToolLoop({
+    initialMessages: [{ role: "user", content: "run it" }],
+    buildRequest({ messages }) {
+      return { agentId: "chat", messages, toolNames: ["External"], toolVariables: testPromptRuntime() };
+    },
+    async sendRequest(input) {
+      if (input.round === 0) {
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [{
+              id: "external_1",
+              type: "function",
+              function: { name: "External", arguments: "{}" }
+            }]
+          }
+        };
+      }
+      return { message: { role: "assistant", content: "done" } };
+    },
+    toolRegistryName: "llm-tool-loop-legacy-mustache-test"
+  });
+
+  const toolMessage = result.messages.find((message) => message.role === "tool");
+  assert.equal(toolMessage?.content, "external result: {{message}}");
+});

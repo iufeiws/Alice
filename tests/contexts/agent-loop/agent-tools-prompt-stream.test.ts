@@ -140,8 +140,8 @@ test("chat agent renders prompt profile layers before user message", async () =>
     getPromptProfile: () => ({
       visibleTools: { feishu: true },
       layers: [
-        { id: "sys", title: "Sys", role: "system", enabled: true, content: "hello {{user}}", order: 1 },
-        { id: "usr", title: "Usr", role: "user", enabled: true, content: "timezone {{timezone}}", order: 2 }
+        { id: "sys", title: "Sys", role: "system", enabled: true, content: "hello ${{user}}", order: 1 },
+        { id: "usr", title: "Usr", role: "user", enabled: true, content: "timezone ${{timezone}}", order: 2 }
       ]
     })
   });

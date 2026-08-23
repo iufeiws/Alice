@@ -7,7 +7,7 @@
         "enabled": true
       },
       "role": "assistant",
-      "content": "感觉有点困了。进入睡眠茧, 然后对{{user}}说晚安吧"
+      "content": "感觉有点困了。进入睡眠茧, 然后对${{user}}说晚安吧"
     },
     {
       "meta": {
@@ -16,7 +16,7 @@
       },
       "role": "assistant",
       "content": "",
-      "name": "{{user}}",
+      "name": "${{user}}",
       "reasoningContent": "(我要使用睡眠茧)",
       "toolCalls": [
         {

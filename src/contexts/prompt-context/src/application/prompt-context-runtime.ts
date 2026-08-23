@@ -58,8 +58,9 @@ export function createPromptContextRuntime(input: {
   listNotes?: () => NotesIndexEntry[];
   worldWandererConfigPath?: string;
   shortMemoryStore: Pick<ShortMemoryStore, "listByCreatedAtUtcRange">;
+  warn?: (message: string) => void;
 }): PromptContextRuntime {
-  return createRuntime(getVariable, () => [...variableNames]);
+  return createRuntime(getVariable, () => [...variableNames], input.warn ?? ((message) => console.warn(message)));
 
   function getVariable(name: string): PromptContextValue {
     if (name === "user") return input.username.trim() || "user";
@@ -191,20 +192,21 @@ export function createPromptContextRuntime(input: {
 
 function createRuntime(
   getVariable: (name: string) => PromptContextValue,
-  listVariables: () => string[]
+  listVariables: () => string[],
+  warn: (message: string) => void
 ): PromptContextRuntime {
   const runtime: PromptContextRuntime = {
     renderText(content) {
       const unresolved = new Set<string>();
-      const rendered = content.replace(/\{\{\s*([a-zA-Z0-9_/]+)\s*\}\}/g, (_match, key: string) => {
+      const rendered = content.replace(/\$\{\{\s*([a-zA-Z0-9_/]+)\s*\}\}/g, (match, key: string) => {
         const resolved = runtime.getVariable(key);
         if (resolved === undefined || resolved === null || typeof resolved === "object") {
           unresolved.add(key);
-          return `{{${key}}}`;
+          return match;
         }
         return String(resolved);
       });
-      if (unresolved.size) throw new Error(`unresolved prompt variable: ${[...unresolved].join(", ")}`);
+      if (unresolved.size) warn(`unresolved prompt variable: ${[...unresolved].join(", ")}; kept unchanged`);
       return rendered;
     },
     getVariable,
@@ -213,7 +215,8 @@ function createRuntime(
       const values = new Map<string, PromptContextPrimitive>(Object.entries(variables));
       return createRuntime(
         (name) => values.has(name) ? values.get(name) : runtime.getVariable(name),
-        () => [...new Set([...runtime.listVariables(), ...values.keys()])]
+        () => [...new Set([...runtime.listVariables(), ...values.keys()])],
+        warn
       );
     }
   };

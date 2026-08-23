@@ -151,6 +151,6 @@ test("short memory variable is visible in the variable tree and resolves through
 
   const direct = String(runtime.getVariable("memory/shortMemory/content"));
   assert.equal(treeValue, direct);
-  assert.equal(runtime.renderText("{{memory/shortMemory/content}}"), direct);
+  assert.equal(runtime.renderText("${{memory/shortMemory/content}}"), direct);
   // 本测试不假定该变量参与任何特定 loop / layer；使用范围由 Prompt 编辑器的 layer 配置决定。
 });

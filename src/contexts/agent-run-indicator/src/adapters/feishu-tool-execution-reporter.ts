@@ -29,7 +29,9 @@ export function createFeishuToolExecutionReporter(input: {
         input.log?.("warn", `[tool-execution] Feishu card begin failed: ${errorMessage(error)}`);
         return undefined;
       }
-      const next = beginQueue.then(() => beginReport(call, latestBoundaryMessageId));
+      const startsNewCard = boundaryMessageId !== latestBoundaryMessageId;
+      if (startsNewCard) boundaryMessageId = latestBoundaryMessageId;
+      const next = beginQueue.then(() => beginReport(call, startsNewCard));
       beginQueue = next.then(() => undefined, () => undefined);
       return await next;
     },
@@ -40,13 +42,12 @@ export function createFeishuToolExecutionReporter(input: {
     }
   };
 
-  async function beginReport(call: ToolCall, latestBoundaryMessageId: number | null): Promise<ToolExecutionReportSession | undefined> {
+  async function beginReport(call: ToolCall, startsNewCard: boolean): Promise<ToolExecutionReportSession | undefined> {
     if (!input.client.isStarted()) return undefined;
     const contact = pairedFeishuContact(call.requester?.accountId ?? input.resolveAccount?.());
     if (!contact?.userId) return undefined;
     try {
-      const created = await ensureCard(contact.userId, contact.accountId, call, latestBoundaryMessageId);
-      boundaryMessageId = latestBoundaryMessageId;
+      const created = await ensureCard(contact.userId, contact.accountId, call, startsNewCard);
       return createSession(created.card, created.panel);
     } catch (error) {
       input.log?.("warn", `[tool-execution] Feishu card begin failed: ${errorMessage(error)}`);
@@ -54,8 +55,8 @@ export function createFeishuToolExecutionReporter(input: {
     }
   }
 
-  async function ensureCard(receiveId: string, accountId: string | undefined, call: ToolCall, latestBoundaryMessageId: number | null): Promise<{ card: ToolExecutionCardState; panel: FeishuToolExecutionPanel }> {
-    if (currentCard && boundaryMessageId !== latestBoundaryMessageId) {
+  async function ensureCard(receiveId: string, accountId: string | undefined, call: ToolCall, startsNewCard: boolean): Promise<{ card: ToolExecutionCardState; panel: FeishuToolExecutionPanel }> {
+    if (currentCard && startsNewCard) {
       await closeCard(currentCard);
     }
     if (currentCard?.idleTimer) {

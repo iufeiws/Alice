@@ -43,11 +43,12 @@ export function createFeishuToolExecutionReporter(input: {
   };
 
   async function beginReport(call: ToolCall, startsNewCard: boolean): Promise<ToolExecutionReportSession | undefined> {
-    if (!input.client.isStarted()) return undefined;
-    const contact = pairedFeishuContact(call.requester?.accountId ?? input.resolveAccount?.());
-    if (!contact?.userId) return undefined;
     try {
-      const created = await ensureCard(contact.userId, contact.accountId, call, startsNewCard);
+      if (currentCard && startsNewCard) await closeCard(currentCard);
+      if (!input.client.isStarted()) return undefined;
+      const contact = pairedFeishuContact(call.requester?.accountId ?? input.resolveAccount?.());
+      if (!contact?.userId) return undefined;
+      const created = await ensureCard(contact.userId, contact.accountId, call);
       return createSession(created.card, created.panel);
     } catch (error) {
       input.log?.("warn", `[tool-execution] Feishu card begin failed: ${errorMessage(error)}`);
@@ -55,10 +56,7 @@ export function createFeishuToolExecutionReporter(input: {
     }
   }
 
-  async function ensureCard(receiveId: string, accountId: string | undefined, call: ToolCall, startsNewCard: boolean): Promise<{ card: ToolExecutionCardState; panel: FeishuToolExecutionPanel }> {
-    if (currentCard && startsNewCard) {
-      await closeCard(currentCard);
-    }
+  async function ensureCard(receiveId: string, accountId: string | undefined, call: ToolCall): Promise<{ card: ToolExecutionCardState; panel: FeishuToolExecutionPanel }> {
     if (currentCard?.idleTimer) {
       clearTimeout(currentCard.idleTimer);
       currentCard.idleTimer = undefined;

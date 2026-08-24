@@ -22,7 +22,14 @@ export function createFeishuToolExecutionReporter(input: {
 
   return {
     async begin(call) {
-      const next = beginQueue.then(() => beginReport(call));
+      let latestBoundaryMessageId: number | null;
+      try {
+        latestBoundaryMessageId = input.findLatestBoundaryMessageId();
+      } catch (error) {
+        input.log?.("warn", `[tool-execution] Feishu card begin failed: ${errorMessage(error)}`);
+        return undefined;
+      }
+      const next = beginQueue.then(() => beginReport(call, latestBoundaryMessageId));
       beginQueue = next.then(() => undefined, () => undefined);
       return await next;
     },
@@ -33,12 +40,11 @@ export function createFeishuToolExecutionReporter(input: {
     }
   };
 
-  async function beginReport(call: ToolCall): Promise<ToolExecutionReportSession | undefined> {
+  async function beginReport(call: ToolCall, latestBoundaryMessageId: number | null): Promise<ToolExecutionReportSession | undefined> {
     if (!input.client.isStarted()) return undefined;
     const contact = pairedFeishuContact(call.requester?.accountId ?? input.resolveAccount?.());
     if (!contact?.userId) return undefined;
     try {
-      const latestBoundaryMessageId = input.findLatestBoundaryMessageId();
       const created = await ensureCard(contact.userId, contact.accountId, call, latestBoundaryMessageId);
       boundaryMessageId = latestBoundaryMessageId;
       return createSession(created.card, created.panel);

@@ -78,9 +78,9 @@ export function createPromptToolPreviewRuntime(input: {
         };
       }
     };
-    const messages = await buildPromptMessagesWithToolResults(profile, context, runPreviewTool as any);
+    const messages = await buildPromptMessagesWithToolResults(profile, context, runPreviewTool as any, getLLMRequestToolDefinition);
     if (!includeFakeCheckChat) return messages;
-    const appendMessages = await buildAppendPromptMessagesWithToolResults(profile, context, runPreviewTool as any);
+    const appendMessages = await buildAppendPromptMessagesWithToolResults(profile, context, runPreviewTool as any, getLLMRequestToolDefinition);
     return [
       ...messages,
       ...appendMessages

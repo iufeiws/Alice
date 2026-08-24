@@ -1,5 +1,5 @@
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
-import { executeRegisteredLLMTool } from "../../../llm-gateway/src/llm-tool-loop.js";
+import { executeRegisteredLLMTool, getRegisteredLLMToolDefinition } from "../../../llm-gateway/src/llm-tool-loop.js";
 import type { AgentEvent, ToolExecutionContext, ToolResult } from "../contracts/agent-contracts.js";
 
 export type AgentLoopToolExecutionOptions = {
@@ -26,11 +26,12 @@ export async function runPromptToolRequest(
   }, options.context);
 }
 
-export function formatAgentLoopToolMessageContent(result: ToolResult, runtime: PromptContextRuntime | undefined): string {
+export function formatAgentLoopToolMessageContent(result: ToolResult, runtime: PromptContextRuntime | undefined, toolName?: string): string {
   if (!runtime) throw new Error("prompt_context_runtime_required");
-  if (!result.ok && typeof result.output === "string") return runtime.renderText(result.output);
-  if (!result.ok) return result.error ? `error: ${runtime.renderText(result.error)}` : "error";
-  if (typeof result.output === "string") return runtime.renderText(result.output);
+  const passRenderText = toolName !== undefined && getRegisteredLLMToolDefinition("default", toolName)?.passRenderText === true;
+  if (!result.ok && typeof result.output === "string") return passRenderText ? runtime.renderText(result.output) : result.output;
+  if (!result.ok) return result.error ? `error: ${passRenderText ? runtime.renderText(result.error) : result.error}` : "error";
+  if (typeof result.output === "string") return passRenderText ? runtime.renderText(result.output) : result.output;
   if (result.output === undefined || result.output === null) return "ok";
   if (typeof result.output === "number" || typeof result.output === "boolean") return String(result.output);
   return JSON.stringify(result.output);

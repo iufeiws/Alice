@@ -85,7 +85,8 @@ export async function prepareTalkLoopSessionContext(input: {
     buildInitialMessages: () => buildPromptMessagesWithToolResults(
       profile,
       context,
-      runPromptTool as Parameters<typeof buildPromptMessagesWithToolResults>[2]
+      runPromptTool as Parameters<typeof buildPromptMessagesWithToolResults>[2],
+      (toolName) => deps.toolPlugins.flatMap((plugin) => plugin.listTools()).find((tool) => tool.name === toolName)
     ),
     buildMessagePatch: () => deps.buildNextLoopMessagePatch(sessionId, { supportsAudio: input.supportsAudio }),
     updateTranscript: deps.updateActiveTalkLLMSessionTranscript,

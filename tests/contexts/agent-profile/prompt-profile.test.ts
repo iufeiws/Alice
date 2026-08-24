@@ -112,6 +112,21 @@ test("promptMessages_assistantToolCalls_pairWithActualToolResults", async () => 
   assert.deepEqual(messages[1], { role: "tool", name: "Chat", toolCallId: "call_prompt_1", content: "recent" });
 });
 
+test("promptMessages_toolResult_passesThroughRenderTextOnlyWhenToolProfileEnablesIt", async () => {
+  const toolMessage: PromptMessage = {
+    ...message("Tool Request", "assistant", ""),
+    toolCalls: [{ id: "call_prompt_render_1", type: "function", function: { name: "Chat", arguments: "{}" } }]
+  };
+  const messages = await buildPromptMessagesWithToolResults(
+    { ...defaultPromptProfile(), layers: layer(toolMessage) },
+    promptContext(),
+    async (_message, call) => ({ callId: call.id, ok: true, output: "result: ${{user}}" }),
+    () => ({ name: "Chat", description: "chat", inputSchema: {}, passRenderText: true })
+  );
+
+  assert.equal(messages[1].content, "result: 小王");
+});
+
 test("promptMessages_multipleToolCalls_preserveArrayOrder", async () => {
   const toolMessage: PromptMessage = {
     ...message("Tool Request", "assistant", ""),

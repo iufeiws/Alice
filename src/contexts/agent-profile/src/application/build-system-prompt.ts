@@ -1,6 +1,6 @@
 import type { LLMContentPart, LLMMessage, LLMToolCall } from "../../../../contexts/llm-gateway/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
-import type { AgentEvent, ToolCall, ToolResult } from "../../../agent-loop/src/contracts/agent-contracts.js";
+import type { AgentEvent, ToolCall, ToolDefinition, ToolResult } from "../../../agent-loop/src/contracts/agent-contracts.js";
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 import {
   normalizePromptLayer,
@@ -52,6 +52,8 @@ export type PromptContextDeps = {
   time: CurrentTimeProvider;
   preview?: boolean;
 };
+
+type ToolDefinitionResolver = (toolName: string) => ToolDefinition | undefined;
 
 export type PromptProfileStore = {
   get(): PromptProfile;
@@ -137,24 +139,27 @@ export function staticPromptFingerprintForText(text: string): string {
 export async function buildPromptMessagesWithToolResults(
   profile: PromptProfile,
   context: PromptRenderContext,
-  runTool: (message: PromptMessage, call: ToolCall) => Promise<ToolResult>
+  runTool: (message: PromptMessage, call: ToolCall) => Promise<ToolResult>,
+  getToolDefinition?: ToolDefinitionResolver
 ): Promise<LLMMessage[]> {
-  return buildLayerMessagesWithToolResults(normalizePromptProfile(profile).layers, promptRenderer(context), context, runTool);
+  return buildLayerMessagesWithToolResults(normalizePromptProfile(profile).layers, promptRenderer(context), context, runTool, getToolDefinition);
 }
 
 export async function buildAppendPromptMessagesWithToolResults(
   profile: PromptProfile,
   context: PromptRenderContext,
-  runTool: (message: PromptMessage, call: ToolCall) => Promise<ToolResult>
+  runTool: (message: PromptMessage, call: ToolCall) => Promise<ToolResult>,
+  getToolDefinition?: ToolDefinitionResolver
 ): Promise<LLMMessage[]> {
-  return buildLayerMessagesWithToolResults(normalizePromptProfile(profile).appendLayers!, promptRenderer(context), context, runTool);
+  return buildLayerMessagesWithToolResults(normalizePromptProfile(profile).appendLayers!, promptRenderer(context), context, runTool, getToolDefinition);
 }
 
 export async function buildLayerMessagesWithToolResults(
   layer: PromptLayer,
   renderer: PromptContextRuntime,
   context: PromptRenderContext,
-  runTool: (message: PromptMessage, call: ToolCall) => Promise<ToolResult>
+  runTool: (message: PromptMessage, call: ToolCall) => Promise<ToolResult>,
+  getToolDefinition?: ToolDefinitionResolver
 ): Promise<LLMMessage[]> {
   const result: LLMMessage[] = [];
   for (const storedMessage of enabledMessages(layer)) {
@@ -174,7 +179,7 @@ export async function buildLayerMessagesWithToolResults(
         role: "tool",
         name: toolCall.function.name,
         toolCallId: toolCall.id,
-        content: formatPromptToolMessageContent(toolResult, renderer)
+        content: formatPromptToolMessageContent(toolResult, renderer, getToolDefinition?.(toolCall.function.name)?.passRenderText === true)
       });
     }
   }
@@ -227,10 +232,10 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function formatPromptToolMessageContent(result: ToolResult, runtime: PromptContextRuntime): string {
-  if (!result.ok && typeof result.output === "string") return runtime.renderText(result.output);
-  if (!result.ok) return result.error ? `error: ${runtime.renderText(result.error)}` : "error";
-  if (typeof result.output === "string") return runtime.renderText(result.output);
+function formatPromptToolMessageContent(result: ToolResult, runtime: PromptContextRuntime, passRenderText: boolean): string {
+  if (!result.ok && typeof result.output === "string") return passRenderText ? runtime.renderText(result.output) : result.output;
+  if (!result.ok) return result.error ? `error: ${passRenderText ? runtime.renderText(result.error) : result.error}` : "error";
+  if (typeof result.output === "string") return passRenderText ? runtime.renderText(result.output) : result.output;
   if (result.output === undefined || result.output === null) return "ok";
   if (typeof result.output === "number" || typeof result.output === "boolean") return String(result.output);
   return JSON.stringify(result.output);

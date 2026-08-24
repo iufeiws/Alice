@@ -4,11 +4,47 @@ import { executeRegisteredLLMTool, registerLLMToolLoopTools, runLLMToolLoop, set
 import type { LLMChatResult } from "../../../src/contexts/llm-gateway/src/index.js";
 import { finishAndWaitTool } from "../../../src/capabilities/tools/finish-and-wait/profile.js";
 import { chatTool } from "../../../src/capabilities/tools/messaging/profile.js";
+import { bookcaseTool } from "../../../src/capabilities/tools/bookcase/profile.js";
+import { calendarTool } from "../../../src/capabilities/tools/calendar/profile.js";
+import { diceTool } from "../../../src/capabilities/tools/dice/profile.js";
+import { editTool, globTool, readTool, writeTool } from "../../../src/capabilities/tools/file/profile.js";
+import { panoramaTool } from "../../../src/capabilities/tools/location/profile.js";
+import { selfieTool } from "../../../src/capabilities/tools/photo/profile.js";
+import { restartTool } from "../../../src/capabilities/tools/restart/profile.js";
+import { bashTool } from "../../../src/capabilities/tools/shell/profile.js";
+import { skillTool } from "../../../src/capabilities/tools/skills/profile.js";
+import { sleepCocoonTool } from "../../../src/capabilities/tools/sleep-cocoon/profile.js";
+import { subAgentTool } from "../../../src/capabilities/tools/subagent/profile.js";
+import { wardrobeTool } from "../../../src/capabilities/tools/wardrobe/profile.js";
 import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
 
 test("Chat and Yield profiles suppress execution cards", () => {
   assert.equal(chatTool.suppressExecutionCard, true);
   assert.equal(finishAndWaitTool.suppressExecutionCard, true);
+});
+
+test("tool profiles explicitly configure whether results pass through renderText", () => {
+  assert.deepEqual([
+    bookcaseTool,
+    calendarTool,
+    diceTool,
+    finishAndWaitTool,
+    panoramaTool,
+    chatTool,
+    selfieTool,
+    restartTool,
+    skillTool,
+    sleepCocoonTool,
+    wardrobeTool
+  ].map((tool) => tool.passRenderText), Array(11).fill(true));
+  assert.deepEqual([
+    readTool,
+    writeTool,
+    editTool,
+    globTool,
+    bashTool,
+    subAgentTool
+  ].map((tool) => tool.passRenderText), Array(6).fill(undefined));
 });
 
 test("registered tool execution reports progress unless its profile suppresses the card", async () => {
@@ -225,4 +261,47 @@ test("LLM tool loop preserves legacy mustache text returned by a tool", async ()
 
   const toolMessage = result.messages.find((message) => message.role === "tool");
   assert.equal(toolMessage?.content, "external result: {{message}}");
+});
+
+test("LLM tool loop only passes tool result text through renderText when the profile enables it", async () => {
+  registerLLMToolLoopTools("llm-tool-loop-pass-render-text-test", [{
+    id: "test",
+    listTools: () => [
+      { name: "Raw", description: "raw", inputSchema: {} },
+      { name: "Rendered", description: "rendered", inputSchema: {}, passRenderText: true }
+    ],
+    async execute(call) {
+      return { callId: call.id, ok: true, output: `${call.toolName}: \${{user}}` };
+    }
+  }]);
+
+  async function run(toolName: string) {
+    return runLLMToolLoop({
+      initialMessages: [{ role: "user", content: "run it" }],
+      buildRequest({ messages }) {
+        return { agentId: "chat", messages, toolNames: [toolName], toolVariables: testPromptRuntime({ user: "小王" }) };
+      },
+      async sendRequest(input) {
+        return input.round === 0
+          ? {
+            message: {
+              role: "assistant",
+              content: "",
+              toolCalls: [{
+                id: `${toolName}_1`,
+                type: "function",
+                function: { name: toolName, arguments: "{}" }
+              }]
+            }
+          }
+          : { message: { role: "assistant", content: "done" } };
+      },
+      toolRegistryName: "llm-tool-loop-pass-render-text-test"
+    });
+  }
+
+  const rawResult = await run("Raw");
+  const renderedResult = await run("Rendered");
+  assert.equal(rawResult.messages.find((message) => message.role === "tool")?.content, "Raw: ${{user}}");
+  assert.equal(renderedResult.messages.find((message) => message.role === "tool")?.content, "Rendered: 小王");
 });

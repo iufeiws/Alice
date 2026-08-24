@@ -66,9 +66,10 @@ export async function executeMessagingTool(
     } : undefined
   });
   context.appendLog(result.ok ? "info" : "warn", `messaging tool Chat/${action}${target ? ` plugin=${target.plugin} session=${target.sessionId}` : ""}: ${result.ok ? "ok" : result.error ?? "failed"}`);
+  const toolDefinition = context.messagingTools.listTools().find((tool) => tool.name === "Chat");
   writeJson(response, result.ok ? 200 : 400, {
     ok: result.ok,
-    content: formatToolMessageContent(result, getAdminTextRenderer(context)),
+    content: formatToolMessageContent(result, getAdminTextRenderer(context), toolDefinition?.passRenderText === true),
     error: result.error
   });
 }

@@ -8,6 +8,7 @@ export const clearYieldAlbertContent = '<Alert info="上下文历史已清空" /
 
 export const finishAndWaitTool: ToolDefinition = {
   name: "Yield",
+  passRenderText: true,
   suppressExecutionCard: true,
   // schedule 已禁用，不暴露给 LLM；保留原描述便于恢复时参考。
   // description: "等待回复或结束聊天。action=schedule 定时(秒)后再次返回, 中途有新消息时提前返回; action=await_chat 固定等待 15 分钟, 有新消息时提前返回, 超时无消息则结束; action=finish 直接结束",

@@ -235,6 +235,13 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
       const promptProfile = requirePromptProfile();
       const allToolPlugins = deps.tools ?? [];
       const toolPlugins = filterVisibleTools(allToolPlugins, promptProfile);
+      const getToolDefinition = (toolName: string) => {
+        for (const plugin of allToolPlugins) {
+          const definition = plugin.listTools().find((tool) => tool.name === toolName);
+          if (definition) return definition;
+        }
+        return undefined;
+      };
       let persistedProcessRestart = deps.processRestartContinuationStore?.read();
       let activeProcessRestartToolCallId = persistedProcessRestart?.toolCallId;
       let loopSession = deps.initialLLMSession?.staticPromptFingerprint
@@ -387,12 +394,12 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
                   const result = await runPromptToolRequest(call);
                   initiatedBehaviorPromptToolResult = result;
                   return result;
-                });
+                }, getToolDefinition);
                 initiatedBehaviorMessageCount = initiatedMessages.length;
                 return [
                   ...await buildPromptMessagesWithToolResults(promptProfile, promptContext, async (layer, call) => {
                     return runPromptToolRequest(call);
-                  }),
+                  }, getToolDefinition),
                   ...initiatedMessages,
                   ...mode.modeStaticMessages
                 ];
@@ -494,7 +501,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
               llmSessionId: session.id
             }
           });
-        });
+        }, getToolDefinition);
         if (appendMessages.length === 0) return;
         const result = appendLoopSessionContext({
           session,

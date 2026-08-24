@@ -172,6 +172,10 @@ export function executeRegisteredLLMTool(
   return executeToolPlugin(toolForCall(registryName, call.toolName), call, context);
 }
 
+export function getRegisteredLLMToolDefinition(registryName: string, toolName: string): ToolDefinition | undefined {
+  return toolRegistries.get(registryName)?.get(toolName)?.definition;
+}
+
 export const defaultLLMToolLoopLimits: Required<LLMToolLoopLimits> = {
   maxRounds: 100,
   maxTotalToolCalls: 100
@@ -551,7 +555,7 @@ async function executeTool(
     role: "tool" as const,
     toolCallId: call.id,
     name: call.function.name,
-    content: formatToolMessageContent(toolResult, request.toolVariables)
+    content: formatToolMessageContent(toolResult, request.toolVariables, tool.definition.passRenderText === true)
   };
   return await input.afterToolResult?.({
     ...context,
@@ -565,11 +569,11 @@ async function executeTool(
   };
 }
 
-function formatToolMessageContent(result: ToolResult, runtime: PromptContextRuntime | undefined): string {
+function formatToolMessageContent(result: ToolResult, runtime: PromptContextRuntime | undefined, passRenderText: boolean): string {
   if (!runtime) throw new Error("prompt_context_runtime_required");
-  if (!result.ok && typeof result.output === "string") return runtime.renderText(result.output);
-  if (!result.ok) return result.error ? `error: ${runtime.renderText(result.error)}` : "error";
-  if (typeof result.output === "string") return runtime.renderText(result.output);
+  if (!result.ok && typeof result.output === "string") return passRenderText ? runtime.renderText(result.output) : result.output;
+  if (!result.ok) return result.error ? `error: ${passRenderText ? runtime.renderText(result.error) : result.error}` : "error";
+  if (typeof result.output === "string") return passRenderText ? runtime.renderText(result.output) : result.output;
   if (result.output === undefined || result.output === null) return "ok";
   if (typeof result.output === "number" || typeof result.output === "boolean") return String(result.output);
   return JSON.stringify(result.output);

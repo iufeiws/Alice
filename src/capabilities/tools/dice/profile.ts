@@ -4,6 +4,7 @@ export const diceToolName = "Dice";
 
 export const diceTool: ToolDefinition = {
   name: diceToolName,
+  passRenderText: true,
   description: "投掷骰子。sides > 1, 默认 6；count > 0 默认 1；",
   inputSchema: {
     type: "object",

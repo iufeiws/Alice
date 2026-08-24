@@ -44,7 +44,7 @@ export async function buildWaitChatResumeMessages(input: {
       role: "tool",
       toolCallId: call.id,
       name: call.function.name,
-      content: formatToolMessageContent(result, textVariables)
+      content: formatToolMessageContent(result, textVariables, call.function.name)
     });
   }
   return messages;
@@ -211,8 +211,8 @@ function parseToolArguments(raw: string): Record<string, unknown> {
   }
 }
 
-function formatToolMessageContent(result: ToolResult, variables: PromptContextRuntime): string {
-  return formatAgentLoopToolMessageContent(result, variables);
+function formatToolMessageContent(result: ToolResult, variables: PromptContextRuntime, toolName: string): string {
+  return formatAgentLoopToolMessageContent(result, variables, toolName);
 }
 
 function isWaitChatToolName(toolName: string | undefined): boolean {

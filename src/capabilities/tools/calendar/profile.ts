@@ -2,6 +2,7 @@ import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/
 
 export const calendarTool: ToolDefinition = {
   name: "calendar",
+  passRenderText: true,
   suppressExecutionCard: true,
   description: "管理和查看日历。支持 action=add 添加 schedule，action=remove 按 title/datetime 删除 schedule，action=search 搜索，action=list 查看日历。",
   inputSchema: {

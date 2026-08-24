@@ -2,6 +2,7 @@ import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/
 
 export const sleepCocoonTool: ToolDefinition = {
   name: "sleep_cocoon",
+  passRenderText: true,
   description: "睡眠茧。action=in 表示钻进睡眠茧准备入睡；action=out 表示在睡着前出来并撤销入睡倒计时。",
   inputSchema: {
     type: "object",

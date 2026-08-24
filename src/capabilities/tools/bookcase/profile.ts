@@ -2,6 +2,7 @@ import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/
 
 export const bookcaseTool: ToolDefinition = {
   name: "Bookcase",
+  passRenderText: true,
   description: [
     "里面装着用于讲故事的书",
     "action=draw 从书橱抽取一本书来讲故事",

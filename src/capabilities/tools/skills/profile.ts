@@ -2,6 +2,7 @@ import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/
 
 export const skillTool: ToolDefinition = {
   name: "Skill",
+  passRenderText: true,
   description: "Load one available Skill by exact name.",
   inputSchema: {
     type: "object",

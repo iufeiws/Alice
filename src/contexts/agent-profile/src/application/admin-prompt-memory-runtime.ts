@@ -183,12 +183,13 @@ export async function previewToolResult(context: AdminRoutesContext, request: an
       }
     });
     context.appendLog(result.ok ? "info" : "warn", `tool preview ${plugin.id}/${toolName}: ${result.ok ? "ok" : result.error ?? "failed"}`);
+    const toolDefinition = plugin.listTools().find((tool) => tool.name === toolName);
     writeJson(response, result.ok ? 200 : 400, {
       ok: result.ok,
       pluginId: plugin.id,
       toolName,
       targetPlugin: target.plugin,
-      content: formatToolMessageContent(result, getAdminTextRenderer(context)),
+      content: formatToolMessageContent(result, getAdminTextRenderer(context), toolDefinition?.passRenderText === true),
       result
     });
   } catch (error) {

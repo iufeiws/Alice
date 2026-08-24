@@ -33,10 +33,10 @@ export function resolveFeishuTestTarget(context: AdminRoutesContext, body: Recor
   return { plugin: "feishu", accountId: accountId ?? firstContact?.accountId ?? "main", channelId: receiveChannelId, userId: receiveUserId, sessionId };
 }
 
-export function formatToolMessageContent(result: { ok: boolean; output?: unknown; error?: string }, renderer: PromptContextRuntime): string {
-  if (!result.ok && typeof result.output === "string") return renderer.renderText(result.output);
-  if (!result.ok) return result.error ? `error: ${renderer.renderText(result.error)}` : "error";
-  if (typeof result.output === "string") return renderer.renderText(result.output);
+export function formatToolMessageContent(result: { ok: boolean; output?: unknown; error?: string }, renderer: PromptContextRuntime, passRenderText = false): string {
+  if (!result.ok && typeof result.output === "string") return passRenderText ? renderer.renderText(result.output) : result.output;
+  if (!result.ok) return result.error ? `error: ${passRenderText ? renderer.renderText(result.error) : result.error}` : "error";
+  if (typeof result.output === "string") return passRenderText ? renderer.renderText(result.output) : result.output;
   if (result.output === undefined || result.output === null) return "ok";
   if (typeof result.output === "number" || typeof result.output === "boolean") return String(result.output);
   return JSON.stringify(result.output);

@@ -47,6 +47,7 @@ test("Feishu tool execution reporter streams progress then writes the result", a
   const reporter = createFeishuToolExecutionReporter({
     client,
     pairingStore: { list: () => [{ userId: "ou_user" }], getPaired: () => ({ userId: "ou_user" }) } as any,
+    findLatestBoundaryMessageId: () => null,
     throttleMs: 1000
   });
   const session = await reporter.begin({ id: "bash", toolName: "Bash", input: { command: "npm test" } });
@@ -72,7 +73,8 @@ test("Feishu tool execution reporter recursively formats nested objects with ind
   const client = fakeFeishuCardClient();
   const reporter = createFeishuToolExecutionReporter({
     client,
-    pairingStore: { list: () => [{ userId: "ou_user" }], getPaired: () => ({ userId: "ou_user" }) } as any
+    pairingStore: { list: () => [{ userId: "ou_user" }], getPaired: () => ({ userId: "ou_user" }) } as any,
+    findLatestBoundaryMessageId: () => null
   });
   const session = await reporter.begin({
     id: "nested",
@@ -97,7 +99,8 @@ test("Feishu tool execution reporter selects output or error from ok state", asy
   const client = fakeFeishuCardClient();
   const reporter = createFeishuToolExecutionReporter({
     client,
-    pairingStore: { list: () => [{ userId: "ou_user" }], getPaired: () => ({ userId: "ou_user" }) } as any
+    pairingStore: { list: () => [{ userId: "ou_user" }], getPaired: () => ({ userId: "ou_user" }) } as any,
+    findLatestBoundaryMessageId: () => null
   });
   const session = await reporter.begin({ id: "failed", toolName: "Read", input: {} });
 
@@ -121,6 +124,7 @@ test("Feishu tool execution reporter keeps markdown fences inside progress", asy
   const reporter = createFeishuToolExecutionReporter({
     client,
     pairingStore: { list: () => [{ userId: "ou_user" }], getPaired: () => ({ userId: "ou_user" }) } as any,
+    findLatestBoundaryMessageId: () => null,
     throttleMs: 1000
   });
   const session = await reporter.begin({ id: "ticks", toolName: "Bash", input: {} });
@@ -137,6 +141,7 @@ test("Feishu tool execution reporter groups only multiple consecutive tools and 
   const reporter = createFeishuToolExecutionReporter({
     client,
     pairingStore: { list: () => [{ userId: "ou_user" }], getPaired: () => ({ userId: "ou_user" }) } as any,
+    findLatestBoundaryMessageId: () => null,
     throttleMs: 1000
   });
 
@@ -161,7 +166,8 @@ test("Feishu tool execution reporter starts a new card after the sequence ends",
   const client = fakeFeishuCardClient();
   const reporter = createFeishuToolExecutionReporter({
     client,
-    pairingStore: { list: () => [{ userId: "ou_user" }], getPaired: () => ({ userId: "ou_user" }) } as any
+    pairingStore: { list: () => [{ userId: "ou_user" }], getPaired: () => ({ userId: "ou_user" }) } as any,
+    findLatestBoundaryMessageId: () => null
   });
 
   const first = await reporter.begin({ id: "one", toolName: "Bash", input: {} });
@@ -186,6 +192,7 @@ test("Feishu tool execution reporter routes by the tool call requester account",
       ],
       getPaired: (accountId?: string) => accountId === "work" ? { userId: "ou_work", accountId: "work" } : { userId: "ou_main", accountId: "main" }
     } as any,
+    findLatestBoundaryMessageId: () => null,
     throttleMs: 1000
   });
 
@@ -213,6 +220,7 @@ test("Feishu tool execution reporter uses the resolved default account without a
       ],
       getPaired: (accountId?: string) => accountId === "work" ? { userId: "ou_work", accountId: "work" } : { userId: "ou_main", accountId: "main" }
     } as any,
+    findLatestBoundaryMessageId: () => null,
     resolveAccount: () => "work",
     throttleMs: 1000
   });

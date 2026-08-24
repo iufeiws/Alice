@@ -7,7 +7,7 @@ export function createFeishuToolExecutionReporter(input: {
   pairingStore: FeishuPairingStore;
   /** 无显式账户上下文时解析默认账户（当前账户指针）。 */
   resolveAccount?(): string | undefined;
-  findLatestBoundaryMessageId?(): number | null;
+  findLatestBoundaryMessageId(): number | null;
   throttleMs?: number;
   outputLimitChars?: number;
   log?(level: "info" | "warn" | "error", message: string): void;
@@ -18,24 +18,13 @@ export function createFeishuToolExecutionReporter(input: {
   const rootElementId = "tool_calls_root";
   let currentCard: ToolExecutionCardState | undefined;
   let boundaryMessageId: number | null = null;
-  // 首次建卡的单飞 promise：begin 不再阻塞 tool 执行后，多个 tool 的 begin 可能并发，
-  // 保证并发时只创建一次卡片实体。
-  let cardCreation: Promise<ToolExecutionCardState> | undefined;
+  let beginQueue: Promise<void> = Promise.resolve();
 
   return {
     async begin(call) {
-      if (!input.client.isStarted()) return undefined;
-      const contact = pairedFeishuContact(call.requester?.accountId ?? input.resolveAccount?.());
-      if (!contact?.userId) return undefined;
-      try {
-        const latestBoundaryMessageId = input.findLatestBoundaryMessageId?.() ?? null;
-        const created = await ensureCard(contact.userId, contact.accountId, call, latestBoundaryMessageId);
-        boundaryMessageId = latestBoundaryMessageId;
-        return createSession(created.card, created.panel);
-      } catch (error) {
-        input.log?.("warn", `[tool-execution] Feishu card begin failed: ${errorMessage(error)}`);
-        return undefined;
-      }
+      const next = beginQueue.then(() => beginReport(call));
+      beginQueue = next.then(() => undefined, () => undefined);
+      return await next;
     },
     async endSequence() {
       const card = currentCard;
@@ -43,6 +32,21 @@ export function createFeishuToolExecutionReporter(input: {
       await closeCard(card);
     }
   };
+
+  async function beginReport(call: ToolCall): Promise<ToolExecutionReportSession | undefined> {
+    if (!input.client.isStarted()) return undefined;
+    const contact = pairedFeishuContact(call.requester?.accountId ?? input.resolveAccount?.());
+    if (!contact?.userId) return undefined;
+    try {
+      const latestBoundaryMessageId = input.findLatestBoundaryMessageId();
+      const created = await ensureCard(contact.userId, contact.accountId, call, latestBoundaryMessageId);
+      boundaryMessageId = latestBoundaryMessageId;
+      return createSession(created.card, created.panel);
+    } catch (error) {
+      input.log?.("warn", `[tool-execution] Feishu card begin failed: ${errorMessage(error)}`);
+      return undefined;
+    }
+  }
 
   async function ensureCard(receiveId: string, accountId: string | undefined, call: ToolCall, latestBoundaryMessageId: number | null): Promise<{ card: ToolExecutionCardState; panel: FeishuToolExecutionPanel }> {
     if (currentCard && boundaryMessageId !== latestBoundaryMessageId) {
@@ -55,53 +59,42 @@ export function createFeishuToolExecutionReporter(input: {
     const renderedCall = renderCode(call.input);
     const initialResult = renderCode("");
     if (!currentCard) {
-      const amCreator = cardCreation === undefined;
-      const card = await ensureCardCreated(receiveId, accountId, call, renderedCall, initialResult);
-      if (amCreator) {
-        card.activeSessions += 1;
-        return { card, panel: card.panels[0]! };
-      }
-      // 并发等待者：首张卡由创建者承载，这里追加自己的 panel
-      return await appendPanel(card, call, renderedCall, initialResult);
+      const card = await createCard(receiveId, accountId, call, renderedCall, initialResult);
+      card.activeSessions += 1;
+      return { card, panel: card.panels[0]! };
     }
 
     return await appendPanel(currentCard, call, renderedCall, initialResult);
   }
 
-  function ensureCardCreated(receiveId: string, accountId: string | undefined, call: ToolCall, renderedCall: string, initialResult: string): Promise<ToolExecutionCardState> {
-    if (cardCreation) return cardCreation;
+  async function createCard(receiveId: string, accountId: string | undefined, call: ToolCall, renderedCall: string, initialResult: string): Promise<ToolExecutionCardState> {
     const ids = firstPanelIds();
     const firstPanel = createPanel(call.toolName, renderedCall, initialResult, ids);
-    cardCreation = (async () => {
-      const created = await input.client.createToolExecutionCard({
-        receiveIdType: "open_id",
-        receiveId,
-        toolName: firstPanel.toolName,
-        call: firstPanel.call,
-        result: firstPanel.result,
-        titleElementId: rootElementId,
-        callElementId: firstPanel.callElementId,
-        resultElementId: firstPanel.resultElementId,
-        accountId
-      });
-      const card: ToolExecutionCardState = {
-        accountId,
-        cardId: created.cardId,
-        panels: [firstPanel],
-        nextPanelIndex: 2,
-        nextSequence: 1,
-        activeSessions: 0,
-        streaming: false,
-        closed: false,
-        queue: Promise.resolve()
-      };
-      currentCard = card;
-      await setStreaming(card, true);
-      return card;
-    })().finally(() => {
-      cardCreation = undefined;
+    const created = await input.client.createToolExecutionCard({
+      receiveIdType: "open_id",
+      receiveId,
+      toolName: firstPanel.toolName,
+      call: firstPanel.call,
+      result: firstPanel.result,
+      titleElementId: rootElementId,
+      callElementId: firstPanel.callElementId,
+      resultElementId: firstPanel.resultElementId,
+      accountId
     });
-    return cardCreation;
+    const card: ToolExecutionCardState = {
+      accountId,
+      cardId: created.cardId,
+      panels: [firstPanel],
+      nextPanelIndex: 2,
+      nextSequence: 1,
+      activeSessions: 0,
+      streaming: false,
+      closed: false,
+      queue: Promise.resolve()
+    };
+    currentCard = card;
+    await setStreaming(card, true);
+    return card;
   }
 
   async function appendPanel(card: ToolExecutionCardState, call: ToolCall, renderedCall: string, initialResult: string): Promise<{ card: ToolExecutionCardState; panel: FeishuToolExecutionPanel }> {

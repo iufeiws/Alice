@@ -84,7 +84,7 @@ src/
 | **pi-worker** | Pi worker 客户端（授权握手、后台唤起 wake、tool relay、健康轮询） |
 | **approval** | 基于飞书动态卡片的一对一审批服务（含卡片动作回调鉴权） |
 | **skills** | 技能注册表/加载器/占位符/资源路径 |
-| **agent-run-indicator** | Agent run 指示器抽象（begin/setTyping/fail）+ 飞书动态卡片与 tool 执行上报适配器 |
+| **agent-run-indicator** | Agent run 指示器抽象（begin/setTyping/fail）+ 飞书动态卡片与 tool 执行上报适配器。Tool execution reporter 持有一个与 session 无关的全局内存消息 ID 游标，每次 tool call 直接查询数据库中最新的已发送 assistant 消息或已读 user 消息 ID；未读 user 消息不参与分界。查询 ID 与内存游标不同时新建卡片并更新游标。游标初始为 null 且不持久化，重启后首个 tool call 新建卡片 |
 | **persona / wardrobe** | 纯类型与工具函数（persona 快照；outfit 选择/查找） |
 
 无独立 index.ts 的 context：agent-loop、agent-profile、talk-session、initiative、capabilities（跨 context 直接引用内部路径）。

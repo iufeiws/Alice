@@ -7,6 +7,7 @@ export function createFeishuToolExecutionReporter(input: {
   pairingStore: FeishuPairingStore;
   /** 无显式账户上下文时解析默认账户（当前账户指针）。 */
   resolveAccount?(): string | undefined;
+  findLatestBoundaryMessageId?(): number | null;
   throttleMs?: number;
   outputLimitChars?: number;
   log?(level: "info" | "warn" | "error", message: string): void;
@@ -16,6 +17,7 @@ export function createFeishuToolExecutionReporter(input: {
   const cardIdleMs = 5_000;
   const rootElementId = "tool_calls_root";
   let currentCard: ToolExecutionCardState | undefined;
+  let boundaryMessageId: number | null = null;
   // 首次建卡的单飞 promise：begin 不再阻塞 tool 执行后，多个 tool 的 begin 可能并发，
   // 保证并发时只创建一次卡片实体。
   let cardCreation: Promise<ToolExecutionCardState> | undefined;
@@ -26,7 +28,9 @@ export function createFeishuToolExecutionReporter(input: {
       const contact = pairedFeishuContact(call.requester?.accountId ?? input.resolveAccount?.());
       if (!contact?.userId) return undefined;
       try {
-        const created = await ensureCard(contact.userId, contact.accountId, call);
+        const latestBoundaryMessageId = input.findLatestBoundaryMessageId?.() ?? null;
+        const created = await ensureCard(contact.userId, contact.accountId, call, latestBoundaryMessageId);
+        boundaryMessageId = latestBoundaryMessageId;
         return createSession(created.card, created.panel);
       } catch (error) {
         input.log?.("warn", `[tool-execution] Feishu card begin failed: ${errorMessage(error)}`);
@@ -36,15 +40,14 @@ export function createFeishuToolExecutionReporter(input: {
     async endSequence() {
       const card = currentCard;
       if (!card) return;
-      currentCard = undefined;
-      card.closed = true;
-      if (card.idleTimer) clearTimeout(card.idleTimer);
-      card.idleTimer = undefined;
-      if (card.activeSessions === 0) await finalizeCard(card);
+      await closeCard(card);
     }
   };
 
-  async function ensureCard(receiveId: string, accountId: string | undefined, call: ToolCall): Promise<{ card: ToolExecutionCardState; panel: FeishuToolExecutionPanel }> {
+  async function ensureCard(receiveId: string, accountId: string | undefined, call: ToolCall, latestBoundaryMessageId: number | null): Promise<{ card: ToolExecutionCardState; panel: FeishuToolExecutionPanel }> {
+    if (currentCard && boundaryMessageId !== latestBoundaryMessageId) {
+      await closeCard(currentCard);
+    }
     if (currentCard?.idleTimer) {
       clearTimeout(currentCard.idleTimer);
       currentCard.idleTimer = undefined;
@@ -227,6 +230,14 @@ export function createFeishuToolExecutionReporter(input: {
     } catch (error) {
       input.log?.("warn", `[tool-execution] Feishu card finalize failed: ${errorMessage(error)}`);
     }
+  }
+
+  async function closeCard(card: ToolExecutionCardState): Promise<void> {
+    if (currentCard === card) currentCard = undefined;
+    card.closed = true;
+    if (card.idleTimer) clearTimeout(card.idleTimer);
+    card.idleTimer = undefined;
+    if (card.activeSessions === 0) await finalizeCard(card);
   }
 
   function pairedFeishuContact(accountId?: string) {

@@ -79,6 +79,7 @@ export type AliceStore = {
   listMessagesChronological(limit?: number): StoredConversationMessage[];
   listMessagesByCreatedAtRange(startAt: string | undefined, endAt: string, limit?: number): StoredConversationMessage[];
   listMessagesForConversation(conversationId: string, limit: number): StoredConversationMessage[];
+  findLatestToolCardBoundaryMessageId(): number | null;
   searchMessages(input: SearchMessagesInput): StoredConversationMessage[];
   listPendingCoreConversations(): Array<{ conversationId: string; latestMessageId: number; latestTime: string }>;
   listUnprocessedCoreMessagesForConversation(conversationId: string, limit: number): StoredConversationMessage[];
@@ -415,6 +416,17 @@ export function createAliceStore(dbPath: string, options: { time?: CurrentTimePr
       return messageDb.prepare(conversationMessageSelect("WHERE conversation_id = ? ORDER BY id DESC LIMIT ?"))
         .all(conversationId, limit)
         .reverse();
+    },
+    findLatestToolCardBoundaryMessageId() {
+      const row = messageDb.prepare(`
+        SELECT id
+        FROM messages
+        WHERE (direction = 'outbound' AND sender_role = 'assistant' AND status = 'sent')
+          OR (direction IN ('inbound', 'both') AND sender_role = 'user' AND is_read = 1)
+        ORDER BY id DESC
+        LIMIT 1
+      `).get() as { id: number } | undefined;
+      return row ? Number(row.id) : null;
     },
     searchMessages(input) {
       const query = buildMessageFtsQuery(input.query);

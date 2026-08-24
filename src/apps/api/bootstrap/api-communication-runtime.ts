@@ -96,11 +96,11 @@ export function createApiCommunicationRuntime(input: {
     client: feishu.agentRunCardClient,
     pairingStore: input.apiContextRuntime.feishuPairingStore,
     resolveAccount: () => feishu.getDefaultAccountId?.(),
+    findLatestBoundaryMessageId: () => input.store.findLatestToolCardBoundaryMessageId(),
     log: input.appendLog
   });
-  input.outputRouter.onSent(async (output: { target: { plugin: string } }) => {
+  input.outputRouter.onSent(async () => {
     input.agentState.restartInactivityTimer();
-    if (output.target.plugin === "feishu") await toolExecutionReporter.endSequence();
   });
   setLLMToolExecutionReporter(toolExecutionReporter);
   const worldWandererRuntime = createWorldWandererRuntime({

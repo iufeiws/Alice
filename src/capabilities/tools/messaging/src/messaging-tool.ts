@@ -51,7 +51,7 @@ const maxSendRetryAttempts = 3;
 const checkChatMessageLimit = 500;
 const recentCheckChatMessageCount = 50;
 const recentUserReplyWindow = 10;
-const todaySleepContextMessageCount = 10;
+const todayContextMessageCount = 10;
 const maxRangeEndTime = "9999-12-31T23:59:59.999Z";
 const userSpeakerPlaceholder = "${{user}}";
 
@@ -124,21 +124,14 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     } else if (scope === "today") {
       const sleepCocoonEnteredAt = deps.getSleepCocoonEnteredAt?.();
       const sleepCocoonDate = sleepCocoonEnteredAt ? parseMessageTime(sleepCocoonEnteredAt, time.timeZone) : undefined;
-      if (sleepCocoonDate) {
-        const sleepCocoonRangeStart = sleepCocoonDate.toISOString();
-        const beforeSleep = deps.store
-          .listMessagesByCreatedAtRange(undefined, sleepCocoonRangeStart)
-          .slice(-todaySleepContextMessageCount);
-        sinceDate = beforeSleep.length > 0
-          ? parseMessageTime(beforeSleep[0].createdAt, time.timeZone)
-          : sleepCocoonDate;
-      } else {
-        sinceDate = todayMessagingAnchor(time.timeZone, time.now().date);
-      }
+      sinceDate = sleepCocoonDate
+        ? contextStartBefore(sleepCocoonDate)
+        : todayMessagingAnchor(time.timeZone, time.now().date);
       const latestShortMemoryCreatedAtUtc = deps.getLatestShortMemoryCreatedAtUtc?.();
       if (latestShortMemoryCreatedAtUtc) {
         const latestShortMemoryDate = parseMessageTime(latestShortMemoryCreatedAtUtc, time.timeZone);
-        if (latestShortMemoryDate.getTime() > sinceDate.getTime()) sinceDate = latestShortMemoryDate;
+        const shortMemoryContextStart = contextStartBefore(latestShortMemoryDate);
+        if (shortMemoryContextStart.getTime() > sinceDate.getTime()) sinceDate = shortMemoryContextStart;
       }
       messages = deps.store.listMessagesByCreatedAtRange(sinceDate.toISOString(), maxRangeEndTime);
     } else {
@@ -156,6 +149,15 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
       ok: true,
       output: appendCurrentTime(body, time.now().iso, prefix)
     };
+  }
+
+  function contextStartBefore(boundary: Date): Date {
+    const contextMessages = deps.store
+      .listMessagesByCreatedAtRange(undefined, boundary.toISOString())
+      .slice(-todayContextMessageCount);
+    return contextMessages.length > 0
+      ? parseMessageTime(contextMessages[0].createdAt, time.timeZone)
+      : boundary;
   }
 
   function resolveViewScope(scopeHint?: unknown): "recent" | "today" | "todayold" | "new" | "range" {

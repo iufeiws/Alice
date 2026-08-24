@@ -390,7 +390,12 @@ test("check_chat returns current time from configured timezone provider", async 
   assert.equal(result.ok, true);
 });
 
-function createSleepCocoonTodayTools(name: string, withSleepPointer = true, latestShortMemoryCreatedAtUtc?: string) {
+function createSleepCocoonTodayTools(
+  name: string,
+  withSleepPointer = true,
+  latestShortMemoryCreatedAtUtc?: string,
+  messagesBeforeShortMemory = 0
+) {
   const store = createAliceStore(path.join(makeTempDir(name), "alice.sqlite"), {
     time: createCurrentTimeProvider("Asia/Shanghai")
   });
@@ -423,6 +428,28 @@ function createSleepCocoonTodayTools(name: string, withSleepPointer = true, late
     contentText: "after sleep cocoon",
       createdAt: "2026-05-25T12:30:00.000"
     });
+  for (let index = 1; index <= messagesBeforeShortMemory; index += 1) {
+    store.upsertInboundMessage({
+      plugin: "feishu",
+      externalMessageId: `om_short_memory_context_${index}`,
+      conversationId: "session-1",
+      senderId: "user-1",
+      contentType: "text",
+      contentText: `short memory context ${index}`,
+      createdAt: `2026-05-25T12:${String(30 + index).padStart(2, "0")}:00.000`
+    });
+  }
+  if (messagesBeforeShortMemory > 0) {
+    store.upsertInboundMessage({
+      plugin: "feishu",
+      externalMessageId: "om_after_short_memory",
+      conversationId: "session-1",
+      senderId: "user-1",
+      contentType: "text",
+      contentText: "after short memory window",
+      createdAt: "2026-05-25T12:45:00.000"
+    });
+  }
   const tools = createMessagingTools({
     store,
     outputRouter: { async send() {} },
@@ -442,22 +469,23 @@ test("check_chat today starts ten messages before sleep cocoon pointer", async (
   assert.equal(today.ok, true);
 });
 
-test("check_chat today starts at latest short memory when it is later than sleep context", async () => {
+test("check_chat today starts ten messages before latest short memory when that context is later", async () => {
   const tools = createSleepCocoonTodayTools(
     "messaging-today-short-memory-later",
     true,
-    "2026-05-25T03:05:00.000Z"
+    "2026-05-25T04:41:00.000Z",
+    10
   );
 
   const today = await tools.execute({ id: "call_today_memory_later", toolName: "Chat", input: { action: "poll", scope: "today" } });
 
   assert.equal(today.ok, true);
-  assert.doesNotMatch(String(today.output), /pre sleep context 4/);
-  assert.match(String(today.output), /pre sleep context 5/);
-  assert.match(String(today.output), /after sleep cocoon/);
+  assert.doesNotMatch(String(today.output), /after sleep cocoon/);
+  assert.match(String(today.output), /short memory context 1/);
+  assert.match(String(today.output), /after short memory window/);
 });
 
-test("check_chat today keeps sleep context start when it is later than latest short memory", async () => {
+test("check_chat today keeps sleep context start when it is later than short memory context", async () => {
   const tools = createSleepCocoonTodayTools(
     "messaging-today-sleep-context-later",
     true,

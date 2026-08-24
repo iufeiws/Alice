@@ -14,7 +14,7 @@ import {
   buildTimedYieldEvent
 } from "./message-event-builders.js";
 import { persistInboundAttachment } from "./inbound-attachments.js";
-import type { MessageRuntime, MessageRuntimeDeps, DeliverPiInvocationCompletionInput, SendSystemNoticeInput, SystemNoticeTarget } from "./message-runtime-contracts.js";
+import type { AppendAlbertMessageInput, MessageRuntime, MessageRuntimeDeps, DeliverPiInvocationCompletionInput, SendSystemNoticeInput, SystemNoticeTarget } from "./message-runtime-contracts.js";
 import { extractSentMessageCreatedAtUtc, extractSentMessageId, isPromise, safeJson } from "./message-runtime-utils.js";
 
 export type SystemNoticeStore = {
@@ -270,6 +270,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         });
       }
     },
+    appendAlbertMessage,
     sendSystemNotice,
     deliverPiInvocationCompletion,
     recoverPendingSessions() {
@@ -728,6 +729,40 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       },
       appendMessageLog: deps.appendMessageLog
     }, input);
+  }
+
+  function appendAlbertMessage(input: AppendAlbertMessageInput): void {
+    const plugin = input.requester?.plugin;
+    const sessionId = input.externalSession?.sessionId;
+    if (!plugin || !sessionId) throw new Error("yield_clear_albert_target_required");
+    const receivedTime = time.now();
+    const externalMessageId = `yield-clear:${input.callId}`;
+    deps.store.upsertInboundMessage({
+      plugin,
+      externalMessageId,
+      conversationId: sessionId,
+      senderId: input.requester?.userId,
+      senderRole: "user",
+      contentType: "text",
+      contentText: input.contentText,
+      contentJson: safeJson({ kind: "text", text: input.contentText }),
+      createdAt: receivedTime.iso,
+      createdAtUtc: receivedTime.date.toISOString(),
+      coreProcessedAt: receivedTime.iso
+    });
+    deps.appendMessageLog({
+      direction: "inbound",
+      plugin,
+      kind: "text",
+      target: sessionId,
+      sessionId,
+      rawMessageId: externalMessageId,
+      externalEventId: externalMessageId,
+      status: "received",
+      processedAt: receivedTime.iso,
+      processedBatchId: "yield_clear",
+      summary: input.contentText
+    });
   }
 
   async function deliverPiInvocationCompletion(input: DeliverPiInvocationCompletionInput): Promise<void> {

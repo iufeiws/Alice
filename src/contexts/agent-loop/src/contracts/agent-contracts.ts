@@ -207,11 +207,20 @@ export type ToolResult = {
   invalidateLLMSession?: boolean;
   llmSessionClearReason?: "yield_end";
   resetLLMSession?: boolean;
+  continueAfterReset?: boolean;
+  appendAlbertMessage?: { contentText: string };
   llmSessionMode?: string;
   llmSessionStaticMessages?: ToolResultLLMMessage[];
   fixedPrefixKind?: string;
   fixedPrefixTtlMs?: number;
   clearFixedPrefix?: boolean;
+};
+
+export type AppendAlbertMessageInput = {
+  callId: string;
+  requester?: AgentEvent["source"];
+  externalSession?: AgentEvent["externalSession"];
+  contentText: string;
 };
 
 export type ToolResultLLMAttachment = {

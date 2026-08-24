@@ -110,6 +110,13 @@ export type SendSystemNoticeInput = {
   writeLog?: boolean;
 };
 
+export type AppendAlbertMessageInput = {
+  callId: string;
+  requester?: AgentEvent["source"];
+  externalSession?: AgentEvent["externalSession"];
+  contentText: string;
+};
+
 /**
  * Deliver a Pi invocation completion as one logical `both` message: it enters
  * the Alice conversation/Core pending queue as an Albert user message and is
@@ -139,6 +146,7 @@ export type DeliverPiInvocationCompletionInput = {
 export type MessageRuntime = {
   ingestEvent(event: AgentEvent): Promise<void>;
   ingestLifecycle(event: MessageLifecycleEvent): void;
+  appendAlbertMessage(input: AppendAlbertMessageInput): void;
   sendSystemNotice(input: SendSystemNoticeInput): Promise<void>;
   deliverPiInvocationCompletion(input: DeliverPiInvocationCompletionInput): Promise<void>;
   recoverPendingSessions(): void;

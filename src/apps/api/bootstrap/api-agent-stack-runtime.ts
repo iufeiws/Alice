@@ -1,5 +1,6 @@
 import { createApiAgentRuntime } from "./api-agent-runtime.js";
 import { createAgentRunIndicatorRuntime } from "../../../contexts/agent-run-indicator/src/index.js";
+import type { AppendAlbertMessageInput } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 
 export function createApiAgentStackRuntime(input: {
   config: any;
@@ -18,6 +19,7 @@ export function createApiAgentStackRuntime(input: {
   resolvePromptApiPreset(kind: any): any;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   processRestartContinuationStore?: any;
+  appendAlbertMessage?: (input: AppendAlbertMessageInput) => void | Promise<void>;
 }) {
   const agentRunIndicatorRuntime = createAgentRunIndicatorRuntime();
   const apiAgentRuntime = createApiAgentRuntime({
@@ -44,7 +46,8 @@ export function createApiAgentStackRuntime(input: {
     agentRunIndicator: agentRunIndicatorRuntime,
     sessionClearCoordinator: input.sessionClearCoordinator,
     appendLog: input.appendLog,
-    processRestartContinuationStore: input.processRestartContinuationStore
+    processRestartContinuationStore: input.processRestartContinuationStore,
+    appendAlbertMessage: input.appendAlbertMessage
   });
 
   return {

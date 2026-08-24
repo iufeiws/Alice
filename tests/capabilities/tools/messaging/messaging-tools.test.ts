@@ -61,7 +61,7 @@ test("finishAndWaitTools validates actions and wait range", async () => {
   };
   assert.equal(inputSchema.type, "object");
   assert.equal(inputSchema.properties.action.type, "string");
-  assert.deepEqual(inputSchema.properties.action.enum, ["await_chat", "finish"]);
+  assert.deepEqual(inputSchema.properties.action.enum, ["clear", "await_chat", "finish"]);
   assert.deepEqual(inputSchema.required, ["action"]);
   assert.equal(inputSchema.additionalProperties, false);
   assert.equal(inputSchema.oneOf, undefined);

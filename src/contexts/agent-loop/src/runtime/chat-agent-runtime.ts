@@ -2,6 +2,7 @@ import { createChatAgent } from "../application/chat-agent.js";
 import { createAllowAllPolicy } from "../ports/policy.js";
 import { createIntentRouter } from "../application/intent-router.js";
 import { createSessionResolver } from "../application/session-resolver.js";
+import type { AppendAlbertMessageInput } from "../contracts/agent-contracts.js";
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 
 export function createChatAgentRuntime(input: {
@@ -24,6 +25,7 @@ export function createChatAgentRuntime(input: {
   messagingTools: any;
   updateCurrentLLMSessionTranscript(session: any): void;
   clearCurrentLLMSession(reason: any): Promise<any>;
+  appendAlbertMessage?(input: AppendAlbertMessageInput): void | Promise<void>;
   resolvePromptApiPreset(agentId: "chat" | "talk" | "memorize"): any;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   initialLLMSession: any;
@@ -92,6 +94,7 @@ export function createChatAgentRuntime(input: {
       input.messagingTools.noteLLMRequestStarted();
       return result;
     },
+    appendAlbertMessage: input.appendAlbertMessage,
     onLLMLog(event) {
       const mode = event.stream ? "stream" : "non-stream";
       const fallbackModel = input.resolvePromptApiPreset("chat")?.model;

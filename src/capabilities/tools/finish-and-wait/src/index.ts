@@ -1,7 +1,9 @@
 import type { ToolCall, ToolExecutionContext, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
-import { awaitChatWaitSeconds, finishAndWaitTool, maxYieldWaitSeconds, minYieldWaitSeconds } from "../profile.js";
+import { awaitChatWaitSeconds, clearYieldAlbertContent, finishAndWaitTool, maxYieldWaitSeconds, minYieldWaitSeconds } from "../profile.js";
 
-export type FinishAndWaitActions = "schedule" | "await_chat" | "finish";
+export type FinishAndWaitActions = "schedule" | "clear" | "await_chat" | "finish";
+
+export { clearYieldAlbertContent };
 
 export function createFinishAndWaitTools(input?: {
   /** 复用 agent state 的 subAgent hold: >0 表示有 subagent 在运行。 */
@@ -19,6 +21,21 @@ export function createFinishAndWaitTools(input?: {
       const error = validateYieldInput(call.input);
       if (error) return { callId: call.id, ok: false, error };
       const action = call.input.action as FinishAndWaitActions;
+      if (action === "clear") {
+        if (call.input.__preview === true) return { callId: call.id, ok: true };
+        return {
+          callId: call.id,
+          ok: true,
+          resetLLMSession: true,
+          continueAfterReset: true,
+          appendAlbertMessage: { contentText: clearYieldAlbertContent },
+          llmSessionStaticMessages: [{
+            role: "user",
+            name: "Alert",
+            content: clearYieldAlbertContent
+          }]
+        };
+      }
       if (action === "finish") {
         return {
           callId: call.id,
@@ -63,9 +80,9 @@ export function createFinishAndWaitTools(input?: {
 }
 
 function validateYieldInput(input: Record<string, unknown>): string | undefined {
-  const keys = Object.keys(input);
+  const keys = Object.keys(input).filter((key) => key !== "__preview");
   const action = input.action;
-  if (action === "finish" || action === "await_chat") {
+  if (action === "clear" || action === "finish" || action === "await_chat") {
     return keys.length === 1 ? undefined : `Yield ${action} only accepts action`;
   }
   if (action === "schedule") {
@@ -75,5 +92,5 @@ function validateYieldInput(input: Record<string, unknown>): string | undefined 
     }
     return undefined;
   }
-  return "Yield action must be schedule, await_chat or finish";
+  return "Yield action must be schedule, clear, await_chat or finish";
 }

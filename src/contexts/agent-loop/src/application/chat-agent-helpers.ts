@@ -115,7 +115,7 @@ export function applyBackendToolSessionControlToActiveSession(
   const modeStaticMessages = mode === "fixed_prefix"
     ? cloneLLMMessages(session.messages)
     : mode === "normal"
-      ? []
+      ? cloneLLMMessages((toolResult.llmSessionStaticMessages as LLMChatInput["messages"] | undefined) ?? [])
       : cloneLLMMessages((toolResult.llmSessionStaticMessages as LLMChatInput["messages"] | undefined) ?? session.messages);
   const modeStartedAt = mode === "normal" ? undefined : nowMs;
   const ttlMs = Number.isFinite(toolResult.fixedPrefixTtlMs) ? Number(toolResult.fixedPrefixTtlMs) : 2 * 60 * 60 * 1000;

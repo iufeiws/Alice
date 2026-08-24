@@ -60,7 +60,7 @@ export function resolveChatLoopToolControl(input: ChatLoopToolControlInput): Cha
   const ttlMs = Number.isFinite(input.toolResult.fixedPrefixTtlMs)
     ? Number(input.toolResult.fixedPrefixTtlMs)
     : fixedPrefixDefaultTtlMs;
-  const shouldContinueAfterReset = mode === "fixed_prefix" || mode !== "normal";
+  const shouldContinueAfterReset = input.toolResult.continueAfterReset === true || mode === "fixed_prefix" || mode !== "normal";
   if (mode === "fixed_prefix" && !input.session.loopStartedAt) throw new Error("fixed_prefix_loop_started_at_missing");
   return {
     message: input.toolMessage,
@@ -68,7 +68,7 @@ export function resolveChatLoopToolControl(input: ChatLoopToolControlInput): Cha
       ...control,
       resetSession: true,
       continueAfterReset: shouldContinueAfterReset,
-      invalidateSession: control.invalidateSession || mode === "normal"
+      invalidateSession: control.invalidateSession || (mode === "normal" && !shouldContinueAfterReset)
     },
     modeState: {
       mode,
@@ -98,7 +98,9 @@ function resolveModeStaticMessages(input: {
       input.toolMessage
     ];
   }
-  if (input.mode === "normal") return [];
+  if (input.mode === "normal") {
+    return cloneLLMMessages((input.toolResult.llmSessionStaticMessages as LLMChatInput["messages"] | undefined) ?? []);
+  }
   return cloneLLMMessages((input.toolResult.llmSessionStaticMessages as LLMChatInput["messages"] | undefined) ?? [
     toolRequestMessage(input.llmResult, input.call),
     input.toolMessage

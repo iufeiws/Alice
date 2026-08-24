@@ -6,7 +6,7 @@ import type { IntentRouter } from "./intent-router.js";
 import type { SessionResolver } from "./session-resolver.js";
 import { createCurrentTimeProvider } from "../../../../platform/time/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
-import type { AgentEvent, AgentOutput, ChannelPlugin, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
+import type { AgentEvent, AgentOutput, AppendAlbertMessageInput, ChannelPlugin, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
 import { buildAppendPromptMessagesWithToolResults, buildPromptMessagesWithToolResults, makePromptContext, staticPromptFingerprint, type PromptProfile } from "../../../agent-profile/src/application/build-system-prompt.js";
 import type { AgentStateController, AgentStateSnapshot } from "../domain/agent-loop-state.js";
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
@@ -138,6 +138,7 @@ export type ChatAgentDeps = {
   onLLMSessionUpdated?(session: LLMSessionSnapshot & { staticPromptFingerprint: string; requestTimestamps: string[] }): void;
   onLLMSessionCleared(reason: LLMSessionClearReason): SessionClearResult | Promise<SessionClearResult>;
   onLLMSessionRebuilt(): SessionClearResult | Promise<SessionClearResult>;
+  appendAlbertMessage?(input: AppendAlbertMessageInput): void | Promise<void>;
   onLLMSessionCompleted?(): void;
   createLLMSessionId(occurredAt: string): number;
   initialLLMSession?: LLMSessionSnapshot;
@@ -604,6 +605,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
               alignSessionStaticPromptFingerprint(session as LLMSessionRecord);
             },
             onSessionRebuilt: () => clearLoopSession(() => deps.onLLMSessionRebuilt()),
+            appendAlbertMessage: deps.appendAlbertMessage,
             isLLMRunCancelled: deps.isLLMRunCancelled,
             promptProfile,
             async buildYieldResumeMessages(session) {

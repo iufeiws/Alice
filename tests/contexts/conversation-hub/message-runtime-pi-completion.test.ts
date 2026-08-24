@@ -183,3 +183,26 @@ test("pi completion without a message target still lands in Core pending", async
   assert.equal(sent[0].target.sessionId, "default");
   assert.equal(noteInbound.count, 1);
 });
+
+test("Yield clear appends an Albert message without sending it or creating Core pending work", () => {
+  const store = createAliceStore(path.join(makeTempDir("yield-clear-albert"), "alice.sqlite"));
+  const sent: AgentOutput[] = [];
+  const { runtime, noteInbound } = createRuntime({ store, sent });
+
+  runtime.appendAlbertMessage({
+    callId: "call_clear",
+    requester: { plugin: "feishu", channelId: "oc_chat_1", userId: "ou_user_1" },
+    externalSession: { scope: "dm", sessionId: "oc_chat_1" },
+    contentText: '<Alert info="上下文历史已清空" />'
+  });
+
+  const messages = store.listMessagesForConversation("oc_chat_1", 10);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].direction, "inbound");
+  assert.equal(messages[0].senderRole, "user");
+  assert.equal(messages[0].contentText, '<Alert info="上下文历史已清空" />');
+  assert.ok(messages[0].coreProcessedAt);
+  assert.equal(store.listUnprocessedCoreMessagesForConversation("oc_chat_1", 10).length, 0);
+  assert.equal(noteInbound.count, 0);
+  assert.equal(sent.length, 0);
+});

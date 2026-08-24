@@ -177,7 +177,8 @@ export function createApiRootRuntime() {
     resolvePromptApiPreset: foundation.resolvePromptApiPreset,
     appendLog: foundation.appendLog,
     sessionClearCoordinator,
-    processRestartContinuationStore
+    processRestartContinuationStore,
+    appendAlbertMessage: (message) => apiServerStackRuntime.apiCommunicationRuntime.messageRuntime.appendAlbertMessage(message)
   });
   agentLoopRuntime.setRunners({
     prepareChat: ({ event, signal, agentLoopRunSeq }) => apiAgentStackRuntime.chatAgent.prepareEventRun(event, { signal, agentLoopRunSeq }),

@@ -75,7 +75,7 @@ src/
 | **llm-gateway** | LLM 调用入口。`createOpenAICompatibleClient`（chat/completions + SSE + listModels）、`llm-requests.ts`（send + buildTools）、`llm-tool-loop.ts`（多轮 function-call loop，round/call 上限 100、continuation 恢复、全局 tool 注册表 `executeRegisteredLLMTool`）、运行时钩子（请求日志/usage/subagent transcript，SubAgent 转录落独立库 `memory-files/llm-subagent-sessions.sqlite`，失败降级不中断 LLM）、preset 配置（chat/talk 分离；每个 LLM API preset 可独立选择是否沿用进程代理，默认直连）；Pi relay 重建上游请求时只取 Pi 的 `messages`，模型、stream、采样参数及其他请求参数均来自 LLM preset；chat/talk 的延迟 response 会在格式化完成后通过同一 request 上下文提交，保留 usage 记录 |
 | **agent-profile** | Prompt 层管理。`domain/prompt-layer.ts` 为**唯一公共 layer 解析入口**（normalize、layer→LLMMessage、tool 参数解析）；`build-system-prompt.ts`（PromptProfile + build/append messages + layer 内嵌 tool call 回填 + staticPromptFingerprint）；`shell.ts`（每日 persona/relationship/outfit，`createDailyShellStore`；选项级 `enabled` 开关，关闭的选项不参与随机选中） |
 | **talk-session** | WebRTC 语音 talk 会话。SQLite 适配器（`logs/talk/talk.sqlite`，talk_sessions/events/transcript/outputs）、`createTalkRuntime`（open/append/delta/interrupt/claim；`closeSession` 异步，经统一清除协调器，成功后按序：重写 Talk LLM transcript → 标记 LLM session cleared 并清 pointer → 关闭 talk.sqlite 会话 → conversation-hub 投影 → 切 waiting，采集失败时保持打开）、`createTalkRuntimeRuntime`（+ conversation-hub 投影，会话关闭转 inbound 消息） |
-| **conversation-hub** | 多渠道消息统一入口。`createMessageRuntime`（ingestEvent/ingestLifecycle/sendSystemNotice/processNow/flushAll）内部组装 agentLoopRuntime + heartbeat 全部任务；`canRunHeartbeat` 检查 Main Agent 占用（`isMainAgentBusy`），清除期间到达的消息只入库并标记 pending、不进入 loop，force_wake 先获取 clearing 占用再清除、成功后才唤醒；`sqlite-conversation-store` 为 Core 侧消息历史 |
+| **conversation-hub** | 多渠道消息统一入口。`createMessageRuntime`（ingestEvent/ingestLifecycle/appendAlbertMessage/sendSystemNotice/processNow/flushAll）内部组装 agentLoopRuntime + heartbeat 全部任务；`canRunHeartbeat` 检查 Main Agent 占用（`isMainAgentBusy`），清除期间到达的消息只入库并标记 pending、不进入 loop，force_wake 先获取 clearing 占用再清除、成功后才唤醒；`sqlite-conversation-store` 为 Core 侧消息历史 |
 | **capabilities** | 插件 admin 运行时（asr/photo/tts/geo/image-recognition 等 admin-plugin-*）+ `tool-output-target.ts`（AgentOutput 投递目标解析器，产出 AgentOutput 的工具必须经此解析） |
 | **initiative** | Agent 主动行为。initiated-behavior 定义、触发评估、随机事件、admin 配置、JSON 存储 |
 | **prompt-context** | Prompt 模板变量渲染运行时（统一使用 `${{variable}}`，user/时间/dailyShell/memory/calendar/skills/notes_list/outfit 变量树）。未解析变量 warning 后保留原占位符，不再抛错；旧式 `{{variable}}` 作为普通文本。Short Memory 变量 `memory/shortMemory/content`：必填依赖 `shortMemoryStore`，取最新 wake boundary 的 `occurredAtUtc` 前 24 小时至当前的闭区间记录，输出 `<short_memories>` XML（`& < >` 转义，空结果固定空 XML），是否加入 Prompt layer 完全由用户 Prompt 编辑器配置决定 |
@@ -121,7 +121,7 @@ src/
 | sleep-cocoon | `sleep_cocoon` | 睡眠茧：in 钻进入睡（随机 ±15 分钟）/ out 取消 |
 | bookcase | `Bookcase` | 书橱抽书讲故事 / 还书（assets/tools/bookcase/booksummaries.sqlite） |
 | wardrobe | `Wardrobe` | 查看/切换服装（list/mirror/switch/random，可触发 on-body 生成） |
-| finish-and-wait | `Yield` | 等待或结束：对 LLM 暴露 await_chat（固定 15 分钟）/ finish；schedule（10s–15min 定时返回）实现保留但不在 profile 中暴露；连续 schedule 且无 subagent 运行时拒绝（防空转） |
+| finish-and-wait | `Yield` | 等待、清空上下文或结束：clear 清除当前 LLM 对话并在同一 loop 开启新一轮，同时追加仅供 Core/Albert 使用的 `<Alert info="上下文历史已清空" />`；await_chat 固定等待 15 分钟；schedule（10s–15min 定时返回）实现保留但不在 profile 中暴露；连续 schedule 且无 subagent 运行时拒绝（防空转） |
 
 `Yield`、`SubAgent`、`Panorama` 的 tool 输入 schema 使用 `action` 字符串 `enum` 与可选参数；各 action 的实际参数要求仍由工具执行层校验，不使用 `oneOf`。
 

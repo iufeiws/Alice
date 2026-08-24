@@ -672,6 +672,7 @@ function toolControlFromResult(result: ToolResult): LLMToolLoopControl {
   return {
     invalidateSession: result.invalidateLLMSession === true,
     resetSession: result.resetLLMSession === true,
+    continueAfterReset: result.continueAfterReset === true,
     yieldReturn: result.meta?.yieldReturn === true
   };
 }

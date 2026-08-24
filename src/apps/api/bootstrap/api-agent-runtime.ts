@@ -2,6 +2,7 @@ import { createChatAgentRuntime } from "../../../contexts/agent-loop/src/runtime
 import { createTalkRuntimeRuntime } from "../../../contexts/talk-session/src/runtime/talk-session-runtime.js";
 import type { PromptContextRuntime } from "../../../contexts/prompt-context/src/index.js";
 import { restartToolName } from "../../../capabilities/tools/restart/profile.js";
+import type { AppendAlbertMessageInput } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 
 export function createApiAgentRuntime(input: {
   config: any;
@@ -28,6 +29,7 @@ export function createApiAgentRuntime(input: {
   agentRunIndicator?: any;
   processRestartContinuationStore?: any;
   appendLog(level: "info" | "warn" | "error", message: string): void;
+  appendAlbertMessage?(input: AppendAlbertMessageInput): void | Promise<void>;
 }) {
   const { talkAgentLoop, talkRuntime } = createTalkRuntimeRuntime({
     isActiveTalkLLMSession: (sessionId) => input.agentLoopRuntime.isActiveTalkLLMSession(sessionId),
@@ -81,6 +83,7 @@ export function createApiAgentRuntime(input: {
     resolvePromptApiPreset: input.resolvePromptApiPreset,
     agentRunIndicator: input.agentRunIndicator,
     appendLog: input.appendLog,
+    appendAlbertMessage: input.appendAlbertMessage,
     initialLLMSession: input.agentLoopRuntime.loadCurrentLLMSessionTranscript(),
     processRestartContinuationStore: input.processRestartContinuationStore
   });

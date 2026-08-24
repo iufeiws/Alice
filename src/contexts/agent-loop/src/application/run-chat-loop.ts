@@ -1,4 +1,4 @@
-import type { AgentEvent, ToolResult } from "../contracts/agent-contracts.js";
+import type { AgentEvent, AppendAlbertMessageInput, ToolResult } from "../contracts/agent-contracts.js";
 import type { LLMChatInput, LLMChatResult, LLMClient, LLMStreamHandlers } from "../../../llm-gateway/src/index.js";
 import type { LLMRequestLogEntry } from "../../../llm-session/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
@@ -86,6 +86,7 @@ export type ChatAgentLoopInput = {
   applyModeStateToNewSession(mode: ChatAgentModeState): void;
   onFixedPrefixCleared?(session: ChatAgentLoopSession): void;
   onSessionRebuilt?(): unknown | Promise<unknown>;
+  appendAlbertMessage?(input: AppendAlbertMessageInput): void | Promise<void>;
   isLLMRunCancelled?(): boolean;
   promptProfile?: PromptProfile;
   buildYieldResumeMessages?(session: ChatAgentLoopSession): Promise<LLMChatInput["messages"]> | LLMChatInput["messages"];
@@ -254,7 +255,20 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
       if (toolResult.clearFixedPrefix) input.onFixedPrefixCleared?.(session);
       if (execution.modeState) input.applyModeStateToNewSession(execution.modeState);
       // §7.1: session rebuild 路径(mode_transition 清除)必须完成后才继续下一轮 loop。
-      if (execution.sessionRebuilt) await input.onSessionRebuilt?.();
+      let sessionRebuiltResult: unknown;
+      if (execution.sessionRebuilt) sessionRebuiltResult = await input.onSessionRebuilt?.();
+      if (toolResult.appendAlbertMessage) {
+        if (!execution.sessionRebuilt || !isClearedSessionResult(sessionRebuiltResult)) {
+          throw new Error("yield_clear_session_not_cleared");
+        }
+        if (!input.appendAlbertMessage) throw new Error("yield_clear_albert_appender_unavailable");
+        await input.appendAlbertMessage({
+          callId: call.id,
+          requester: input.event.source,
+          externalSession: input.event.externalSession,
+          contentText: toolResult.appendAlbertMessage.contentText
+        });
+      }
       return followup.messages.length > 0
         ? { ...execution, messages: followup.messages }
         : execution;
@@ -280,6 +294,10 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
     }
   };
 
+}
+
+function isClearedSessionResult(value: unknown): boolean {
+  return Boolean(value && typeof value === "object" && (value as { cleared?: unknown }).cleared === true);
 }
 
 export { runPromptToolRequest } from "./agent-loop-tool-executor.js";

@@ -128,6 +128,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   const latestSessionEvents = new Map<string, AgentEvent>();
   const pendingSessions = new Set<string>();
   const processingSessions = new Set<string>();
+  let failedAgentSessionEvent: AgentEvent | undefined;
   const time = deps.time ?? createCurrentTimeProvider("UTC", deps.now);
   const now = () => time.now().date;
   const random = deps.random ?? Math.random;
@@ -147,6 +148,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       getIdleTransitionDelayMs: () => idleTransitionDelayMs(deps.agentState?.getSnapshot?.(), time.timeZone),
       onIdleTimerTransition: deps.onIdleTimerTransition,
       canRunHeartbeat,
+      retryFailedSessionBeforeStateSwitch,
       tickAgentState: () => {
         deps.agentState?.tick();
       },
@@ -544,6 +546,16 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     return deps.agentState?.canRunHeartbeat() ?? true;
   }
 
+  async function retryFailedSessionBeforeStateSwitch(): Promise<boolean> {
+    const event = failedAgentSessionEvent;
+    const snapshot = deps.agentState?.getSnapshot?.();
+    if (!event || snapshot?.state !== "waiting" || !snapshot.nextTransitionAt) return false;
+    if (parseZonedIso(snapshot.nextTransitionAt, time.timeZone).getTime() > now().getTime()) return false;
+    if (!canRunHeartbeat()) return true;
+    await runGeneratedSession(event, "failed agent retry");
+    return true;
+  }
+
   async function runTalkSession(sessionId: number): Promise<boolean> {
     const result = await agentLoopRuntime.requestRun({
       kind: "talk",
@@ -554,13 +566,20 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   }
 
   async function runChatEvent(event: AgentEvent, reason: string): Promise<AgentOutput[]> {
-    const result = await agentLoopRuntime.requestRun({
-      kind: "chat",
-      sessionId: event.externalSession.sessionId,
-      reason,
-      event
-    });
+    let result;
+    try {
+      result = await agentLoopRuntime.requestRun({
+        kind: "chat",
+        sessionId: event.externalSession.sessionId,
+        reason,
+        event
+      });
+    } catch (error) {
+      failedAgentSessionEvent = event;
+      throw error;
+    }
     if (!result.started) throw new Error("agent_loop_busy");
+    failedAgentSessionEvent = undefined;
     return result.outputs;
   }
 

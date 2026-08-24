@@ -21,6 +21,7 @@ export type AgentHeartbeatRunTaskDeps = {
   getIdleTransitionDelayMs?(): number | undefined;
   onIdleTimerTransition?(input: { delayMs: number }): Promise<unknown> | unknown;
   canRunHeartbeat(): boolean;
+  retryFailedSessionBeforeStateSwitch?(): Promise<boolean>;
   tickAgentState?(): void;
   onHeartbeatTick?(): void;
   hasPendingUserMessages(): boolean;
@@ -160,6 +161,7 @@ async function runHeartbeatTasks(tasks: AgentHeartbeatRunTaskDeps, options: Agen
     return processed;
   }
 
+  if (await tasks.retryFailedSessionBeforeStateSwitch?.()) return processed;
   tasks.tickAgentState?.();
   // 非 force 门控(恢复 HEAD 位置): 占用期间非 force 心跳仍先 tick 状态
   // (睡眠/away 期间的周期性心跳), 但不得进入任何任务分支。

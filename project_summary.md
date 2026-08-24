@@ -173,7 +173,7 @@ first-party skill 位于 `capabilities/skills/{name}/SKILL.md`（frontmatter 含
 
 ### 5.2 心跳与主动行为（heartbeat）
 
-`agent-heartbeat-runtime.runHeartbeatTasks` 依次处理：idle timer transition、randomized initiated behavior、timed yield（Yield 工具 schedule 到期）、talk session、sleep cocoon wake/goodnight、calendar reminder、pending session 队列。Agent 状态机 `AgentStateController`（idle/waiting/calling/away/sleeping 等）。
+`agent-heartbeat-runtime.runHeartbeatTasks` 依次处理：idle timer transition、randomized initiated behavior、timed yield（Yield 工具 schedule 到期）、talk session、sleep cocoon wake/goodnight、calendar reminder、pending session 队列。Agent 状态机 `AgentStateController`（idle/waiting/calling/away/sleeping 等）。最近一次 Chat Agent session 请求失败时会保留失败标记；`waiting` 状态切换到期后先重试同一 session 并退出本次切换，成功请求清除标记，LLM 请求结束仍通过既有 settlement 路径重置状态切换倒计时。
 
 ### 5.3 睡眠记忆归纳（Memorize）
 

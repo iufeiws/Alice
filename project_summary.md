@@ -108,7 +108,7 @@ src/
 
 | 工具 | Tool 名 | 职责 |
 |---|---|---|
-| messaging | `Chat` | 查看聊天记录 / 发送消息（text/markdown/image/voice/file）；`today` 从“睡眠茧时间点前 10 条消息”与最后一条 Short Memory 写入时间中的较晚起点开始，无睡眠茧时以今日锚点参与比较 |
+| messaging | `Chat` | 查看聊天记录 / 发送消息（text/markdown/image/voice/file）；`today` 比较“睡眠茧时间点前最后 10 条消息”与“最后一条 Short Memory 写入时间前最后 10 条消息”的窗口起点并取较晚者，无睡眠茧时以今日锚点参与比较 |
 | photo | `Selfie` | 自拍（pose 描述，生成前发进行中提示，禁止连续两次调用） |
 | calendar | `calendar` | 日历增删查搜 + 上下文渲染（SQLite CalendarStore） |
 | shell | `Bash` | 沙盒 bash 执行（透传 PiWorker） |
@@ -131,7 +131,7 @@ capabilities/tools/{tool name}/
 ├── src/                          # 业务代码
 │   ├── index.ts                  # 导出 createXxxTools(deps): ToolPlugin 工厂（契约 id + listTools + execute）
 │   └── *.ts                      # 复杂工具按需拆分（config.ts / types.ts / tool-runtime.ts 等）
-├── profile.ts                    # 纯静态声明：ToolDefinition（name/description/inputSchema/suppressExecutionCard）
+├── profile.ts                    # 纯静态声明：ToolDefinition（name/description/inputSchema/passRenderText/suppressExecutionCard）
 │                                 #   + 工具名常量 + 描述常量 + 提示/报错/警告/系统提示文本常量
 │                                 #   可被 chat-agent / admin-api 等跨模块直接引用（如 restartToolName）
 └── README.md                     # 可选：工具行为说明（photo / subagent / bookcase 有）
@@ -146,7 +146,7 @@ capabilities/tools/{tool name}/
 
 ### 4.4.c capabilities/skills —— 项目专有技能
 
-first-party skill 位于 `capabilities/skills/{name}/SKILL.md`（frontmatter 含 `name` / `description`），由 skills 注册表扫描（每次访问实时重扫），自动出现在 `${{system_skills}}`，经 `Skill` 工具按名称加载。现有内置技能：
+first-party skill 位于 `capabilities/skills/{name}/SKILL.md`（frontmatter 含 `name` / `description`），由 skills 注册表扫描（每次访问实时重扫），自动出现在 `${{system_skills}}`，经 `Skill` 工具按名称加载；加载时只展开 `${{variable}}`，未解析变量和旧式 `{{variable}}` 保持原文。现有内置技能：
 
 | Skill | 职责 |
 |---|---|

@@ -146,7 +146,7 @@ test("Skill tool returns spec error codes", async () => {
 
 test("Skill loader expands prompt context variables and keeps unresolved placeholders literal", () => {
   const root = tmpDir("skills-placeholders");
-  writeSkill(root, "installed", "name: installed\ndescription: Show installed skills.", "已安装:\n${{installed_skills}}\n${{unknown_variable}}\n");
+  writeSkill(root, "installed", "name: installed\ndescription: Show installed skills.", "已安装:\n${{installed_skills}}\n${{unknown_variable}}\n旧格式: {{installed_skills}}\n");
   const registry = createSkillRegistry({ roots: [{ root, source: "first-party" }] });
   const runtime = createBashSandboxRuntime({
     config: testConfig({ skillMounts: [] }),
@@ -158,5 +158,5 @@ test("Skill loader expands prompt context variables and keeps unresolved placeho
 
   assert.match(loaded.instructions, /<installed_skills>/);
   assert.match(loaded.instructions, /<skill>demo<\/skill>/);
-  assert.match(loaded.instructions, /\{\{unknown_variable\}\}/);
+  assert.equal(loaded.instructions, "---\nname: installed\ndescription: Show installed skills.\n---\n\n已安装:\n<installed_skills>\n  <skill>demo</skill>\n</installed_skills>\n${{unknown_variable}}\n旧格式: {{installed_skills}}\n");
 });

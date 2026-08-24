@@ -14,7 +14,7 @@ memory-files/long-term-memory/user-preferences.md
 
 - `long-term-memory/persistent-memory.md`：长期事实、关系连续性和稳定背景，最多 100 行且不超过 10 KiB（10240 字节）。
 - `long-term-memory/user-preferences.md`：用户稳定偏好、互动风格和约束，最多 80 行且不超过 8 KiB（8192 字节）。
-- `alice.sqlite`：保存长期记忆、用户偏好、agent 每日日记、睡眠/醒来边界和 Core 侧消息历史；最新日记会作为 `{{memory/yesterdaySummary/content}}` 注入 prompt，单条最多 20 行且不超过 2 KiB（2048 字节）。
+- `alice.sqlite`：保存长期记忆、用户偏好、agent 每日日记、睡眠/醒来边界和 Core 侧消息历史；最新日记会作为 `${{memory/yesterdaySummary/content}}` 注入 prompt，单条最多 20 行且不超过 2 KiB（2048 字节）。
 
 `long-term-memory/` 是独立 git 仓库。每次 Memorize 写入持久记忆或用户偏好后，会直接提交一次 git 历史；这些修订历史不进入 SQLite。
 

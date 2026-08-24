@@ -27,6 +27,17 @@ function selfiePromptRuntime() {
   });
 }
 
+test("photo_promptAssets_useCurrentVariableSyntax", () => {
+  const referencePrompt = fs.readFileSync(path.resolve("assets/selfie/references/selfie-prompt.txt"), "utf8");
+  const photoConfig = JSON.parse(fs.readFileSync(path.resolve("config/plugin/photo/config.json"), "utf8")) as Record<string, unknown>;
+  const prompts = [referencePrompt, photoConfig.onBodyPrompt, photoConfig.selfieOnBodyPrompt];
+
+  for (const prompt of prompts) {
+    assert.equal(typeof prompt, "string");
+    assert.doesNotMatch(prompt as string, /(?<!\$)\{\{\s*[A-Za-z0-9_/]+\s*\}\}/);
+  }
+});
+
 function makeSuccessfulSelfieFixture(name: string) {
   const outputRoot = makeAssetTempDir(name);
   const referenceRoot = makeTempDir(`${name}-ref`);

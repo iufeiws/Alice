@@ -58,7 +58,7 @@ export function createSkillLoader(
 
 function expandVariablePlaceholders(content: string, resolveVariable?: (name: string) => string | undefined): string {
   if (!resolveVariable) return content;
-  const keys = [...new Set([...content.matchAll(/\{\{([A-Za-z0-9_.-]+)\}\}/g)].map((match) => match[1]))];
+  const keys = [...new Set([...content.matchAll(/\$\{\{([A-Za-z0-9_.-]+)\}\}/g)].map((match) => match[1]))];
   const values: Record<string, string> = {};
   for (const key of keys) {
     const value = resolveVariable(key);

@@ -27,6 +27,7 @@ test("Pi preset snapshot retains only approved upstream fields", () => {
     temperature: 0.3,
     maxTokens: 1024,
     timeoutMs: 10_000,
+    stream: true,
     useProxy: false,
     supportsImage: true,
     extraParams: { top_p: 0.8 }

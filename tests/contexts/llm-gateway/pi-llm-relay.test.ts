@@ -14,12 +14,13 @@ const preset: PiPresetSnapshot = {
   model: "model-a",
   temperature: 0.2,
   timeoutMs: 10_000,
+  stream: true,
   useProxy: false,
   supportsImage: false,
   extraParams: {}
 };
 
-test("relay only forwards the capability preset model with the host-side key", async () => {
+test("relay ignores Pi request parameters except messages", async () => {
   const requests: RequestInit[] = [];
   const usage: any[] = [];
   const relay = createPiLLMRelay({
@@ -29,7 +30,7 @@ test("relay only forwards the capability preset model with the host-side key", a
       assert.equal(url, "https://upstream.example/v1/chat/completions");
       requests.push(init!);
       assert.equal(new Headers(init!.headers).get("authorization"), "Bearer upstream-secret");
-      assert.deepEqual(JSON.parse(String(init!.body)), { model: "model-a", temperature: 0.2, messages: [{ role: "user", content: "hi" }] });
+      assert.deepEqual(JSON.parse(String(init!.body)), { model: "model-a", stream: true, temperature: 0.2, messages: [{ role: "user", content: "hi" }] });
       return new Response(JSON.stringify({ id: "r1", model: "model-a", choices: [], usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 } }), { status: 200, headers: { "content-type": "application/json" } });
     }
   });
@@ -37,7 +38,18 @@ test("relay only forwards the capability preset model with the host-side key", a
   const response = await relay.handle(new Request("http://relay/v1/chat/completions", {
     method: "POST",
     headers: { authorization: "Bearer token-a", "x-pi-session-id": "session-a" },
-    body: JSON.stringify({ model: "model-a", messages: [{ role: "user", content: "hi" }], authorization: "bad" })
+    body: JSON.stringify({
+      model: "pi-selected-model",
+      messages: [{ role: "user", content: "hi" }],
+      authorization: "bad",
+      metadata: { session_id: "pi-selected-session" },
+      stream: false,
+      temperature: 1.9,
+      max_tokens: 1,
+      reasoning_effort: "medium",
+      thinking: { type: "disabled" },
+      tools: [{ type: "function", function: { name: "not-forwarded" } }]
+    })
   }));
   assert.equal(response.status, 200);
   assert.equal(requests.length, 1);
@@ -46,15 +58,15 @@ test("relay only forwards the capability preset model with the host-side key", a
   assert.deepEqual(usage[0].result.usage, { inputTokens: 3, outputTokens: 4, totalTokens: 7, cacheHitTokens: undefined, cacheMissTokens: undefined });
 });
 
-test("relay rejects invalid capability and model without upstream access", async () => {
+test("relay rejects invalid capability but ignores Pi model", async () => {
   let calls = 0;
   const relay = createPiLLMRelay({ time, recordTokenUsageEvent() {}, fetchImpl: async () => { calls += 1; return new Response(); } });
   const capability = relay.createCapability({ sandboxId: "sandbox-a", token: "token-a", preset });
   const invalid = await relay.handle(new Request("http://relay/v1/chat/completions", { method: "POST", headers: { authorization: "Bearer wrong" }, body: "{}" }));
   assert.equal(invalid.status, 403);
   const model = await relay.handle(new Request("http://relay/v1/chat/completions", { method: "POST", headers: { authorization: "Bearer token-a" }, body: JSON.stringify({ model: "other", messages: [] }) }));
-  assert.equal(model.status, 400);
-  assert.equal(calls, 0);
+  assert.equal(model.status, 200);
+  assert.equal(calls, 1);
 });
 
 test("relay applies the immutable preset sampling values", async () => {
@@ -71,11 +83,10 @@ test("relay applies the immutable preset sampling values", async () => {
   const response = await relay.handle(new Request("http://relay/v1/chat/completions", {
     method: "POST",
     headers: { authorization: "Bearer token-a" },
-    body: JSON.stringify({ model: "model-a", temperature: 0.1, top_p: 0.1, messages: [] })
+    body: JSON.stringify({ model: "model-a", stream: false, temperature: 0.1, top_p: 0.1, reasoning_effort: "medium", messages: [], tools: [] })
   }));
   assert.equal(response.status, 200);
-  assert.equal(body?.temperature, 0.7);
-  assert.equal(body?.top_p, 0.8);
+  assert.deepEqual(body, { model: "model-a", top_p: 0.8, stream: true, temperature: 0.7, messages: [] });
 });
 
 test("relay omits upstream authorization when the project preset has no api key", async () => {

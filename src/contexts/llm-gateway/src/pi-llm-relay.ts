@@ -243,14 +243,12 @@ async function handleRelayRequest(
   } catch {
     return relayError(400, "pi_relay_invalid_json");
   }
-  // Session id is diagnostics only; it never participates in authorization.
-  const _sessionId = sessionIdFrom(headers, parsed);
-  if (parsed.model !== preset.model) return relayError(400, "pi_relay_model_not_allowed");
   const upstreamBody: Record<string, unknown> = {
-    ...parsed,
     ...preset.extraParams,
     model: preset.model,
+    stream: preset.stream,
     temperature: preset.temperature,
+    messages: parsed.messages,
     ...(preset.maxTokens === undefined ? {} : { max_tokens: preset.maxTokens })
   };
   delete upstreamBody.authorization;
@@ -432,17 +430,6 @@ function nestedNumber(value: unknown, key: string): number | undefined {
 
 function number(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function sessionIdFrom(headers: Headers, body: Record<string, unknown>): string | undefined {
-  const header = headers.get("x-pi-session-id");
-  if (header?.trim()) return header.trim();
-  const metadata = body.metadata;
-  if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
-    const sessionId = (metadata as Record<string, unknown>).session_id;
-    if (typeof sessionId === "string" && sessionId.trim()) return sessionId.trim();
-  }
-  return undefined;
 }
 
 function readBody(request: Request | PiRelayRequest, maxBodyBytes: number): Promise<Buffer> {

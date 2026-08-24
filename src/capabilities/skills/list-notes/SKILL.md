@@ -1,11 +1,11 @@
 ---
 name: list-notes
-description: 列出 sandbox 中 ~/.agent/notes 下的笔记，包含每个笔记的 name / description / path。
+description: 列出 sandbox 中 ~/.agents/notes 下的笔记，包含每个笔记的 name / description / path。
 ---
 
 # 查看笔记列表
 
-以下是 sandbox 中 `~/.agent/notes`（容器内 `/home/alice/.agent/notes`）下的笔记：
+以下是 sandbox 中 `~/.agents/notes`（容器内 `/home/alice/.agents/notes`）下的笔记：
 
 ${{notes_list}}
 

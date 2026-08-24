@@ -6,7 +6,7 @@ const path = await import("node:path");
 
 export function testConfig(overrides: Partial<BashSandboxConfig> = {}): BashSandboxConfig {
   const root = tmpDir("bash-sandbox");
-  const skillsDir = "/home/alice/.agent/skills";
+  const skillsDir = "/home/alice/.agents/skills";
   return {
     containerName: "test-bash-sandbox",
     image: "cimg/python:3.13-browsers",
@@ -17,7 +17,7 @@ export function testConfig(overrides: Partial<BashSandboxConfig> = {}): BashSand
     cacheDir: "/cache",
     tmpDir: "/tmp",
     skillsDir,
-    notesDir: "/home/alice/.agent/notes",
+    notesDir: "/home/alice/.agents/notes",
     skillMounts: [{ id: "demo", hostPath: path.join(root, "skills", "demo"), containerPath: path.posix.join(skillsDir, "demo"), readOnly: true }],
     mounts: [],
     network: "none",

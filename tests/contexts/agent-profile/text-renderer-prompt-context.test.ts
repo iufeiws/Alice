@@ -12,7 +12,7 @@ test("prompt context runtime exposes system_skills and installed_skills from the
     memoryStore: { read: () => ({}) },
     diaryStore: { latestWakeBoundary: () => undefined },
     calendarStore: { listEntries: () => [] },
-    skillsDirPath: "/custom-home/.agent/skills",
+    skillsDirPath: "/custom-home/.agents/skills",
     skillsRegistry: {
       available: () => [
         { name: "weather", description: "天气查询", source: "first-party" },
@@ -28,7 +28,7 @@ test("prompt context runtime exposes system_skills and installed_skills from the
   assert.equal(runtime.listVariables().length > 0, true);
   assert.equal(runtime.renderText("${{system_skills}}"), systemSkills);
   assert.equal(runtime.renderText("${{installed_skills}}"), installedSkills);
-  assert.equal(runtime.renderText("${{skills/dirPath}}"), "/custom-home/.agent/skills");
+  assert.equal(runtime.renderText("${{skills/dirPath}}"), "/custom-home/.agents/skills");
   assert.ok(systemSkills.includes("<system_skills>"));
   assert.ok(systemSkills.includes("<name>weather</name>"));
   assert.ok(!systemSkills.includes("lark-doc"));
@@ -46,11 +46,11 @@ test("prompt context runtime exposes notes_list from the injected listNotes prov
     memoryStore: { read: () => ({}) },
     diaryStore: { latestWakeBoundary: () => undefined },
     calendarStore: { listEntries: () => [] },
-    skillsDirPath: "/home/alice/.agent/skills",
+    skillsDirPath: "/home/alice/.agents/skills",
     skillsRegistry: { available: () => [] },
     shortMemoryStore: { listByCreatedAtUtcRange: () => [] },
     listNotes: () => [
-      { name: "feishu-sending", description: "发送要点", path: "/home/alice/.agent/notes/feishu-sending.md" }
+      { name: "feishu-sending", description: "发送要点", path: "/home/alice/.agents/notes/feishu-sending.md" }
     ]
   } as any);
 
@@ -59,7 +59,7 @@ test("prompt context runtime exposes notes_list from the injected listNotes prov
   assert.ok(notes.includes("<notes>"));
   assert.ok(notes.includes("<name>feishu-sending</name>"));
   assert.ok(notes.includes("<description>发送要点</description>"));
-  assert.ok(notes.includes("<path>/home/alice/.agent/notes/feishu-sending.md</path>"));
+  assert.ok(notes.includes("<path>/home/alice/.agents/notes/feishu-sending.md</path>"));
 });
 
 test("prompt context runtime renders an empty notes tag without a listNotes provider", () => {
@@ -71,7 +71,7 @@ test("prompt context runtime renders an empty notes tag without a listNotes prov
     memoryStore: { read: () => ({}) },
     diaryStore: { latestWakeBoundary: () => undefined },
     calendarStore: { listEntries: () => [] },
-    skillsDirPath: "/home/alice/.agent/skills",
+    skillsDirPath: "/home/alice/.agents/skills",
     skillsRegistry: { available: () => [] },
     shortMemoryStore: { listByCreatedAtUtcRange: () => [] }
   } as any);

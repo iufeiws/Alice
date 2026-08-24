@@ -151,7 +151,7 @@ first-party skill 位于 `capabilities/skills/{name}/SKILL.md`（frontmatter 含
 | Skill | 职责 |
 |---|---|
 | list-installed-skills | 列出已安装的 third-party skills（`${{installed_skills}}` 动态构建） |
-| list-notes | 列出 sandbox 中 `~/.agent/notes` 下的笔记（`${{notes_list}}` 加载时动态构建 name / description / path；笔记文件带同名 frontmatter，目录在 sandbox 容器内） |
+| list-notes | 列出 sandbox 中 `~/.agents/notes` 下的笔记（`${{notes_list}}` 加载时动态构建 name / description / path；笔记文件带同名 frontmatter，目录在 sandbox 容器内） |
 
 ### 4.5 platform 与 shared
 

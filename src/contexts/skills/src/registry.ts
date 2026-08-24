@@ -73,7 +73,7 @@ function scanSkillRoot(config: SkillRootConfig): SkillMetadata[] {
     const frontmatter = parseFrontmatter(fs.readFileSync(instructionPath, "utf8"));
     const name = frontmatter.name || path.basename(hostRoot);
     if (!name || !frontmatter.description) continue;
-    const sandboxRoot = `${(config.sandboxRoot ?? "/home/alice/.agent/skills").replace(/\/+$/, "")}/${name}`;
+    const sandboxRoot = `${(config.sandboxRoot ?? "/home/alice/.agents/skills").replace(/\/+$/, "")}/${name}`;
     found.push({
       id: relativeRoot || name,
       name,

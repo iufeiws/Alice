@@ -20,7 +20,7 @@ function runtime() {
     memoryStore: { read: () => ({ persistent: "p", userPreferences: "u", yesterdaySummary: "y" }) },
     diaryStore: { latestWakeBoundary: () => ({ occurredAt: "2026-06-03T07:30:00.000" }) },
     calendarStore: { listEntries: () => [{ title: "买药", startAt: "2026-06-04T09:30:00.000" }] },
-    skillsDirPath: "/home/alice/.agent/skills",
+    skillsDirPath: "/home/alice/.agents/skills",
     skillsRegistry: { available: () => [] },
     shortMemoryStore: { listByCreatedAtUtcRange: () => [] },
     worldWandererConfigPath: "/tmp/alice-test-missing-world-wanderer.json"
@@ -45,7 +45,7 @@ test("prompt runtime renders the new syntax and preserves unresolved variables w
     memoryStore: { read: () => ({}) },
     diaryStore: { latestWakeBoundary: () => undefined },
     calendarStore: { listEntries: () => [] },
-    skillsDirPath: "/home/alice/.agent/skills",
+    skillsDirPath: "/home/alice/.agents/skills",
     skillsRegistry: { available: () => [] },
     shortMemoryStore: { listByCreatedAtUtcRange: () => [] },
     warn: (message: string) => warnings.push(message)

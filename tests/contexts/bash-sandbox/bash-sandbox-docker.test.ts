@@ -32,8 +32,8 @@ test("docker executor runs with configured sandbox contract", async () => {
   assert.match(runCall, /-w \/home\/alice/);
   assert.match(runCall, /\/sandbox\/bin:ro/);
   assert.match(runCall, /\/assets-host:\/assets:ro/);
-  assert.match(runCall, /:\/home\/alice\/\.agent:rw/);
-  assert.ok(runCall.indexOf(":/home/alice/.agent:rw") < runCall.indexOf(":/home/alice/.agent/skills/demo:ro"));
+  assert.match(runCall, /:\/home\/alice\/\.agents:rw/);
+  assert.ok(runCall.indexOf(":/home/alice/.agents:rw") < runCall.indexOf(":/home/alice/.agents/skills/demo:ro"));
   assert.equal(result.stdout.trim(), "docker-ok");
   assert.equal(progress.join(""), "docker-ok");
   assert.equal(result.streamedBeforeCommandFinished, true);
@@ -106,7 +106,7 @@ exit 64
         }
       } : {}),
       mounts: [
-        { id: "agent", hostPath: path.join(root, "agent"), containerPath: "/home/alice/.agent", readOnly: false },
+        { id: "agent", hostPath: path.join(root, "agent"), containerPath: "/home/alice/.agents", readOnly: false },
         { id: "assets", hostPath: path.join(root, "assets-host"), containerPath: "/assets", readOnly: true }
       ]
     });

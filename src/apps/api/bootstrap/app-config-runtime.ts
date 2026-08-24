@@ -263,14 +263,14 @@ export function loadConfig(env: Env = process.env): AppConfig {
       hostCacheDir: env.BASH_SANDBOX_HOST_CACHE_DIR ?? ".sandbox/bash/cache",
       cacheDir: env.BASH_SANDBOX_CACHE_DIR ?? "/cache",
       tmpDir: env.BASH_SANDBOX_TMP_DIR ?? "/tmp",
-      skillsDir: env.BASH_SANDBOX_SKILLS_DIR ?? path.posix.join(sandboxWorkspaceDir, ".agent", "skills"),
-      notesDir: env.BASH_SANDBOX_NOTES_DIR ?? path.posix.join(sandboxWorkspaceDir, ".agent", "notes"),
+      skillsDir: env.BASH_SANDBOX_SKILLS_DIR ?? path.posix.join(sandboxWorkspaceDir, ".agents", "skills"),
+      notesDir: env.BASH_SANDBOX_NOTES_DIR ?? path.posix.join(sandboxWorkspaceDir, ".agents", "notes"),
       skillMounts: [],
       mounts: withDefaultMounts(
         parseBashSandboxMounts(env.BASH_SANDBOX_MOUNTS ? JSON.parse(env.BASH_SANDBOX_MOUNTS) : []),
         installedSkillsRoot,
         sandboxWorkspaceDir,
-        env.BASH_SANDBOX_SKILLS_DIR ?? path.posix.join(sandboxWorkspaceDir, ".agent", "skills")
+        env.BASH_SANDBOX_SKILLS_DIR ?? path.posix.join(sandboxWorkspaceDir, ".agents", "skills")
       ),
       network: env.BASH_SANDBOX_NETWORK === "none" ? "none" : "configured",
       timeoutMs: envNumber(env.BASH_SANDBOX_TIMEOUT_MS, 60_000),

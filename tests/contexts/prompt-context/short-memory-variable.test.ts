@@ -38,7 +38,7 @@ function createRuntime(input: {
     memoryStore: { read: () => ({}) },
     diaryStore: { latestWakeBoundary: () => input.wakeBoundary },
     calendarStore: { listEntries: () => [] },
-    skillsDirPath: "/home/alice/.agent/skills",
+    skillsDirPath: "/home/alice/.agents/skills",
     skillsRegistry: { available: () => [] },
     worldWandererConfigPath: "/tmp/alice-test-missing-world-wanderer.json",
     shortMemoryStore: store

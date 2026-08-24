@@ -18,16 +18,16 @@ test("parseSandboxNotesOutput extracts name/description/path from frontmatter bl
     "---"
   ].join("\n");
 
-  assert.deepEqual(parseSandboxNotesOutput(output, "/home/alice/.agent/notes"), [
+  assert.deepEqual(parseSandboxNotesOutput(output, "/home/alice/.agents/notes"), [
     {
       name: "feishu-sending",
       description: "飞书消息发送必须用 chat send",
-      path: "/home/alice/.agent/notes/feishu-sending.md"
+      path: "/home/alice/.agents/notes/feishu-sending.md"
     },
     {
       name: "image-sending",
       description: '沙盒内发图用 type="file"',
-      path: "/home/alice/.agent/notes/image-sending.md"
+      path: "/home/alice/.agents/notes/image-sending.md"
     }
   ]);
 });

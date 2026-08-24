@@ -48,7 +48,7 @@ test("config mounts installed skills read-write at the sandbox home", () => {
     containerPath: mount.containerPath,
     readOnly: mount.readOnly
   })), [
-    { hostPath: fs.realpathSync(".agents"), containerPath: "/home/alice/.agent", readOnly: false }
+    { hostPath: fs.realpathSync(".agents"), containerPath: "/home/alice/.agents", readOnly: false }
   ]);
 });
 

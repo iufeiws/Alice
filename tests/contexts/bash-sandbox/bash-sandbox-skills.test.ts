@@ -83,7 +83,7 @@ test("Skill tool returns instructions verbatim without escaping XML tags", async
     executor: fakeExecutor(async () => ({ stdout: "", stderr: "", exitCode: 0, timedOut: false, durationMs: 1, truncated: false }))
   });
   const loader = createSkillLoader(registry, runtime, undefined, (name) =>
-    name === "notes_list" ? "<notes>\n  <note>\n    <name>demo</name>\n    <path>/home/alice/.agent/notes/demo.md</path>\n  </note>\n</notes>" : undefined
+    name === "notes_list" ? "<notes>\n  <note>\n    <name>demo</name>\n    <path>/home/alice/.agents/notes/demo.md</path>\n  </note>\n</notes>" : undefined
   );
   writeSkill(root, "notes", "name: notes\ndescription: notes list.", "笔记:\n${{notes_list}}\n");
   const tools = createSkillsTools({ loader });
@@ -93,7 +93,7 @@ test("Skill tool returns instructions verbatim without escaping XML tags", async
   assert.equal(loaded.ok, true);
   const output = String(loaded.output);
   assert.match(output, /<notes>/);
-  assert.match(output, /<path>\/home\/alice\/\.agent\/notes\/demo\.md<\/path>/);
+  assert.match(output, /<path>\/home\/alice\/\.agents\/notes\/demo\.md<\/path>/);
   assert.ok(!output.includes("&lt;notes&gt;"));
 });
 

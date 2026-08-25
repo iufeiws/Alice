@@ -20,6 +20,7 @@ export type AgentHeartbeatRunTaskDeps = {
   isIdleTransitionDue?(): boolean;
   getIdleTransitionDelayMs?(): number | undefined;
   onIdleTimerTransition?(input: { delayMs: number }): Promise<unknown> | unknown;
+  isMainAgentBusy?(): boolean;
   canRunHeartbeat(): boolean;
   retryFailedSessionBeforeStateSwitch?(): Promise<boolean>;
   tickAgentState?(): void;
@@ -130,9 +131,11 @@ export function createAgentHeartbeatRuntime(input: {
 async function runHeartbeatTasks(tasks: AgentHeartbeatRunTaskDeps, options: AgentHeartbeatRunOptions = {}): Promise<number> {
   const force = options.force ?? false;
   let processed = 0;
+  if (tasks.isMainAgentBusy?.()) return 0;
   // 问题 2: force 只绕过延迟/随机行为等策略, 不绕过 Main Agent 互斥门控——
   // clearing/running 占用期间 force run 不进入任何任务分支(含 idle 过渡检查与状态 tick)。
   if (force && !tasks.canRunHeartbeat()) return 0;
+  if (await tasks.retryFailedSessionBeforeStateSwitch?.()) return processed;
   // 恢复原语义(HEAD): idle 过渡 hook 仅在非 force 心跳执行, force 不执行。
   const idleTransitionDue = !force && tasks.isIdleTransitionDue?.() === true;
   let idleTransitionEvent: unknown;
@@ -161,7 +164,6 @@ async function runHeartbeatTasks(tasks: AgentHeartbeatRunTaskDeps, options: Agen
     return processed;
   }
 
-  if (await tasks.retryFailedSessionBeforeStateSwitch?.()) return processed;
   tasks.tickAgentState?.();
   // 非 force 门控(恢复 HEAD 位置): 占用期间非 force 心跳仍先 tick 状态
   // (睡眠/away 期间的周期性心跳), 但不得进入任何任务分支。

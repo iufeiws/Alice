@@ -146,6 +146,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       isIdleTransitionDue: () => isIdleTransitionDue(deps.agentState?.getSnapshot?.()),
       getIdleTransitionDelayMs: () => idleTransitionDelayMs(deps.agentState?.getSnapshot?.(), time.timeZone),
       onIdleTimerTransition: deps.onIdleTimerTransition,
+      isMainAgentBusy: () => agentLoopRuntime.isMainAgentBusy() || deps.isLLMSessionActive?.() === true,
       canRunHeartbeat,
       retryFailedSessionBeforeStateSwitch,
       tickAgentState: () => {

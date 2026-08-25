@@ -128,7 +128,7 @@ test("openai stream client aborts requests at timeout", async () => {
   }
 });
 
-test("openai stream client removes parenthesized response content across chunks", async () => {
+test("openai stream client preserves parenthesized response content across chunks when disabled", async () => {
   const originalFetch = globalThis.fetch;
   const stream = new ReadableStream({
     start(controller) {
@@ -148,7 +148,47 @@ test("openai stream client removes parenthesized response content across chunks"
     const client = createOpenAICompatibleClient({
       baseURL: "http://example.test/v1",
       apiKey: "test",
-      model: "test"
+      model: "test",
+      messageSanitization: {
+        removeParenthesizedAssistantResponseContent: false
+      }
+    });
+    const result = await client.chatStream?.({ messages: [] }, {
+      onContentDelta(content) {
+        deltas.push(content);
+      }
+    });
+    assert.deepEqual(deltas, ["喂（电话那头", "沉默了一会儿，只有细微的呼吸声）我在。"]);
+    assert.equal(result?.message.content, "喂（电话那头沉默了一会儿，只有细微的呼吸声）我在。");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("openai stream client removes parenthesized response content across chunks when enabled", async () => {
+  const originalFetch = globalThis.fetch;
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(
+        [
+          'data: {"id":"chat_1","model":"test","choices":[{"delta":{"action":"send","content":"喂（电话那头"}}]}',
+          'data: {"id":"chat_1","model":"test","choices":[{"delta":{"action":"send","content":"沉默了一会儿，只有细微的呼吸声）我在。"}}]}',
+          "data: [DONE]"
+        ].join("\n\n")
+      ));
+      controller.close();
+    }
+  });
+  globalThis.fetch = async () => new Response(stream, { status: 200 });
+  const deltas: string[] = [];
+  try {
+    const client = createOpenAICompatibleClient({
+      baseURL: "http://example.test/v1",
+      apiKey: "test",
+      model: "test",
+      messageSanitization: {
+        removeParenthesizedAssistantResponseContent: true
+      }
     });
     const result = await client.chatStream?.({ messages: [] }, {
       onContentDelta(content) {

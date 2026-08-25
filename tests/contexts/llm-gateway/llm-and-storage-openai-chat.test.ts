@@ -145,7 +145,7 @@ test("openai-compatible client preserves reasoning content for tool request mess
   }
 });
 
-test("openai-compatible client removes parenthesized assistant response content", async () => {
+test("openai-compatible client preserves parenthesized assistant response content when disabled", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response(JSON.stringify({
     id: "chat_1",
@@ -162,7 +162,39 @@ test("openai-compatible client removes parenthesized assistant response content"
     const client = createOpenAICompatibleClient({
       baseURL: "http://example.test/v1",
       apiKey: "test",
-      model: "test"
+      model: "test",
+      messageSanitization: {
+        removeParenthesizedAssistantResponseContent: false
+      }
+    });
+    const result = await client.chat({ messages: [] });
+    assert.equal(result.message.content, "喂（电话那头沉默了一会儿，只有细微的呼吸声）我在。");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("openai-compatible client removes parenthesized assistant response content when enabled", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    id: "chat_1",
+    model: "test",
+    choices: [{
+      message: {
+        role: "assistant",
+        content: "喂（电话那头沉默了一会儿，只有细微的呼吸声）我在。"
+      },
+      finish_reason: "stop"
+    }]
+  }), { status: 200, headers: { "content-type": "application/json" } });
+  try {
+    const client = createOpenAICompatibleClient({
+      baseURL: "http://example.test/v1",
+      apiKey: "test",
+      model: "test",
+      messageSanitization: {
+        removeParenthesizedAssistantResponseContent: true
+      }
     });
     const result = await client.chat({ messages: [] });
     assert.equal(result.message.content, "喂我在。");

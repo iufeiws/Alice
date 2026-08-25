@@ -10,7 +10,7 @@ export type LLMMessageSanitizationOptions = {
 export const defaultLLMMessageSanitizationOptions: Required<LLMMessageSanitizationOptions> = {
   removeEmptyAssistantToolCalls: true,
   removeAssistantReasoningWithoutToolCall: true,
-  removeParenthesizedAssistantResponseContent: true,
+  removeParenthesizedAssistantResponseContent: false,
   mergeConsecutiveAssistantContent: true
 };
 

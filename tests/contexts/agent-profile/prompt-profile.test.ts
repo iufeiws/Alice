@@ -56,6 +56,21 @@ test("promptProfileStore_interruptLayer_persistsMessages", () => {
   assert.equal(reopened.messages[0].name, "CustomName");
 });
 
+test("promptProfileStore_messageDeliveryReminderLayer_acceptsOnlyUserMessages", () => {
+  const filePath = path.join(makeTempDir("prompt-store-message-delivery-reminder"), "prompt-profile.json");
+  const store = createPromptProfileStore(filePath);
+  const saved = store.save({
+    ...store.get(),
+    messageDeliveryReminderLayer: layer(message("Reminder", "user", "configured reminder"))
+  });
+
+  assert.equal(saved.messageDeliveryReminderLayer?.messages[0]?.role, "user");
+  assert.throws(() => store.save({
+    ...store.get(),
+    messageDeliveryReminderLayer: layer(message("Reminder", "system", "invalid reminder"))
+  }), /invalid_prompt_message_delivery_reminder_role/);
+});
+
 test("promptProfileStore_projectConfigUsername_rejectsProfileField", () => {
   const filePath = path.join(makeTempDir("prompt-store-no-username"), "prompt-profile.json");
   assert.throws(() => createPromptProfileStore(filePath).save({

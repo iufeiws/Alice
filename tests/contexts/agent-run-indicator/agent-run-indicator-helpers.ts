@@ -51,12 +51,6 @@ export function loopInput(overrides: {
       messages: session.messages,
       toolNames: [],
       stream: true,
-      assistantContentToolCall: {
-        mode: "never",
-        toolName: "Chat",
-        input: { action: "send", type: "message" },
-        contentInputKey: "content"
-      },
       ...overrides.llmInput
     },
     event: textEvent(),

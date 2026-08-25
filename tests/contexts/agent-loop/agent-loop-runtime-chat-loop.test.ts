@@ -31,13 +31,7 @@ test("chat loop exposes visible tools to LLM requests", async () => {
     llmInput: {
       messages: session.messages,
       maxTokens: 2048,
-      toolNames: ["Chat", "test_tool"],
-      assistantContentToolCall: {
-        mode: "never",
-        toolName: "Chat",
-        input: { action: "send", type: "message" },
-        contentInputKey: "content"
-      }
+      toolNames: ["Chat", "test_tool"]
     },
     event: textEvent("session-content-send"),
     session,
@@ -77,7 +71,7 @@ test("chat loop exposes visible tools to LLM requests", async () => {
   assert.deepEqual(sentMaxTokens, [2048, 2048]);
 });
 
-test("chat loop sends assistant content through ToolPlugin.execute", async () => {
+test("chat loop preserves assistant content without synthesizing a Chat tool call", async () => {
   const session = {
     messages: [{ role: "user" as const, content: "go" }],
     requestTimestamps: [],
@@ -102,13 +96,7 @@ test("chat loop sends assistant content through ToolPlugin.execute", async () =>
   const loop = buildChatAgentLoop({
     llmInput: {
       messages: session.messages,
-      toolNames: ["Chat", "test_tool"],
-      assistantContentToolCall: {
-        mode: "always",
-        toolName: "Chat",
-        input: { action: "send", type: "message" },
-        contentInputKey: "content"
-      }
+      toolNames: ["Chat", "test_tool"]
     },
     event: textEvent("session-content-send"),
     session,
@@ -144,7 +132,10 @@ test("chat loop sends assistant content through ToolPlugin.execute", async () =>
     applyModeStateToNewSession: () => {}
   });
 
-  loop.complete(await runAgentFunctionCallLoop(loop.spec));
+  const result = await runAgentFunctionCallLoop(loop.spec);
+  loop.complete(result);
 
-  assert.deepEqual(sent, [":message:before\n<chat alice='core' type='voice'>\nprefix\n</chat ignored>"]);
+  assert.deepEqual(sent, []);
+  assert.equal(result.messages.find((message) => message.role === "assistant" && message.toolCalls?.length)?.content,
+    "before\n<chat alice='core' type='voice'>\nprefix\n</chat ignored>");
 });

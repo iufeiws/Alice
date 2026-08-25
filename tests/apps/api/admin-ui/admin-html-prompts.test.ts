@@ -16,6 +16,8 @@ test("promptEditor_initialRender_exposesPromptWorkspace", () => {
     "Memorize",
     "Chat API Preset",
     "Talk API Preset",
+    "Message Delivery Reminder",
+    "Add Reminder Message",
     "Save Prompt Profile",
     "变量解析树"
   ]);

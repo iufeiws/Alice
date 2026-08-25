@@ -69,6 +69,14 @@ export type LLMToolLoopResult = {
   toolCallCount: number;
 };
 
+export type LLMToolLoopExtensionState =
+  | null
+  | boolean
+  | number
+  | string
+  | LLMToolLoopExtensionState[]
+  | { [key: string]: LLMToolLoopExtensionState };
+
 export type LLMToolLoopContinuation = {
   version: 1;
   messages: LLMMessage[];
@@ -87,6 +95,12 @@ export type LLMToolLoopContinuation = {
   resetSession: boolean;
   continueAfterReset: boolean;
   yieldReturn: boolean;
+  extensionState?: LLMToolLoopExtensionState;
+};
+
+export type LLMToolLoopFollowup = {
+  messages?: LLMMessage[];
+  continue?: boolean;
 };
 
 export type LLMToolLoopInput = {
@@ -124,7 +138,19 @@ export type LLMToolLoopInput = {
     toolInput: Record<string, unknown>;
     toolResult: ToolResult;
     toolMessage: NonNullable<LLMToolLoopExecution["message"]>;
+    toolDefinition: ToolDefinition;
   }): Promise<LLMToolLoopExecution | undefined> | LLMToolLoopExecution | undefined;
+  afterToolBatch?(input: {
+    round: number;
+    result: LLMChatResult;
+    messages: LLMMessage[];
+    toolMessages: LLMMessage[];
+  }): Promise<LLMToolLoopFollowup | undefined> | LLMToolLoopFollowup | undefined;
+  afterAssistantMessage?(input: {
+    round: number;
+    result: LLMChatResult;
+    messages: LLMMessage[];
+  }): Promise<LLMToolLoopFollowup | undefined> | LLMToolLoopFollowup | undefined;
   beforeRound?(input: { round: number; messages: LLMMessage[] }): Promise<{ messages?: LLMMessage[]; stop?: boolean }> | { messages?: LLMMessage[]; stop?: boolean };
   beforeTool?(input: { round: number; call: LLMToolCall; callIndex: number }): Promise<void> | void;
   afterRequest?(input: { round: number; result: LLMChatResult; messages: LLMMessage[] }): Promise<void> | void;
@@ -143,6 +169,7 @@ export type LLMToolLoopInput = {
   onProcessRestartCheckpoint?(continuation: LLMToolLoopContinuation): Promise<void> | void;
   onProcessRestartProgress?(continuation: LLMToolLoopContinuation): Promise<void> | void;
   onProcessRestartCancelled?(): Promise<void> | void;
+  continuationState?(): LLMToolLoopExtensionState | undefined;
   limits?: LLMToolLoopLimits;
 };
 
@@ -261,13 +288,25 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
         ...messages,
         cloneLLMMessage(result.message)
       ];
-      await input.onMessagesChanged?.({ round, messages, reason: "completed" });
+      const followup = await input.afterAssistantMessage?.({ round, result, messages });
+      if (followup?.messages?.length) messages = [...messages, ...cloneLLMMessages(followup.messages)];
+      const wantsContinue = followup?.continue === true;
+      const shouldContinue = wantsContinue && replyRound + 1 < limits.maxRounds;
+      await input.onMessagesChanged?.({
+        round,
+        messages,
+        reason: shouldContinue ? "tools" : wantsContinue ? "limit" : "completed"
+      });
+      if (shouldContinue) {
+        previousAssistantMessageSignature = undefined;
+        continue;
+      }
       return {
         messages,
         rounds: round + 1,
         finalResult: result,
         finalMessage: result.message,
-        stopReason: "completed",
+        stopReason: wantsContinue ? "tool_limit" : "completed",
         invalidateSession,
         toolCallCount: totalToolCallCount
       };
@@ -318,7 +357,8 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
           reachedToolCallLimit,
           resetSession,
           continueAfterReset,
-          yieldReturn
+          yieldReturn,
+          extensionState: cloneContinuationState(input.continuationState?.())
         }),
         recoveredToolResult: recoveringInterruptedCall ? input.continuation?.interruptedToolResult : undefined
       });
@@ -349,13 +389,20 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
           reachedToolCallLimit,
           resetSession,
           continueAfterReset,
-          yieldReturn
+          yieldReturn,
+          extensionState: cloneContinuationState(input.continuationState?.())
         });
       }
       if (resetSession) break;
     }
 
     if (!resetSession) {
+      const batchFollowup = await input.afterToolBatch?.({
+        round,
+        result,
+        messages,
+        toolMessages
+      });
       const interruptMessages = !yieldReturn && !invalidateSession
         ? consumePendingUserMessageInterruptMessages(input, request)
         : [];
@@ -371,15 +418,18 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
         // 完整消息追加(与 flushResponseTranscript 递交的最终版本一致), 不再重建简化对象。
         cloneLLMMessage(result.message),
         ...toolMessages,
+        ...cloneLLMMessages(batchFollowup?.messages ?? []),
         ...interruptMessages
       ];
       await input.onMessagesChanged?.({
         round,
         messages,
-        reason: completeAfterToolCalls && !replyBudgetRenewed ? "completed" : reachedToolCallLimit || replyRound + 1 >= limits.maxRounds ? "limit" : "tools"
+        reason: completeAfterToolCalls && batchFollowup?.continue !== true && !replyBudgetRenewed
+          ? "completed"
+          : reachedToolCallLimit || replyRound + 1 >= limits.maxRounds ? "limit" : "tools"
       });
 
-      if (completeAfterToolCalls && !replyBudgetRenewed && !reachedToolCallLimit && !invalidateSession) {
+      if (completeAfterToolCalls && batchFollowup?.continue !== true && !replyBudgetRenewed && !reachedToolCallLimit && !invalidateSession) {
         return {
           messages,
           rounds: round + 1,
@@ -562,7 +612,8 @@ async function executeTool(
     call,
     toolInput,
     toolResult,
-    toolMessage
+    toolMessage,
+    toolDefinition: tool.definition
   }) ?? {
     message: toolMessage,
     control: toolControlFromResult(toolResult)
@@ -690,4 +741,8 @@ function stableJson(value: unknown): string {
       .join(",")}}`;
   }
   return JSON.stringify(value);
+}
+
+function cloneContinuationState(value: LLMToolLoopExtensionState | undefined): LLMToolLoopExtensionState | undefined {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 }

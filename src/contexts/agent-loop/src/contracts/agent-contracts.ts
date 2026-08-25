@@ -184,6 +184,8 @@ export type ToolDefinition = {
   inputSchema: Record<string, unknown>;
   passRenderText?: boolean;
   suppressExecutionCard?: boolean;
+  /** 成功执行该工具即视为已向用户发送消息；当前按工具级别判断。 */
+  sendsMessage?: boolean;
 };
 
 export type ToolCall = {

@@ -20,6 +20,7 @@ import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
 
 test("Chat and Yield profiles suppress execution cards", () => {
   assert.equal(chatTool.suppressExecutionCard, true);
+  assert.equal(chatTool.sendsMessage, true);
   assert.equal(finishAndWaitTool.suppressExecutionCard, true);
 });
 

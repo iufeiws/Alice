@@ -4,7 +4,8 @@ import type { LLMRequestLogEntry } from "../../../llm-session/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { AgentRunIndicator, AgentRunIndicatorBeginInput, AgentRunIndicatorOutput, AgentRunIndicatorSession } from "../../../agent-run-indicator/src/index.js";
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
-import type { PromptProfile } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
+import { normalizePromptProfile, type PromptProfile } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
+import { promptMessageToMessage } from "../../../../contexts/agent-profile/src/domain/prompt-layer.js";
 import { type LLMRequestSender, type LLMRequestSenderInput, type LLMToolLoopContinuation, type LLMToolLoopRoundRequest } from "../../../llm-gateway/src/llm-tool-loop.js";
 import { resolveChatLoopToolControl } from "./chat-loop-tool-control.js";
 import { fixedPrefixToolInput } from "./chat-loop-session-context.js";
@@ -63,12 +64,6 @@ export type ChatAgentLoopInput = {
     supportsImage?: boolean;
     supportsAudio?: boolean;
     toolNames: string[];
-    assistantContentToolCall: {
-      mode: "always" | "when_no_tool_calls" | "never";
-      toolName: string;
-      input: Record<string, unknown>;
-      contentInputKey: string;
-    };
   };
   event: AgentEvent;
   session: ChatAgentLoopSession;
@@ -130,6 +125,15 @@ export type PreparedChatAgentLoop = {
   complete(result: AgentFunctionCallLoopResult): ChatAgentLoopResult;
 };
 
+export const messageDeliveryReminderToolThreshold = 6;
+
+type MessageDeliveryReminderState = {
+  successfulSendSeen: boolean;
+  consecutiveNonSendingToolCalls: number;
+  reminderInjected: boolean;
+  reminderPending: boolean;
+};
+
 export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgentLoop {
   let session = input.session;
   let clearReason: "yield_end" | undefined;
@@ -140,6 +144,9 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
   const visibleToolNames = input.llmInput.toolNames;
   const baseSendRequest = input.llmRequestSender;
   let processRestartRecoveryPending = input.processRestartRecoveryActive === true;
+  const messageDeliveryState = restoreMessageDeliveryReminderState(
+    input.processRestartContinuation?.snapshot.extensionState
+  );
   const sendRequest = createAgentRunIndicatorRequestSender({
     indicator: input.agentRunIndicator,
     sendRequest: baseSendRequest,
@@ -199,8 +206,10 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
         await input.onProcessRestartResponseReceived?.();
       }
     },
-    transformAssistantMessage({ round, message }) {
-      return contentToolCallAssistantMessage(round, message, input.llmInput.assistantContentToolCall, visibleToolNames);
+    continuationState: () => ({ messageDeliveryReminder: { ...messageDeliveryState } }),
+    afterAssistantMessage() {
+      queueMessageDeliveryReminder(input, messageDeliveryState);
+      return takeMessageDeliveryReminderFollowup(input, messageDeliveryState);
     },
     shouldCancel() {
       return input.isLLMRunCancelled?.() === true;
@@ -222,7 +231,13 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
       };
     },
     transformToolInput: (toolName, toolInput) => fixedPrefixToolInput(toolName, toolInput, session),
-    async afterToolResult({ call, result, toolInput, toolResult, toolMessage }): Promise<AgentFunctionCallToolExecution> {
+    async afterToolResult({ call, result, toolInput, toolResult, toolMessage, toolDefinition }): Promise<AgentFunctionCallToolExecution> {
+      noteMessageDeliveryToolResult(messageDeliveryState, toolDefinition.sendsMessage === true, toolResult.ok);
+      if (shouldDeferYieldForMessageDelivery(call.function.name, toolInput, toolResult)
+        && queueMessageDeliveryReminder(input, messageDeliveryState)) {
+        input.setLastCompletedToolName(call.function.name);
+        return { message: toolMessage, control: {} };
+      }
       const followup = buildToolFollowupLLMMessages(toolResult, llmCapabilities);
       if (followup.toolNotices.length > 0) {
         toolMessage.content = [toolMessage.content, ...followup.toolNotices].filter(Boolean).join("\n");
@@ -272,6 +287,9 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
       return followup.messages.length > 0
         ? { ...execution, messages: followup.messages }
         : execution;
+    },
+    afterToolBatch() {
+      return takeMessageDeliveryReminderFollowup(input, messageDeliveryState);
     },
     async onMessagesChanged({ messages }) {
       session.messages = messages;
@@ -472,34 +490,96 @@ function messageContentText(content: LLMChatInput["messages"][number]["content"]
     .join("\n");
 }
 
-function contentToolCallAssistantMessage(
-  round: number,
-  message: LLMChatResult["message"],
-  config: ChatAgentLoopInput["llmInput"]["assistantContentToolCall"],
-  visibleToolNames: string[]
-): LLMChatResult["message"] | { message: LLMChatResult["message"]; completeAfterToolCalls: boolean } {
-  if (config.mode === "never") return message;
-  if (!visibleToolNames.includes(config.toolName)) return message;
-  const hadToolCalls = (message.toolCalls?.length ?? 0) > 0;
-  if (config.mode === "when_no_tool_calls" && hadToolCalls) return message;
-  const content = messageContentText(message.content).trim();
-  if (!content) return message;
+function noteMessageDeliveryToolResult(
+  state: MessageDeliveryReminderState,
+  sendsMessage: boolean,
+  succeeded: boolean
+): void {
+  if (sendsMessage) {
+    state.consecutiveNonSendingToolCalls = 0;
+    if (succeeded) {
+      state.successfulSendSeen = true;
+      state.reminderPending = false;
+    }
+    return;
+  }
+  state.consecutiveNonSendingToolCalls += 1;
+  if (!state.successfulSendSeen
+    && !state.reminderInjected
+    && state.consecutiveNonSendingToolCalls >= messageDeliveryReminderToolThreshold) {
+    state.reminderPending = true;
+  }
+}
+
+function shouldDeferYieldForMessageDelivery(
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  toolResult: ToolResult
+): boolean {
+  if (toolName !== "Yield") return false;
+  if (!toolResult.ok) return false;
+  if (toolInput.action === "finish") return toolResult.invalidateLLMSession === true;
+  if (toolInput.action === "await_chat") return toolResult.meta?.yieldReturn === true;
+  return false;
+}
+
+function queueMessageDeliveryReminder(
+  input: ChatAgentLoopInput,
+  state: MessageDeliveryReminderState
+): boolean {
+  if (state.successfulSendSeen || state.reminderInjected) return false;
+  if (!hasMessageDeliveryReminder(input)) return false;
+  state.reminderPending = true;
+  return true;
+}
+
+function hasMessageDeliveryReminder(input: ChatAgentLoopInput): boolean {
+  if (!input.promptProfile) return false;
+  return normalizePromptProfile(input.promptProfile).messageDeliveryReminderLayer!.messages
+    .some((message) => message.meta.enabled);
+}
+
+function takeMessageDeliveryReminderFollowup(
+  input: ChatAgentLoopInput,
+  state: MessageDeliveryReminderState
+): { messages: LLMChatInput["messages"]; continue: true } | undefined {
+  if (state.successfulSendSeen || state.reminderInjected) return undefined;
+  if (!state.reminderPending) return undefined;
+  const messages = messageDeliveryReminderMessages(input);
+  if (messages.length === 0) {
+    state.reminderPending = false;
+    return undefined;
+  }
+  state.reminderInjected = true;
+  state.reminderPending = false;
+  return { messages, continue: true };
+}
+
+function messageDeliveryReminderMessages(input: ChatAgentLoopInput): LLMChatInput["messages"] {
+  if (!input.promptProfile) return [];
+  const layer = normalizePromptProfile(input.promptProfile).messageDeliveryReminderLayer!;
+  const renderer = input.buildTextVariables(input.event);
+  return layer.messages
+    .filter((message) => message.meta.enabled)
+    .map((message) => {
+      if (message.role !== "user") throw new Error("message_delivery_reminder_role_user_required");
+      return promptMessageToMessage(message, renderer);
+    });
+}
+
+function restoreMessageDeliveryReminderState(value: unknown): MessageDeliveryReminderState {
+  const raw = value && typeof value === "object" && !Array.isArray(value)
+    ? (value as { messageDeliveryReminder?: unknown }).messageDeliveryReminder
+    : undefined;
+  const state = raw && typeof raw === "object" && !Array.isArray(raw)
+    ? raw as Partial<MessageDeliveryReminderState>
+    : {};
   return {
-    message: {
-      ...message,
-      content: "",
-      toolCalls: [{
-        id: `assistant_content_${round + 1}`,
-        type: "function",
-        function: {
-          name: config.toolName,
-          arguments: JSON.stringify({
-            ...config.input,
-            [config.contentInputKey]: content
-          })
-        }
-      }, ...(message.toolCalls ?? [])]
-    },
-    completeAfterToolCalls: !hadToolCalls
+    successfulSendSeen: state.successfulSendSeen === true,
+    consecutiveNonSendingToolCalls: Number.isInteger(state.consecutiveNonSendingToolCalls)
+      ? Math.max(0, Number(state.consecutiveNonSendingToolCalls))
+      : 0,
+    reminderInjected: state.reminderInjected === true,
+    reminderPending: state.reminderPending === true
   };
 }

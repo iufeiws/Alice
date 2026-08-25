@@ -42,6 +42,7 @@ export function renderPromptsScript(): string {
         if (!activeProfile.visibleTools) activeProfile.visibleTools = {};
         if (!activeProfile.layers) activeProfile.layers = { meta: {}, messages: [] };
         if (!activeProfile.appendLayers) activeProfile.appendLayers = { meta: {}, messages: [] };
+        if (!isTalk && !activeProfile.messageDeliveryReminderLayer) activeProfile.messageDeliveryReminderLayer = { meta: {}, messages: [] };
         $("promptProfile").innerHTML = \`
           <div class="prompt-editor-grid">
             <div class="subtabs prompt-mode-cell">
@@ -62,6 +63,12 @@ export function renderPromptsScript(): string {
               <h2>Interrupt Layer</h2>
               <p class="muted">Inserted after the next completed tool-result batch when a new user message arrives during a running loop.</p>
               <div id="promptInterruptLayer">\${renderLayerDocument(activeProfile.interruptLayer, { editorId: "interrupt", roles: ["system", "user", "assistant"], showActions: false })}</div>
+              \`}
+              \${isTalk ? "" : \`
+              <h2>Message Delivery Reminder</h2>
+              <p class="muted">Conditionally appended as a user message after six consecutive non-sending tools, or before a silent raw/Yield ending. It is injected at most once per turn.</p>
+              <div id="promptMessageDeliveryReminder">\${renderLayerDocument(activeProfile.messageDeliveryReminderLayer, { editorId: "message-delivery-reminder", roles: ["user"] })}</div>
+              <button type="button" id="prompt-message-delivery-reminder-add">Add Reminder Message</button>
               \`}
               <h2>Initial Layers</h2>
               <div id="promptLayers">\${renderLayerDocument(activeProfile.layers, { editorId: "prompt-layers" })}</div>
@@ -85,6 +92,7 @@ export function renderPromptsScript(): string {
         $("toolPhotoVisible").addEventListener("change", () => { activeProfile.visibleTools.photo = $("toolPhotoVisible").checked; delete activeProfile.visibleTools.media; });
         $("toolShellVisible").addEventListener("change", () => { activeProfile.visibleTools.shell = $("toolShellVisible").checked; });
         if (activeProfile.interruptLayer) bindLayerDocument(activeProfile.interruptLayer, { editorId: "interrupt", render: renderPromptProfile });
+        if (!isTalk) bindLayerDocument(activeProfile.messageDeliveryReminderLayer, { editorId: "message-delivery-reminder", render: renderPromptProfile });
         bindLayerDocument(activeProfile.layers, { editorId: "prompt-layers", render: renderPromptProfile });
         bindLayerDocument(activeProfile.appendLayers, { editorId: "prompt-append-layers", render: renderPromptProfile });
         $("prompt-add").addEventListener("click", () => {
@@ -93,6 +101,10 @@ export function renderPromptsScript(): string {
         });
         $("prompt-append-add").addEventListener("click", () => {
           addLayerMessage(activeProfile.appendLayers, { title: "New Append Layer", toolCall: true, toolName: promptTools[0]?.name || "Chat" });
+          renderPromptProfile();
+        });
+        $("prompt-message-delivery-reminder-add")?.addEventListener("click", () => {
+          addLayerMessage(activeProfile.messageDeliveryReminderLayer, { title: "Message Delivery Reminder", role: "user" });
           renderPromptProfile();
         });
         $("prompt-save").addEventListener("click", savePromptProfile);

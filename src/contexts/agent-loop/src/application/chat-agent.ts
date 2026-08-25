@@ -574,13 +574,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
             stream: llmConfig.stream,
             supportsImage: llmConfig.supportsImage,
             supportsAudio: llmConfig.supportsAudio,
-            toolNames: toolPlugins.flatMap((plugin) => plugin.listTools().map((tool) => tool.name)),
-            assistantContentToolCall: {
-              mode: "when_no_tool_calls",
-              toolName: "Chat",
-              input: { action: "send", type: "message" },
-              contentInputKey: "content"
-            }
+            toolNames: toolPlugins.flatMap((plugin) => plugin.listTools().map((tool) => tool.name))
           };
           const processRestartContinuation = matchingProcessRestartContinuation({
             record: persistedProcessRestart,

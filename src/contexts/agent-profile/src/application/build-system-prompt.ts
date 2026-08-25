@@ -37,6 +37,7 @@ export type PromptProfile = {
   layers: PromptLayer;
   appendLayers?: PromptLayer;
   interruptLayer?: PromptLayer;
+  messageDeliveryReminderLayer?: PromptLayer;
 };
 
 export type PromptRenderContext = {
@@ -103,7 +104,8 @@ export function defaultPromptProfile(): PromptProfile {
     visibleTools: { feishu: true, photo: true, shell: true },
     layers: { meta: {}, messages: [] },
     appendLayers: { meta: {}, messages: [] },
-    interruptLayer: defaultInterruptLayer()
+    interruptLayer: defaultInterruptLayer(),
+    messageDeliveryReminderLayer: { meta: {}, messages: [] }
   };
 }
 
@@ -213,7 +215,11 @@ export function normalizePromptProfile(profile: PromptProfile): PromptProfile {
     },
     layers: normalizePromptLayer(profile?.layers, fallback.layers),
     appendLayers: normalizePromptLayer(profile?.appendLayers, fallback.appendLayers),
-    interruptLayer: normalizePromptLayer(profile?.interruptLayer, fallback.interruptLayer)
+    interruptLayer: normalizePromptLayer(profile?.interruptLayer, fallback.interruptLayer),
+    messageDeliveryReminderLayer: normalizePromptLayer(
+      profile?.messageDeliveryReminderLayer,
+      fallback.messageDeliveryReminderLayer
+    )
   };
 }
 
@@ -271,6 +277,14 @@ function validatePromptProfile(value: unknown): PromptProfile {
   validatePromptLayerForStorage(profile.layers, "layers");
   validatePromptLayerForStorage(profile.appendLayers, "appendLayers");
   validatePromptLayerForStorage(profile.interruptLayer, "interruptLayer");
+  if (profile.messageDeliveryReminderLayer !== undefined) {
+    validatePromptLayerForStorage(profile.messageDeliveryReminderLayer, "messageDeliveryReminderLayer");
+    for (const message of profile.messageDeliveryReminderLayer.messages) {
+      if (message.role !== "user") {
+        throw new PromptProfileValidationError("invalid_prompt_message_delivery_reminder_role");
+      }
+    }
+  }
   return cloneProfile(profile);
 }
 

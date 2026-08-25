@@ -76,7 +76,7 @@ test("sleep_cocoon in clears previous auto trigger pointers", async () => {
   assert.equal(controller.getSnapshot().sleepCocoonAutoCheckedAt, undefined);
 });
 
-test("sleep_cocoon in sends system sleep notice to current chat", async () => {
+test("sleep_cocoon in does not send a system sleep notice", async () => {
   const sent: AgentOutput[] = [];
   const stored: unknown[] = [];
   const controller = createAgentStateController({
@@ -105,15 +105,8 @@ test("sleep_cocoon in sends system sleep notice to current chat", async () => {
   });
 
   assert.equal(result.ok, true);
-  assert.equal(sent.length, 1);
-  assert.equal(sent[0].target.plugin, "feishu");
-  assert.equal(sent[0].target.accountId, "account-1");
-  assert.equal(sent[0].target.channelId, "chat-1");
-  assert.equal(sent[0].target.userId, "user-1");
-  assert.equal(sent[0].target.sessionId, "session-1");
-  assert.equal(sent[0].content.kind, "text");
-  assert.equal(sent[0].content.kind === "text" ? sent[0].content.text : "", "<-少女就寝中->");
-  assert.equal((stored[0] as { contentText?: string }).contentText, "少女就寝中");
+  assert.deepEqual(sent, []);
+  assert.deepEqual(stored, []);
 });
 
 test("sleep_cocoon in rejects repeated entry while going_to_sleep", async () => {
@@ -169,7 +162,7 @@ test("sleep_cocoon out returns going_to_sleep to waiting", async () => {
   assert.equal(snapshot.sleepDurationMs, undefined);
 });
 
-test("sleep_cocoon out sends system wake notice to current chat", async () => {
+test("sleep_cocoon out does not send a system wake notice", async () => {
   const sent: AgentOutput[] = [];
   const stored: unknown[] = [];
   const controller = createAgentStateController({
@@ -200,14 +193,8 @@ test("sleep_cocoon out sends system wake notice to current chat", async () => {
   });
 
   assert.equal(result.ok, true);
-  assert.equal(sent.length, 1);
-  assert.equal(sent[0].target.plugin, "wechat");
-  assert.equal(sent[0].target.channelId, "room-1");
-  assert.equal(sent[0].target.userId, "user-1");
-  assert.equal(sent[0].target.sessionId, "session-2");
-  assert.equal(sent[0].content.kind, "text");
-  assert.equal(sent[0].content.kind === "text" ? sent[0].content.text : "", "<-少女起床->");
-  assert.equal((stored[0] as { contentText?: string }).contentText, "少女起床");
+  assert.deepEqual(sent, []);
+  assert.deepEqual(stored, []);
 });
 
 test("sleep_cocoon out does not wake sleeping state", async () => {

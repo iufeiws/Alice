@@ -21,7 +21,7 @@ test("wardrobe switch updates shell store", async () => {
   assert.equal(shellStore.listSwitchLogs().length, 1);
 });
 
-test("wardrobe switch sends changing notice", async () => {
+test("wardrobe switch does not send changing notice", async () => {
   const shellStore = makeShellStore("wardrobe-switch-store", [
     { id: "o1", name: "O One", content: "outfit one" },
     { id: "o2", name: "O Two", content: "outfit two" }
@@ -41,11 +41,10 @@ test("wardrobe switch sends changing notice", async () => {
   const result = await tools.execute({ id: "call_switch", toolName: "Wardrobe", input: { action: "switch", name: "O Two" } });
 
   assert.equal(result.ok, true);
-  assert.equal((sent[0] as any).content.kind, "text");
-  assert.equal((sent[0] as any).content.text, "<-少女已更衣->");
+  assert.deepEqual(sent, []);
 });
 
-test("wardrobe switch logs sent changing notice", async () => {
+test("wardrobe switch does not log changing notice", async () => {
   const shellStore = makeShellStore("wardrobe-switch-log", [
     { id: "o1", name: "O One", content: "outfit one" },
     { id: "o2", name: "O Two", content: "outfit two" }
@@ -60,10 +59,10 @@ test("wardrobe switch logs sent changing notice", async () => {
 
   await tools.execute({ id: "call_switch", toolName: "Wardrobe", input: { action: "switch", name: "O Two" } });
 
-  assert.deepEqual(logs.map((entry: any) => entry.status), ["sent"]);
+  assert.deepEqual(logs, []);
 });
 
-test("wardrobe switch stores sent changing notice in message state", async () => {
+test("wardrobe switch does not store changing notice", async () => {
   const shellStore = makeShellStore("wardrobe-switch-message", [
     { id: "o1", name: "O One", content: "outfit one" },
     { id: "o2", name: "O Two", content: "outfit two" }
@@ -83,13 +82,10 @@ test("wardrobe switch stores sent changing notice in message state", async () =>
   await tools.execute({ id: "call_switch", toolName: "Wardrobe", input: { action: "switch", name: "O Two" } });
 
   const messages = store.listMessagesForConversation("session-1", 10);
-  assert.equal(messages.length, 1);
-  assert.equal(messages[0].senderRole, "system");
-  assert.equal(messages[0].contentText, "少女已更衣");
-  assert.equal(messages[0].status, "sent");
+  assert.deepEqual(messages, []);
 });
 
-test("wardrobe switch keeps failed changing notice in message state", async () => {
+test("wardrobe switch does not send or store a changing notice when the sender is unavailable", async () => {
   const shellStore = makeShellStore("wardrobe-send-failed", [
     { id: "o1", name: "O One", content: "outfit one" },
     { id: "o2", name: "O Two", content: "outfit two" }
@@ -110,10 +106,10 @@ test("wardrobe switch keeps failed changing notice in message state", async () =
 
   assert.equal(result.ok, true);
   const messages = store.listMessagesForConversation("session-1", 10);
-  assert.equal(messages[0].status, "send_failed");
+  assert.deepEqual(messages, []);
 });
 
-test("wardrobe switch logs failed changing notice", async () => {
+test("wardrobe switch does not log a changing notice when the sender is unavailable", async () => {
   const shellStore = makeShellStore("wardrobe-send-failed-log", [
     { id: "o1", name: "O One", content: "outfit one" },
     { id: "o2", name: "O Two", content: "outfit two" }
@@ -133,7 +129,7 @@ test("wardrobe switch logs failed changing notice", async () => {
 
   await tools.execute({ id: "call_send_failed", toolName: "Wardrobe", input: { action: "switch", name: "O Two" } });
 
-  assert.deepEqual(logs.map((entry: any) => entry.status), ["send_failed"]);
+  assert.deepEqual(logs, []);
 });
 
 test("wardrobe switch attempts on-body generation once for unattempted outfits", async () => {

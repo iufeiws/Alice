@@ -2,7 +2,7 @@ import type { OutputRouter } from "../../../../platform/output-router/src/index.
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
-import { sendSystemNoticeFromRuntime, type SystemNoticeStore } from "../../../../contexts/conversation-hub/src/application/message-runtime.js";
+import type { SystemNoticeStore } from "../../../../contexts/conversation-hub/src/application/message-runtime.js";
 import { sleepCocoonTool, sleepCocoonToolText } from "../profile.js";
 
 type SleepCocoonAgentState = {
@@ -63,7 +63,6 @@ export function createSleepCocoonTools(deps: SleepCocoonToolsDeps): ToolPlugin {
       sleepDurationMs,
       resetSleepCocoonAuto: true
     });
-    await sendSuccessNotice(call, sleepCocoonToolText.enterNotice);
     return {
       callId: call.id,
       ok: true,
@@ -80,7 +79,6 @@ export function createSleepCocoonTools(deps: SleepCocoonToolsDeps): ToolPlugin {
       return toolError(call, current.state === "sleeping" ? sleepCocoonToolText.alreadySleeping : sleepCocoonToolText.noCountdownToCancel);
     }
     deps.agentState.setState("waiting", { reason: "sleep_cocoon_out", clearSleepCocoon: true });
-    await sendSuccessNotice(call, sleepCocoonToolText.exitNotice);
     return {
       callId: call.id,
       ok: true,
@@ -88,24 +86,6 @@ export function createSleepCocoonTools(deps: SleepCocoonToolsDeps): ToolPlugin {
       clearFixedPrefix: true,
       output: sleepCocoonToolText.success
     };
-  }
-
-  async function sendSuccessNotice(call: ToolCall, text: string): Promise<void> {
-    if (!deps.outputRouter || !deps.store) return;
-    const target = resolveTarget(call);
-    if (!target) {
-      deps.appendLog?.("warn", `sleep_cocoon success notice skipped: no current messaging session`);
-      return;
-    }
-    try {
-      await sendSystemNoticeFromRuntime({
-        time: deps.time,
-        store: deps.store,
-        send: (output) => deps.outputRouter!.send(output)
-      }, { target, text, writeLog: false });
-    } catch (error) {
-      deps.appendLog?.("warn", `sleep_cocoon success notice send failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
   }
 
   function resolveTarget(call: ToolCall): SleepCocoonToolTarget | undefined {

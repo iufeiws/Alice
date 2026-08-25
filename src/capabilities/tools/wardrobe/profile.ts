@@ -22,6 +22,5 @@ export const wardrobeToolText = {
   nameRequired: "name is required",
   unknownOutfitName: "unknown outfit name",
   ambiguousOutfitName: (name: string) => `ambiguous outfit name: ${name}`,
-  switched: "success",
-  changingNotice: "少女已更衣"
+  switched: "success"
 };

@@ -53,8 +53,7 @@ test("selfie_missingOutfitImage_usesTextOutfitAndSendsImage", async () => {
     assert.equal(result.ok, true);
     assert.deepEqual(referenceImages.map((image) => path.basename(image)), ["alice-character-reference.jpg", "magic-library-reference.jpg"]);
     assert.equal(referenceImagePrompt, "");
-    assert.equal(sent[0].content.kind, "text");
-    assert.equal(sent[1].content.kind, "image");
+    assert.equal(sent[0].content.kind, "image");
   } finally {
     fs.rmSync(outputRoot, { recursive: true, force: true });
     fs.rmSync(referenceRoot, { recursive: true, force: true });
@@ -105,7 +104,7 @@ test("selfie_worldWandererStreetviewAvailable_usesStreetviewAsThirdReference", a
       "dress.jpg",
       "street.jpg"
     ]);
-    assert.equal(sent[1].content.kind, "image");
+    assert.equal(sent[0].content.kind, "image");
   } finally {
     fs.rmSync(outputRoot, { recursive: true, force: true });
     fs.rmSync(referenceRoot, { recursive: true, force: true });
@@ -232,7 +231,7 @@ test("selfie_worldWandererLookupFails_sendsFailureNotice", async () => {
       input: { pose: "街景失败时自拍" }
     });
 
-    assert.equal(sent[1].content.kind, "text");
+    assert.deepEqual(sent, []);
   } finally {
     fs.rmSync(outputRoot, { recursive: true, force: true });
     fs.rmSync(referenceRoot, { recursive: true, force: true });
@@ -240,7 +239,7 @@ test("selfie_worldWandererLookupFails_sendsFailureNotice", async () => {
   }
 });
 
-test("selfie_requiredReferenceMissing_sendsStartThenFailureNotice", async () => {
+test("selfie_requiredReferenceMissing_sendsNoFailureNotice", async () => {
   const outputRoot = makeAssetTempDir("selfie-missing-character");
   const referenceRoot = makeTempDir("selfie-ref-missing-character");
   const outfitImage = path.join(makeTempDir("selfie-outfit-missing-character"), "dress.jpg");
@@ -275,8 +274,7 @@ test("selfie_requiredReferenceMissing_sendsStartThenFailureNotice", async () => 
     });
 
     assert.equal(result.ok, false);
-    assert.equal(sent[0].content.kind, "text");
-    assert.equal(sent[1].content.kind, "text");
+    assert.deepEqual(sent, []);
   } finally {
     fs.rmSync(outputRoot, { recursive: true, force: true });
     fs.rmSync(referenceRoot, { recursive: true, force: true });
@@ -390,7 +388,7 @@ test("selfie_generatedFileMissing_sendsFailureNotice", async () => {
       input: { pose: "missing file" }
     });
 
-    assert.equal(sent[1].content.kind, "text");
+    assert.deepEqual(sent, []);
   } finally {
     fs.rmSync(outputRoot, { recursive: true, force: true });
     fs.rmSync(referenceRoot, { recursive: true, force: true });

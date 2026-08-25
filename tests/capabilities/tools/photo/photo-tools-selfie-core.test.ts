@@ -157,10 +157,8 @@ test("selfie_validContext_persistsSentMessages", async () => {
       input: { pose: "踮脚靠近镜头，比一个很小的剪刀手" }
     });
 
-    assert.deepEqual(fixture.store.listMessagesForConversation("session-1", 10).map((message) => message.contentType), ["text", "image"]);
-    assert.deepEqual(fixture.store.listMessagesForConversation("session-1", 10).map((message) => message.senderRole), ["system", "assistant"]);
-    assert.equal(fixture.store.listMessagesForConversation("session-1", 10)[0].contentText, "少女拍照中");
-    assert.equal(fixture.sent[0].content.kind === "text" ? fixture.sent[0].content.text : "", "<-少女拍照中->");
+    assert.deepEqual(fixture.store.listMessagesForConversation("session-1", 10).map((message) => message.contentType), ["image"]);
+    assert.deepEqual(fixture.store.listMessagesForConversation("session-1", 10).map((message) => message.senderRole), ["assistant"]);
   } finally {
     fixture.cleanup();
   }
@@ -260,7 +258,7 @@ test("selfie_nonJpegOutput_convertsAttachmentToJpeg", async () => {
     }, { llmCapabilities: { supportsImage: true } });
 
     assert.equal(result.ok, true);
-    assert.equal(sent[1].content.kind, "image");
+    assert.equal(sent[0].content.kind, "image");
     assert.equal(result.llmFollowupAttachments?.[0]?.mime, "image/jpeg");
     const finalBytes = fs.readFileSync(result.llmFollowupAttachments?.[0]?.path ?? "");
     assert.deepEqual([...finalBytes.subarray(0, 3)], [0xff, 0xd8, 0xff]);
@@ -404,7 +402,7 @@ test("selfie_voiceRequester_sendsToDefaultOutputTarget", async () => {
       externalSession: { scope: "dm", sessionId: "talk-session-1" }
     });
 
-    assert.deepEqual(sent.map((output) => output.target), [expectedTarget, expectedTarget]);
+    assert.deepEqual(sent.map((output) => output.target), [expectedTarget]);
   } finally {
     fs.rmSync(outputRoot, { recursive: true, force: true });
     fs.rmSync(referenceRoot, { recursive: true, force: true });
@@ -450,7 +448,7 @@ test("selfie_voiceRequester_persistsMessagesToDefaultConversation", async () => 
       externalSession: { scope: "dm", sessionId: "talk-session-1" }
     });
 
-    assert.deepEqual(store.listMessagesForConversation("session-default", 10).map((message) => message.contentType), ["text", "image"]);
+    assert.deepEqual(store.listMessagesForConversation("session-default", 10).map((message) => message.contentType), ["image"]);
   } finally {
     fs.rmSync(outputRoot, { recursive: true, force: true });
     fs.rmSync(referenceRoot, { recursive: true, force: true });

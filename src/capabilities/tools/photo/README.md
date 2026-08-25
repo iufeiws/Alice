@@ -16,13 +16,12 @@ Media tools 供 ChatAgent 使用。当前实现暴露一个 LLM 工具：
 
 调用后，工具会：
 
-1. 向当前会话发送 `<-少女拍照中->`，消息入库时保存为未包裹的系统通知文本。
-2. 从以下来源构造图片 prompt：
+1. 从以下来源构造图片 prompt：
    - 主 prompt profile 中的 Alice 角色特征。
    - 当前日常 shell personality 与 outfit。
    - `assets/selfie/references/selfie-prompt.txt`。
-3. 默认由内置 API executor 直接调用 Image API `/v1/images/edits`，并使用低质量、小尺寸、单张输出配置。`codex` 模式会启动一次 ephemeral Codex CLI 会话，让新会话使用 `$alice-selfie-fast` 和内置 `image_gen` 生图。
-4. 按以下顺序传入参考图：
+2. 默认由内置 API executor 直接调用 Image API `/v1/images/edits`，并使用低质量、小尺寸、单张输出配置。`codex` 模式会启动一次 ephemeral Codex CLI 会话，让新会话使用 `$alice-selfie-fast` 和内置 `image_gen` 生图。
+3. 按以下顺序传入参考图：
    - `assets/selfie/references/alice-character-reference.jpg`
    - `memory-files/shell/outfits/*.jpg` 中当前 outfit 对应图片
    - `assets/selfie/references/magic-library-reference.jpg`

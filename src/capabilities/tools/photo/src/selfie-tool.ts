@@ -4,7 +4,7 @@ import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities
 import type { PromptContextRuntime } from "../../../../contexts/prompt-context/src/index.js";
 import { normalizePhotoPluginConfig, readPhotoPluginConfig, type PhotoPluginConfig } from "./config.js";
 import { detectImageMime, listDirForLog, normalizeGeneratedSelfieJpeg, runPhotoGateway, validateGeneratedImage, type ImageGenerationProvider, type ImageGenerationProviderInput, type ImageGenerationProviderResult } from "../../../../channels/image-generation/src/index.js";
-import { extractSentMessageId, sendImage, sendSelfieFailureNotice, sendText, type PhotoSendDeps } from "./send-output.js";
+import { extractSentMessageId, sendImage, type PhotoSendDeps } from "./send-output.js";
 import { photoToolText, selfieTool } from "../profile.js";
 
 export { selfieTool };
@@ -104,7 +104,6 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
       let finalFilePath = "";
       let assetId = "";
 
-      await sendText(deps, time, target, photoToolText.takingNotice, "system");
       const references = await resolveReferenceImages(context);
       const prompt = buildSelfiePrompt(pose);
       deps.appendLog?.("info", [
@@ -192,7 +191,6 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
       ].filter(Boolean).join("\n");
       deps.appendLog?.("warn", `selfie generation failed: ${reason}${tempDir ? ` files=${listDirForLog(tempDir)}` : ""}`);
       if (marker !== undefined) failedSelfie = { marker, failedAtMs: time.now().epochMs };
-      await sendSelfieFailureNotice(deps, time, target);
       return toolError(call, reason);
     } finally {
       if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });

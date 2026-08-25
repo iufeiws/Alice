@@ -4,7 +4,6 @@ import type { OutputRouter } from "../../../../platform/output-router/src/index.
 import type { AliceStore } from "../../../../contexts/conversation-hub/src/ports/conversation-store.js";
 import type { ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
-import { sendSystemNoticeFromRuntime } from "../../../../contexts/conversation-hub/src/application/message-runtime.js";
 import { filterOutfits, resolveOutfitByName, shouldAttemptOnBodyGeneration, type Outfit } from "../../../../contexts/wardrobe/src/index.js";
 import { wardrobeTool, wardrobeToolText } from "../profile.js";
 
@@ -126,8 +125,6 @@ export function createWardrobeTools(deps: WardrobeToolsDeps): ToolPlugin {
       throw error;
     }
 
-    const noticeResult = await sendChangingNotice(call.id, target);
-    if (noticeResult.ok === false) return noticeResult.result;
     if (shouldAttemptOnBodyGeneration(current.outfit)) {
       await deps.attemptOnBodyGeneration?.(current.outfit);
       current = deps.wardrobeRuntime.get(time.now().date, time.timeZone);
@@ -138,25 +135,6 @@ export function createWardrobeTools(deps: WardrobeToolsDeps): ToolPlugin {
       ok: true,
       output: wardrobeToolText.switched
     };
-  }
-
-  async function sendChangingNotice(callId: string, target: WardrobeToolTarget): Promise<{ ok: true } | { ok: false; result: ToolResult }> {
-    const text = wardrobeToolText.changingNotice;
-    try {
-      await sendSystemNoticeFromRuntime({
-        time,
-        store: deps.store,
-        send: (output) => deps.outputRouter.send(output),
-        appendMessageLog: deps.appendMessageLog
-      }, { target, text });
-      return { ok: true };
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      return {
-        ok: false,
-        result: { callId, ok: false, error: xmlError(reason) }
-      };
-    }
   }
 
   function resolveTarget(call: ToolCall): WardrobeToolTarget | undefined {

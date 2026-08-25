@@ -125,7 +125,7 @@ test("selfie_openaiMode_sendsGeneratedImage", async () => {
     });
 
     assert.equal(result.ok, true);
-    assert.equal(sent[1].content.kind, "image");
+    assert.equal(sent[0].content.kind, "image");
   } finally {
     globalThis.fetch = previousFetch;
     fs.rmSync(outputRoot, { recursive: true, force: true });
@@ -299,7 +299,7 @@ test("selfie_openaiRelayMode_sendsGeneratedImage", async () => {
     });
 
     assert.equal(result.ok, true);
-    assert.equal(sent[1].content.kind, "image");
+    assert.equal(sent[0].content.kind, "image");
   } finally {
     globalThis.fetch = previousFetch;
     fs.rmSync(outputRoot, { recursive: true, force: true });
@@ -355,7 +355,7 @@ test("selfie_openaiRelayFetchFailure_logsCauseAndSendsFailureNotice", async () =
     const joinedLogs = logs.join("\n");
     assert.equal(result.ok, false);
     assert.ok(joinedLogs);
-    assert.equal(sent[1].content.kind, "text");
+    assert.deepEqual(sent, []);
   } finally {
     globalThis.fetch = previousFetch;
     fs.rmSync(outputRoot, { recursive: true, force: true });
@@ -576,8 +576,8 @@ test("selfie_codexMode_convertsGeneratedAssetAndSendsResult", async () => {
     });
 
     assert.equal(result.ok, true);
-    assert.equal(sent[1].content.kind, "image");
-    const sentAssetId = sent[1].content.kind === "image" ? sent[1].content.assetId : "";
+    assert.equal(sent[0].content.kind, "image");
+    const sentAssetId = sent[0].content.kind === "image" ? sent[0].content.assetId : "";
     const finalBytes = fs.readFileSync(path.join(assetRootFromOutputDir(outputRoot), sentAssetId));
     assert.deepEqual([...finalBytes.subarray(0, 3)], [0xff, 0xd8, 0xff]);
   } finally {
@@ -714,7 +714,7 @@ test("selfie_codexRunnerFailure_sendsFailureNotice", async () => {
     });
 
     assert.equal(result.ok, false);
-    assert.equal(sent[1].content.kind, "text");
+    assert.deepEqual(sent, []);
   } finally {
     if (previousCodexHome === undefined) {
       delete process.env.CODEX_HOME;

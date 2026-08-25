@@ -2,10 +2,8 @@ import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js"
 import type { OutputRouter } from "../../../../platform/output-router/src/index.js";
 import type { AliceStore, InsertOutboundMessageInput } from "../../../../contexts/conversation-hub/src/ports/conversation-store.js";
 import type { AgentOutput } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
-import { sendSystemNoticeFromRuntime } from "../../../../contexts/conversation-hub/src/application/message-runtime.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
 import type { PhotoToolTarget } from "./selfie-tool.js";
-import { photoToolText } from "../profile.js";
 
 export type PhotoSendDeps = {
   store: Pick<AliceStore, "insertOutboundMessage" | "markOutboundMessageSent" | "markOutboundMessageFailed">;
@@ -22,35 +20,6 @@ export type PhotoSendDeps = {
     error?: string;
   }): unknown;
 };
-
-export async function sendText(deps: PhotoSendDeps, time: CurrentTimeProvider, target: PhotoToolTarget, text: string, senderRole: "assistant" | "system" = "assistant"): Promise<unknown> {
-  if (senderRole === "system") {
-    return sendSystemNoticeFromRuntime({
-      time,
-      store: deps.store,
-      send: (output) => deps.outputRouter.send(output),
-      appendMessageLog: deps.appendMessageLog
-    }, { target, text });
-  }
-  const now = time.now();
-  return sendOutput(deps, time, {
-    id: createId("tool_out"),
-    target: {
-      plugin: target.plugin,
-      accountId: target.accountId,
-      channelId: target.channelId,
-      userId: target.userId,
-      sessionId: target.sessionId
-    },
-    content: { kind: "text", text },
-    meta: {
-      createdAt: now.iso,
-      createdAtUtc: now.date.toISOString(),
-      urgency: "normal",
-      allowStreaming: false
-    }
-  }, senderRole);
-}
 
 export async function sendImage(deps: PhotoSendDeps, time: CurrentTimeProvider, target: PhotoToolTarget, assetId: string): Promise<unknown> {
   const now = time.now();
@@ -71,14 +40,6 @@ export async function sendImage(deps: PhotoSendDeps, time: CurrentTimeProvider, 
       allowStreaming: false
     }
   });
-}
-
-export async function sendSelfieFailureNotice(deps: PhotoSendDeps, time: CurrentTimeProvider, target: PhotoToolTarget): Promise<void> {
-  try {
-    await sendText(deps, time, target, photoToolText.failureNotice, "system");
-  } catch (error) {
-    deps.appendLog?.("warn", `selfie failure notice failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
 }
 
 export async function sendOutput(deps: PhotoSendDeps, time: CurrentTimeProvider, output: AgentOutput, senderRole: "assistant" | "system" = "assistant"): Promise<unknown> {

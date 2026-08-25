@@ -38,15 +38,57 @@ test("messageRuntime_chatAgentFailure_marksBatchFailedAndDoesNotRetry", async ()
   });
 
   runtime.ingestEvent(textEvent("session-1", "om_1", "hello"));
-  await waitFor(() => coreCalls === 1);
+  await waitFor(() => coreCalls === 1 && sent.length === 1);
 
   assert.equal(coreCalls, 1);
   assert.equal(sent[0].content.kind, "text");
+  if (sent[0].content.kind !== "text") throw new Error("expected text failure notice");
+  assert.equal(sent[0].content.text, "<-Error: llm failed | provider stream terminated->");
+  assert.doesNotMatch(sent[0].content.text, /星界信号丢失/);
   assert.equal(store.listMessagesForConversation("session-1", 10).at(-1)?.senderRole, "system");
   assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 0);
   const failedLog = store.listMessageLogs(20).find((entry) => entry.status === "core_failed");
   assert.ok(failedLog?.error);
   assert.equal(logs.length > 0, true);
+});
+
+test("messageRuntime_manualProcessFailure_sendsConcreteError", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-manual-fail"), "alice.sqlite"));
+  const sent: AgentOutput[] = [];
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 0,
+    getProcessNowTarget: () => ({
+      plugin: "feishu",
+      accountId: "main",
+      channelId: "chat",
+      userId: "user",
+      sessionId: "session-1"
+    }),
+    store,
+    chatAgent: {
+      async prepareEventRun() {
+        throw new Error("LLM request failed: 503 Service Unavailable {\"error\":{\"type\":\"server_error\",\"message\":\"Error from provider (Console Go): Upstream request failed: Endpoint is unavailable.\"}}");
+      }
+    },
+    outputRouter: {
+      async sendAll(outputs) {
+        sent.push(...outputs);
+      }
+    },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  runtime.pauseHeartbeat();
+  await runtime.processNow();
+
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].content.kind, "text");
+  if (sent[0].content.kind !== "text") throw new Error("expected text failure notice");
+  assert.equal(sent[0].content.text, "<-Error: LLM request failed: 503 Service Unavailable | Error from provider (Console Go): Upstream request failed: Endpoint is unavailable.->");
+  assert.doesNotMatch(sent[0].content.text, /星界信号丢失/);
 });
 
 test("messageRuntime_heartbeatPaused_processesPendingOnDemand", async () => {

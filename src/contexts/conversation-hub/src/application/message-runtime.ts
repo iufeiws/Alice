@@ -4,7 +4,7 @@ import { createAgentLoopRuntime } from "../../../agent-loop/src/runtime/agent-lo
 import { createId } from "../../../../shared/uuid/src/index.js";
 import type { AgentStateSnapshot } from "../../../../contexts/agent-loop/src/domain/agent-loop-state.js";
 import { createCurrentTimeProvider, parseZonedIso } from "../../../../platform/time/src/index.js";
-import { describeError } from "../../../../shared/errors/src/index.js";
+import { describeError, formatErrorNotice } from "../../../../shared/errors/src/index.js";
 import type { StoredConversationMessage } from "../../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import { lifecycleSummary, normalizeInboundEvent, summarizeEventPayload, summarizeOutput } from "./message-content.js";
 import {
@@ -132,7 +132,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   const time = deps.time ?? createCurrentTimeProvider("UTC", deps.now);
   const now = () => time.now().date;
   const random = deps.random ?? Math.random;
-  const llmFailureNotice = "星界信号丢失";
   const agentLoopRuntime = deps.agentLoopRuntime ?? createAgentLoopRuntime();
   // §7.1: 无论 runtime 由调用方注入还是本 runtime 自建, 都把 chat/talk 的 prepare 跑者
   // 接到本 runtime 的 deps(测试注入裸 runtime 时同样可用; 生产值与 root 注入一致)。
@@ -465,6 +464,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       deps.appendLog("info", `manual process now session handled: ${outputs.length} output(s)`);
       return true;
     } catch (error) {
+      const errorText = formatErrorNotice(error);
       await sendSystemNotice({
         target: {
           plugin: target.plugin,
@@ -473,7 +473,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
           userId: target.userId,
           sessionId: target.sessionId
         },
-        text: llmFailureNotice
+        text: errorText
       });
       deps.appendLog("error", `manual process now failed: ${describeError(error)}`);
       return false;
@@ -636,7 +636,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
           deps.appendLog("warn", `chat session skipped: agent loop busy ${sessionId}`);
           return;
         }
-        await sendSystemNotice({ target: typingTargetFromPending(sessionId, pending, agentEvent, false), text: llmFailureNotice });
+        const errorText = formatErrorNotice(error);
+        await sendSystemNotice({ target: typingTargetFromPending(sessionId, pending, agentEvent, false), text: errorText });
         markPendingCoreFailed(pending, error);
         throw error;
       }

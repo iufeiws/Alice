@@ -140,6 +140,10 @@ function chatRequest(id: number, messages: any[], overrides: Record<string, unkn
   };
 }
 
+function noteRequest(runtime: any, id: number, messages: any[], agentId: "chat" | "talk" = "chat", overrides: Record<string, unknown> = {}): void {
+  runtime.noteLLMRequest(chatRequest(id, messages, overrides), agentId, messages);
+}
+
 function currentSessionId(runtime: any): number {
   return (runtime.getCurrentLLMSessionSnapshot() as { id: number }).id;
 }
@@ -224,7 +228,7 @@ test("does not infer current when the pointer is absent", () => {
   assert.equal(runtime.restorePersistedCurrentLLMSession(), undefined);
   assert.equal(runtime.getCurrentLLMSessionSnapshot(), undefined, "database content must never imply a current session");
   // a request creates a brand-new session instead of adopting the orphan
-  runtime.noteLLMRequest(chatRequest(1, [{ role: "user", content: "new" }]), "chat");
+  noteRequest(runtime, 1, [{ role: "user", content: "new" }]);
   const snapshot = runtime.getCurrentLLMSessionSnapshot() as any;
   assert.ok(snapshot);
   assert.notEqual(String(snapshot.id), "7");
@@ -252,7 +256,7 @@ test("keeps in-memory session unchanged when sqlite commit fails", () => {
   const realStore = createLLMSessionStore(dbPathFor(memoryRoot));
   const { wrapped, fail } = failingStore(realStore);
   const { runtime } = makeEnv(memoryRoot, wrapped);
-  runtime.noteLLMRequest(chatRequest(1, [{ role: "user", content: "hello" }]), "chat");
+  noteRequest(runtime, 1, [{ role: "user", content: "hello" }]);
   fail("append");
   assert.throws(() => runtime.noteLLMResponse({
     id: 2,
@@ -278,10 +282,10 @@ test("uses one transcript writer for request response and tool updates", () => {
   const realStore = createLLMSessionStore(dbPathFor(memoryRoot));
   const { wrapped, calls } = failingStore(realStore);
   const { runtime } = makeEnv(memoryRoot, wrapped);
-  runtime.noteLLMRequest(chatRequest(1, [
+  noteRequest(runtime, 1, [
     { role: "system", content: "sys" },
     { role: "user", content: "hi" }
-  ]), "chat");
+  ]);
   const requestPhase = { ...calls };
   const id = currentSessionId(runtime);
   runtime.noteLLMResponse({
@@ -317,10 +321,10 @@ test("uses one transcript writer for request response and tool updates", () => {
 test("commits request messages before dispatch", () => {
   const memoryRoot = makeTempDir("runtime-request-commit");
   const { runtime } = makeEnv(memoryRoot);
-  runtime.noteLLMRequest(chatRequest(1, [
+  noteRequest(runtime, 1, [
     { role: "system", content: "sys" },
     { role: "user", content: "hello" }
-  ]), "chat");
+  ]);
   const id = currentSessionId(runtime);
   const reader = createLLMSessionStore(dbPathFor(memoryRoot));
   const persisted = reader.read(String(id));
@@ -334,7 +338,7 @@ test("commits request messages before dispatch", () => {
 test("commits assistant response before tool execution", () => {
   const memoryRoot = makeTempDir("runtime-response-commit");
   const { runtime } = makeEnv(memoryRoot);
-  runtime.noteLLMRequest(chatRequest(1, [{ role: "user", content: "hello" }]), "chat");
+  noteRequest(runtime, 1, [{ role: "user", content: "hello" }]);
   const id = currentSessionId(runtime);
   runtime.noteLLMResponse({
     id: 2,
@@ -369,7 +373,7 @@ test("commits each tool result before the next request", () => {
   };
   const mTool = { role: "tool", toolCallId: "call_1", content: "42" };
   const mUser2 = { role: "user", content: "thanks" };
-  runtime.noteLLMRequest(chatRequest(1, [mSystem, mUser1]), "chat");
+  noteRequest(runtime, 1, [mSystem, mUser1]);
   const id = currentSessionId(runtime);
   runtime.noteLLMResponse({
     id: 2,
@@ -391,7 +395,7 @@ test("commits each tool result before the next request", () => {
   assert.deepEqual(persisted?.messages.map((message: any) => message.role), ["system", "user", "assistant", "tool"]);
   reader.close();
   // the next request carries the full transcript including the committed tool result
-  runtime.noteLLMRequest(chatRequest(2, [mSystem, mUser1, mAssistant, mTool, mUser2]), "chat");
+  noteRequest(runtime, 2, [mSystem, mUser1, mAssistant, mTool, mUser2]);
   reader = createLLMSessionStore(dbPathFor(memoryRoot));
   persisted = reader.read(String(id));
   assert.equal(persisted?.messages.length, 5);
@@ -400,10 +404,83 @@ test("commits each tool result before the next request", () => {
   reader.close();
 });
 
+test("records the transport request while appending the authoritative transcript delta", () => {
+  const memoryRoot = makeTempDir("runtime-request-transport-transcript-separation");
+  const { runtime } = makeEnv(memoryRoot);
+  const user = { role: "user" as const, content: "start" };
+  const assistant = {
+    role: "assistant" as const,
+    content: "",
+    reasoningContent: "private reasoning",
+    toolCalls: []
+  };
+  const nextUser = { role: "user" as const, content: "again" };
+  runtime.noteLLMRequest(chatRequest(1, [user]), "chat", [user]);
+  const id = currentSessionId(runtime);
+  runtime.noteLLMResponse({
+    id: 2,
+    agentId: "chat",
+    sessionId: id,
+    requestId: 1,
+    time: "2026-06-14T01:00:01.000",
+    timeUtc: "2026-06-14T01:00:01.000Z",
+    message: assistant,
+    finishReason: "stop"
+  } as any);
+
+  runtime.noteLLMRequest(chatRequest(3, [
+    user,
+    { role: "assistant", content: "" },
+    nextUser
+  ]), "chat", [user, assistant, nextUser]);
+
+  const reader = createLLMSessionStore(dbPathFor(memoryRoot));
+  const persisted = reader.read(String(id));
+  assert.deepEqual(persisted?.messages, [user, assistant, nextUser], "session transcript must retain the unsanitized assistant message");
+  const archivedRequests = persisted?.meta.requests as Array<{ messages: unknown[] }>;
+  assert.deepEqual(archivedRequests.at(-1)?.messages, [
+    user,
+    { role: "assistant", content: "" },
+    nextUser
+  ], "request audit must retain the actual sanitized transport payload");
+  reader.close();
+});
+
+test("keeps consecutive assistant messages separate when the transport request merges them", () => {
+  const memoryRoot = makeTempDir("runtime-request-assistant-merge-separation");
+  const { runtime } = makeEnv(memoryRoot);
+  const transcriptMessages = [
+    { role: "assistant" as const, content: "first" },
+    { role: "assistant" as const, content: "second" }
+  ];
+  const transportMessages = [{ role: "assistant" as const, content: "first\nsecond" }];
+
+  runtime.noteLLMRequest(chatRequest(1, transportMessages), "chat", transcriptMessages);
+
+  const id = currentSessionId(runtime);
+  const reader = createLLMSessionStore(dbPathFor(memoryRoot));
+  const persisted = reader.read(String(id));
+  assert.deepEqual(persisted?.messages, transcriptMessages);
+  assert.deepEqual((persisted?.meta.requests as Array<{ messages: unknown[] }>)[0].messages, transportMessages);
+  reader.close();
+});
+
+test("rejects divergence in the authoritative request transcript", () => {
+  const memoryRoot = makeTempDir("runtime-request-authoritative-divergence");
+  const { runtime } = makeEnv(memoryRoot);
+  noteRequest(runtime, 1, [{ role: "user", content: "original" }]);
+
+  assert.throws(() => runtime.noteLLMRequest(
+    chatRequest(2, [{ role: "user", content: "transport" }]),
+    "chat",
+    [{ role: "user", content: "replaced" }]
+  ), /llm current session transcript divergence/);
+});
+
 test("rejects a non-append chat transcript without overwriting storage", () => {
   const memoryRoot = makeTempDir("runtime-non-append-reject");
   const { runtime } = makeEnv(memoryRoot);
-  runtime.noteLLMRequest(chatRequest(1, [{ role: "user", content: "hello" }]), "chat");
+  noteRequest(runtime, 1, [{ role: "user", content: "hello" }]);
   const id = currentSessionId(runtime);
   assert.throws(() => runtime.updateCurrentLLMSessionTranscript({
     messages: [{ role: "user", content: "completely different history" }],
@@ -434,7 +511,7 @@ test("allows talk transcript replacement only through explicit replace", () => {
     appendLog() {},
     sessionClearCoordinator: fakeSessionClearCoordinator()
   });
-  runtime.noteLLMRequest(chatRequest(1, [{ role: "user", content: "start" }], { agentId: "talk", id: 1 }), "talk");
+  noteRequest(runtime, 1, [{ role: "user", content: "start" }], "talk", { agentId: "talk", id: 1 });
   const talkId = currentSessionId(runtime);
   // explicit talk transcript update replaces the whole transcript
   runtime.updateActiveTalkLLMSessionTranscript({
@@ -464,7 +541,7 @@ test("restores the last successful recovery point after restart", () => {
   const realStore = createLLMSessionStore(dbPathFor(memoryRoot));
   const { wrapped, fail } = failingStore(realStore);
   const { runtime } = makeEnv(memoryRoot, wrapped);
-  runtime.noteLLMRequest(chatRequest(1, [{ role: "user", content: "hello" }]), "chat");
+  noteRequest(runtime, 1, [{ role: "user", content: "hello" }]);
   runtime.noteLLMResponse({
     id: 2,
     agentId: "chat",
@@ -507,7 +584,7 @@ test("deletes pointer only after clear metadata is committed", async () => {
   const realStore = createLLMSessionStore(dbPathFor(memoryRoot));
   const { wrapped, fail, heal } = failingStore(realStore);
   const { runtime } = makeEnv(memoryRoot, wrapped);
-  runtime.noteLLMRequest(chatRequest(1, [{ role: "user", content: "hello" }]), "chat");
+  noteRequest(runtime, 1, [{ role: "user", content: "hello" }]);
   const id = currentSessionId(runtime);
   fail("updateMeta", "replace");
   await assert.rejects(() => runtime.clearCurrentLLMSession("admin_clear"), /injected store failure/);
@@ -527,11 +604,11 @@ test("deletes pointer only after clear metadata is committed", async () => {
 test("rewrites pointer after chat talk switch", () => {
   const memoryRoot = makeTempDir("runtime-pointer-switch");
   const { runtime } = makeEnv(memoryRoot);
-  runtime.noteLLMRequest(chatRequest(1, [{ role: "user", content: "chat msg" }]), "chat");
+  noteRequest(runtime, 1, [{ role: "user", content: "chat msg" }]);
   const chatPointer = readPointer(memoryRoot);
   assert.equal(chatPointer.agentType, "chat");
   assert.equal(typeof chatPointer.sessionId, "number");
-  runtime.noteLLMRequest(chatRequest(2, [{ role: "user", content: "talk msg" }], { agentId: "talk", id: 2, time: "2026-06-14T01:00:01.000", timeUtc: "2026-06-14T01:00:01.000Z" }), "talk");
+  noteRequest(runtime, 2, [{ role: "user", content: "talk msg" }], "talk", { agentId: "talk", id: 2, time: "2026-06-14T01:00:01.000", timeUtc: "2026-06-14T01:00:01.000Z" });
   const talkPointer = readPointer(memoryRoot);
   assert.equal(talkPointer.agentType, "talk");
   assert.notEqual(talkPointer.sessionId, chatPointer.sessionId, "switching agents must create a new session");

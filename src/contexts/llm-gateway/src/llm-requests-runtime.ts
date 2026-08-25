@@ -25,7 +25,7 @@ import type { LLMToolLoopRoundRequest } from "./llm-tool-loop.js";
  */
 export function createLLMRequestsRuntime(input: {
   getTool(name: string): any;
-  appendLLMRequestLog(request: any, agentId?: "chat" | "talk"): LLMRequestLogEntry | undefined;
+  appendLLMRequestLog(request: any, agentId: "chat" | "talk", transcriptMessages: LLMMessage[]): LLMRequestLogEntry | undefined;
   appendLLMResponseLog(result: any, agentId?: "chat" | "talk", request?: LLMRequestLogEntry): void;
   appendLLMUsageLog(result: any, model?: string): void;
   recordTokenUsageEvent(event: any): void;
@@ -53,7 +53,7 @@ export function createLLMRequestsRuntime(input: {
     onRequestPrepared(requestInput, request) {
       if (isMainAgent(requestInput.agentId)) input.agentState?.suspendInactivityTimer();
       if (requestInput.agentId === "chat" || requestInput.agentId === "talk") {
-        const entry = input.appendLLMRequestLog(request, requestInput.agentId);
+        const entry = input.appendLLMRequestLog(request, requestInput.agentId, requestInput.messages);
         if (entry) requestLogEntries.set(requestInput, entry);
         return;
       }

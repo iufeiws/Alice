@@ -159,7 +159,7 @@ test("LLM session runtime current session snapshot reflects request/response/cle
     timeUtc: "2026-06-14T01:00:00.000Z",
     model: "chat-model",
     messages: [{ role: "user", content: "hello" }]
-  } as any, "chat");
+  } as any, "chat", [{ role: "user", content: "hello" }]);
   runtime.noteLLMResponse({
     id: 2,
     agentId: "chat",
@@ -200,7 +200,7 @@ test("LLM session runtime skips response for a non-current session", () => {
     timeUtc: "2026-06-14T01:00:00.000Z",
     model: "chat-model",
     messages: [{ role: "user", content: "hello" }]
-  } as any, "chat");
+  } as any, "chat", [{ role: "user", content: "hello" }]);
 
   runtime.noteLLMResponse({
     id: 2,

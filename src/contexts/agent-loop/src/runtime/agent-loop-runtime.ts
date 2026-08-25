@@ -59,7 +59,7 @@ export type MainAgentClearAcquisition =
 export type LLMSessionRuntimePort = {
   ensureCurrentLLMSession(time: string, agentId?: AgentLoopKind): { id: number | string };
   createTalkLLMSession(time: string): { id: number | string };
-  noteLLMRequest(entry: unknown, agentId?: AgentLoopKind): void;
+  noteLLMRequest(entry: unknown, agentId: AgentLoopKind, transcriptMessages: LLMChatInput["messages"]): void;
   noteLLMResponse(entry: unknown): void;
   isActiveTalkLLMSession(sessionId: number): boolean;
   loadCurrentLLMSessionTranscript(): unknown;
@@ -118,7 +118,7 @@ export type AgentLoopRuntime = {
   setLLMSessionRuntime(runtime: LLMSessionRuntimePort | undefined): void;
   ensureCurrentLLMSession(time: string, agentId?: AgentLoopKind): { id: number | string };
   createTalkLLMSession(time: string): { id: number | string };
-  noteLLMRequest(entry: unknown, agentId?: AgentLoopKind): void;
+  noteLLMRequest(entry: unknown, agentId: AgentLoopKind, transcriptMessages: LLMChatInput["messages"]): void;
   noteLLMResponse(entry: unknown): void;
   isActiveTalkLLMSession(sessionId: number): boolean;
   loadCurrentLLMSessionTranscript(): unknown;
@@ -204,8 +204,8 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
     createTalkLLMSession(time) {
       return requireLLMSessionRuntime().createTalkLLMSession(time);
     },
-    noteLLMRequest(entry, agentId) {
-      requireLLMSessionRuntime().noteLLMRequest(entry, agentId);
+    noteLLMRequest(entry, agentId, transcriptMessages) {
+      requireLLMSessionRuntime().noteLLMRequest(entry, agentId, transcriptMessages);
     },
     noteLLMResponse(entry) {
       requireLLMSessionRuntime().noteLLMResponse(entry);

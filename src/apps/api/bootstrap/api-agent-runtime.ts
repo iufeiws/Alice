@@ -75,7 +75,7 @@ export function createApiAgentRuntime(input: {
     getAgentInitiatedBehaviorPlans: input.getAgentInitiatedBehaviorPlans,
     initiatedBehaviorRunStore: input.initiatedBehaviorRunStore,
     loadCurrentLLMSessionTranscript: () => input.agentLoopRuntime.loadCurrentLLMSessionTranscript(),
-    appendLLMRequestLog: (requestInput, agentId = "chat") => input.llmLogRuntime.appendRequestLog(requestInput, agentId),
+    appendLLMRequestLog: (requestInput, agentId = "chat") => input.llmLogRuntime.appendRequestLog(requestInput, agentId, requestInput.messages),
     appendLLMResponseLog: (result, agentId = "chat", request) => input.llmLogRuntime.appendResponseLog(result, agentId, request),
     messagingTools: input.messagingTools,
     updateCurrentLLMSessionTranscript: (session) => input.agentLoopRuntime.updateCurrentLLMSessionTranscript(session),

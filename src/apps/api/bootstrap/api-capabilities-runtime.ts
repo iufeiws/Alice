@@ -40,7 +40,7 @@ export function createApiCapabilitiesRuntime(input: {
   let getLLMRequestToolDefinition: (name: string) => any = () => undefined;
   const llmRequests = createLLMRequestsRuntime({
     getTool: (name) => getLLMRequestToolDefinition(name),
-    appendLLMRequestLog: (request, agentId = "chat") => input.llmLogRuntime.appendRequestLog(request, agentId),
+    appendLLMRequestLog: (request, agentId, transcriptMessages) => input.llmLogRuntime.appendRequestLog(request, agentId, transcriptMessages),
     appendLLMResponseLog: (result, agentId = "chat", request) => input.llmLogRuntime.appendResponseLog(result, agentId, request),
     appendLLMUsageLog: input.appendLLMUsageLog,
     recordTokenUsageEvent: input.recordTokenUsageEvent,

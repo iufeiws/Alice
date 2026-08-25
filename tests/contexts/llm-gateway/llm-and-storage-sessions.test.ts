@@ -67,12 +67,13 @@ test("LLM log runtime binds responses to the request session instead of current 
     recordTokenUsage() {}
   });
 
+  const requestMessages = [{ role: "user" as const, content: "hello" }];
   const request = logRuntime.appendRequestLog({
-    messages: [{ role: "user", content: "hello" }],
+    messages: requestMessages,
     model: "chat-model",
     presetName: "chat-flash",
     extraParams: { tool_choice: { type: "function", function: { name: "Chat" } } }
-  }, "chat");
+  }, "chat", requestMessages);
   activeSession = { id: 200, requestIds: [99] };
 
   const response = logRuntime.appendResponseLog({
@@ -93,7 +94,7 @@ test("LLM session runtime writes chat request directly to sqlite", () => {
     { role: "system" as const, content: "system" },
     { role: "user" as const, content: "hello" }
   ]);
-  runtime.noteLLMRequest(request, "chat");
+  runtime.noteLLMRequest(request, "chat", request.messages);
 
   const { pointer, session } = readCurrentSession();
   assert.deepEqual(Object.keys(pointer).sort(), ["agentType", "sessionId"], "pointer must contain only sessionId and agentType");
@@ -109,7 +110,7 @@ test("LLM session runtime appends chat response directly to sqlite", () => {
     { role: "system" as const, content: "system" },
     { role: "user" as const, content: "hello" }
   ]);
-  runtime.noteLLMRequest(request, "chat");
+  runtime.noteLLMRequest(request, "chat", request.messages);
 
   runtime.noteLLMResponse({
     id: 2,
@@ -133,7 +134,7 @@ test("LLM session runtime records latest chat request metadata", () => {
     { role: "system" as const, content: "system" },
     { role: "user" as const, content: "hello" }
   ]);
-  runtime.noteLLMRequest(request, "chat");
+  runtime.noteLLMRequest(request, "chat", request.messages);
   runtime.noteLLMResponse({
     id: 2,
     agentId: "chat",
@@ -145,19 +146,20 @@ test("LLM session runtime records latest chat request metadata", () => {
     finishReason: "stop"
   });
 
+  const nextMessages = [
+    { role: "system" as const, content: "system" },
+    { role: "user" as const, content: "hello" },
+    { role: "assistant" as const, content: "done" },
+    { role: "user" as const, content: "again" }
+  ];
   runtime.noteLLMRequest({
     id: 3,
     agentId: "chat",
     time: "2026-06-14T01:00:02.000",
     timeUtc: "2026-06-14T01:00:02.000Z",
     model: "chat-model",
-    messages: [
-      { role: "system", content: "system" },
-      { role: "user", content: "hello" },
-      { role: "assistant", content: "done" },
-      { role: "user", content: "again" }
-    ]
-  }, "chat");
+    messages: nextMessages
+  }, "chat", nextMessages);
   const { session } = readCurrentSession();
   assert.equal((session?.meta.latestRequestInfo as any)?.round, 1);
   assert.deepEqual(session?.meta.requestIds, [1, 3]);
@@ -206,6 +208,78 @@ test("LLM requests runtime passes request-scoped log entry to response logging",
   });
 
   assert.deepEqual(responseRequestIds, [10]);
+});
+
+test("gateway sanitization does not replace the authoritative session transcript", async () => {
+  const { runtime: sessionRuntime, readCurrentSession } = createChatSessionRuntime("llm-request-transcript-separation");
+  const requestLogs: any[] = [];
+  const responseLogs: any[] = [];
+  const transportMessages: any[][] = [];
+  const logRuntime = createLLMLogRuntime({
+    time: fixedTime("2026-06-14T01:00:00.000Z"),
+    requestLogs,
+    responseLogs,
+    ensureActiveSession: (time, agentId) => sessionRuntime.ensureCurrentLLMSession(time, agentId),
+    getActiveSession: () => sessionRuntime.getCurrentLLMSessionSnapshot() as any,
+    noteRequest: (entry, agentId, transcript) => sessionRuntime.noteLLMRequest(entry, agentId, transcript),
+    noteResponse: (entry) => sessionRuntime.noteLLMResponse(entry),
+    appendUsageLog() {},
+    resolveModel: () => "chat-model",
+    recordTokenUsage() {}
+  });
+  let requestCount = 0;
+  const client: LLMClient = {
+    async chat(input) {
+      transportMessages.push(input.messages as any[]);
+      requestCount += 1;
+      return requestCount === 1
+        ? {
+          message: {
+            role: "assistant",
+            content: "",
+            reasoningContent: "private reasoning",
+            toolCalls: []
+          },
+          finishReason: "stop"
+        }
+        : { message: { role: "assistant", content: "done" }, finishReason: "stop" };
+    }
+  };
+  const requests = createLLMRequestsRuntime({
+    getTool: () => undefined,
+    appendLLMRequestLog: (request, agentId, transcript) => logRuntime.appendRequestLog(request, agentId, transcript),
+    appendLLMResponseLog: (result, agentId, request) => logRuntime.appendResponseLog(result, agentId, request),
+    appendLLMUsageLog() {},
+    recordTokenUsageEvent() {},
+    time: fixedTime("2026-06-14T01:00:00.000Z"),
+    resolvePromptApiPreset: () => ({ model: "chat-model" }),
+    appendLog() {}
+  });
+
+  await requests.send({
+    agentId: "chat",
+    client,
+    messages: [{ role: "user", content: "start" }],
+    toolNames: [],
+    round: 0
+  });
+  const transcript = sessionRuntime.loadCurrentLLMSessionTranscript() as any;
+  await requests.send({
+    agentId: "chat",
+    client,
+    messages: [...transcript.messages, { role: "user", content: "again" }],
+    toolNames: [],
+    round: 1
+  });
+
+  assert.deepEqual(transportMessages[1][1], { role: "assistant", content: "" }, "upstream receives the sanitized assistant message");
+  assert.deepEqual(requestLogs[1].messages[1], { role: "assistant", content: "" }, "request audit records the transport payload");
+  const persisted = readCurrentSession().session;
+  assert.deepEqual(persisted?.messages.slice(0, 3), [
+    { role: "user", content: "start" },
+    { role: "assistant", content: "", reasoningContent: "private reasoning", toolCalls: [] },
+    { role: "user", content: "again" }
+  ], "session transcript retains the unsanitized history used by the loop");
 });
 
 test("LLM requests runtime records deferred chat and talk responses after tool-loop formatting", async () => {

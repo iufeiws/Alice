@@ -76,16 +76,24 @@ export function createLLMSessionRuntime(input: {
     return session;
   }
 
-  /** 发送 LLM 请求前提交: 请求消息必须是对当前 transcript 的追加或相等。 */
-  function noteLLMRequest(entry: Omit<LLMRequestLogEntry, "agentId"> & { agentId?: string }, agentId: "chat" | "talk" = "chat"): void {
+  /**
+   * 发送 LLM 请求前提交:
+   * entry.messages 是清洗后的实际 transport payload, 仅用于请求审计;
+   * transcriptMessages 是 agent loop 的权威历史, 必须是当前 transcript 的追加或相等。
+   */
+  function noteLLMRequest(
+    entry: Omit<LLMRequestLogEntry, "agentId"> & { agentId?: string },
+    agentId: "chat" | "talk",
+    transcriptMessages: LLMChatInput["messages"]
+  ): void {
     const session = ensureCurrentLLMSession(entry.time, agentId);
     entry.sessionId = session.id;
     const previousMessages = session.messages;
-    const commonPrefix = commonMessagePrefixLength(previousMessages, entry.messages);
+    const commonPrefix = commonMessagePrefixLength(previousMessages, transcriptMessages);
     if (commonPrefix !== previousMessages.length) {
-      throw new Error(`llm current session transcript divergence: session=${session.id} common_prefix=${commonPrefix} next_messages=${entry.messages.length}`);
+      throw new Error(`llm current session transcript divergence: session=${session.id} common_prefix=${commonPrefix} next_messages=${transcriptMessages.length}`);
     }
-    const delta = entry.messages.slice(previousMessages.length);
+    const delta = transcriptMessages.slice(previousMessages.length);
     const round = session.requestIds.length;
     const next: LLMSessionRecord = {
       ...session,
@@ -116,7 +124,7 @@ export function createLLMSessionRuntime(input: {
         presetName: entry.presetName,
         messageCount: entry.messages.length
       },
-      messages: cloneLLMMessages(entry.messages)
+      messages: cloneLLMMessages(transcriptMessages)
     };
     if (delta.length > 0) input.archive.appendMessages(next, delta);
     input.archive.writeMetadata(next);

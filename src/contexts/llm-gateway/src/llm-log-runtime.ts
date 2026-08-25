@@ -12,7 +12,7 @@ export function createLLMLogRuntime(input: {
   responseLogs: LLMResponseLogEntry[];
   ensureActiveSession(time: string, agentId: AgentId): { id: number };
   getActiveSession(): { id: number | string; requestIds?: number[] } | undefined;
-  noteRequest(entry: LLMRequestLogEntry, agentId: AgentId): void;
+  noteRequest(entry: LLMRequestLogEntry, agentId: AgentId, transcriptMessages: LLMChatInput["messages"]): void;
   noteResponse(entry: LLMResponseLogEntry): void;
   appendUsageLog(result: LLMChatResult, modelFallback: string | undefined): void;
   resolveModel(agentId: AgentId): string | undefined;
@@ -26,7 +26,11 @@ export function createLLMLogRuntime(input: {
     appendResponseLog
   };
 
-  function appendRequestLog(request: LLMChatInput, agentId: AgentId = "chat"): LLMRequestLogEntry {
+  function appendRequestLog(
+    request: LLMChatInput,
+    agentId: AgentId,
+    transcriptMessages: LLMChatInput["messages"]
+  ): LLMRequestLogEntry {
     const rawRequest = buildRawLLMRequest(request);
     const previous = input.requestLogs[input.requestLogs.length - 1]?.rawRequest;
     const diffFromPrevious = previous === undefined ? undefined : diffRequests(previous, rawRequest);
@@ -49,7 +53,7 @@ export function createLLMLogRuntime(input: {
       diffFromPrevious
     } satisfies LLMRequestLogEntry;
     input.requestLogs.push(entry);
-    input.noteRequest(entry, agentId);
+    input.noteRequest(entry, agentId, transcriptMessages);
     nextRequestId += 1;
     if (input.requestLogs.length > 50) {
       input.requestLogs.splice(0, input.requestLogs.length - 50);

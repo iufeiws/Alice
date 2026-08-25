@@ -22,7 +22,7 @@ export function createLLMObservabilityRuntime(input: {
     responseLogs: input.responseLogs,
     ensureActiveSession: (time, agentId = "chat") => input.agentLoopRuntime.ensureCurrentLLMSession(time, agentId),
     getActiveSession: () => input.agentLoopRuntime.getActiveMainLLMSession(),
-    noteRequest: (entry, agentId = "chat") => input.agentLoopRuntime.noteLLMRequest(entry, agentId),
+    noteRequest: (entry, agentId, transcriptMessages) => input.agentLoopRuntime.noteLLMRequest(entry, agentId, transcriptMessages),
     noteResponse: (entry) => input.agentLoopRuntime.noteLLMResponse(entry),
     appendUsageLog: tokenUsageRuntime.appendLLMUsageLog,
     resolveModel: (agentId) => agentId === "talk" ? input.resolvePromptApiPreset("talk")?.model : input.resolvePromptApiPreset("chat")?.model,

@@ -141,6 +141,10 @@ function chatRequest(id: number, messages: any[], overrides: Record<string, unkn
   };
 }
 
+function noteRequest(runtime: any, id: number, messages: any[]): void {
+  runtime.noteLLMRequest(chatRequest(id, messages), "chat", messages);
+}
+
 function failingStore(real: LLMSessionStore) {
   const failed = new Set<string>();
   const fail = (...methods: string[]) => {
@@ -201,7 +205,7 @@ test("每个 LLMSessionClearReason 都进入统一 clear 入口并返回 Session
     const logLines: string[] = [];
     const { worker, callCount } = fakeWorker();
     const { runtime } = makeEnv(memoryRoot, worker, logLines, store);
-    runtime.noteLLMRequest(chatRequest(1, [{ role: "user", content: "hello" }]), "chat");
+    noteRequest(runtime, 1, [{ role: "user", content: "hello" }]);
     const sessionId = (runtime.getCurrentLLMSessionSnapshot() as { id: number }).id;
 
     const result = await runtime.clearCurrentLLMSession(reason);
@@ -246,7 +250,7 @@ test("Short Memory 采集未完成时会话不得提前清除", async () => {
   const store = createLLMSessionStore(dbPathFor(memoryRoot));
   const { worker, release, callCount } = gatedWorker();
   const { runtime } = makeEnv(memoryRoot, worker, [], store);
-  runtime.noteLLMRequest(chatRequest(1, [{ role: "user", content: "hello" }]), "chat");
+  noteRequest(runtime, 1, [{ role: "user", content: "hello" }]);
   const sessionId = (runtime.getCurrentLLMSessionSnapshot() as { id: number }).id;
 
   const pending = runtime.clearCurrentLLMSession("admin_clear");
@@ -273,7 +277,7 @@ test("clear 回调失败时错误传播, pointer/meta/内存 current 保持, 文
   const { wrapped, fail, heal } = failingStore(realStore);
   const { worker, callCount } = fakeWorker();
   const { runtime } = makeEnv(memoryRoot, worker, [], wrapped);
-  runtime.noteLLMRequest(chatRequest(1, [{ role: "user", content: "hello" }]), "chat");
+  noteRequest(runtime, 1, [{ role: "user", content: "hello" }]);
   const sessionId = (runtime.getCurrentLLMSessionSnapshot() as { id: number }).id;
 
   // 采集成功(文件已被重置为 "\n"), 但会话自身 clear 回调(SQLite 写 meta)失败:
@@ -302,7 +306,7 @@ test("clear 提交顺序: metadata 先提交, pointer 后删除, 内存 current 
   const store = createLLMSessionStore(dbPathFor(memoryRoot));
   const { worker } = fakeWorker();
   const { runtime } = makeEnv(memoryRoot, worker, [], store);
-  runtime.noteLLMRequest(chatRequest(1, [{ role: "user", content: "hello" }]), "chat");
+  noteRequest(runtime, 1, [{ role: "user", content: "hello" }]);
   const sessionId = (runtime.getCurrentLLMSessionSnapshot() as { id: number }).id;
 
   const realUpdateMeta = store.updateMeta.bind(store);
@@ -345,7 +349,7 @@ test("runtime 以 kind=chat 的 SessionClearRequest 调用 coordinator", async (
     appendLog() {},
     sessionClearCoordinator: fakeCoordinator as any
   });
-  runtime.noteLLMRequest(chatRequest(1, [{ role: "user", content: "hello" }]), "chat");
+  noteRequest(runtime, 1, [{ role: "user", content: "hello" }]);
   const sessionId = (runtime.getCurrentLLMSessionSnapshot() as { id: number }).id;
 
   const result = await runtime.clearCurrentLLMSession("mode_transition");
@@ -366,7 +370,7 @@ test("并发重复 clear 同一会话只执行一次真实清除", async () => {
   const store = createLLMSessionStore(dbPathFor(memoryRoot));
   const { worker, callCount } = fakeWorker();
   const { runtime } = makeEnv(memoryRoot, worker, [], store);
-  runtime.noteLLMRequest(chatRequest(1, [{ role: "user", content: "hello" }]), "chat");
+  noteRequest(runtime, 1, [{ role: "user", content: "hello" }]);
 
   const [first, second] = await Promise.all([
     runtime.clearCurrentLLMSession("admin_clear"),

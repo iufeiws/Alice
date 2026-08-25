@@ -97,7 +97,7 @@ export function createApiRootRuntime() {
       const conversationId = target && typeof target.sessionId === "string" && target.sessionId ? target.sessionId : undefined;
       const registeredChannels = apiControlRuntime.outputRouter.listChannels();
       if (!target || !plugin || !conversationId || !registeredChannels.includes(plugin)) {
-        foundation.appendLog("error", `pi invocation completion rejected: missing real message target session=${completion.sessionId} invocation=${completion.invocationId} plugin=${plugin ?? "(missing)"} text=${completion.text}`);
+        foundation.appendLog("error", `pi invocation completion rejected: missing real message target nickname=${completion.nickname} session=${completion.sessionId} invocation=${completion.invocationId} plugin=${plugin ?? "(missing)"} text=${completion.text}`);
         throw new Error("pi_invocation_completion_requires_message_target");
       }
       // 完成投送只带终态短句：Albert 侧走 interrupt-layer 风格的 Alert，
@@ -108,8 +108,8 @@ export function createApiRootRuntime() {
         conversationId,
         piSessionId: completion.sessionId,
         piInvocationId: completion.invocationId,
-        alertText: `<Alert info="SubAgent(${completion.sessionId})-${statusLabel}" />`,
-        noticeText: `SubAgent(${completion.sessionId})-${statusLabel}`,
+        alertText: `<Alert info="SubAgent(${completion.nickname})-${statusLabel}" />`,
+        noticeText: `SubAgent(${completion.nickname})-${statusLabel}`,
         senderName: foundation.config.project.username,
         senderId: typeof target.userId === "string" ? target.userId : undefined,
         accountId: typeof target.accountId === "string" ? target.accountId : undefined,

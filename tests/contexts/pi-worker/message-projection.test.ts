@@ -1,11 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  type PiVisibleMessage,
-  accessVisibleMessages,
+  type PiRawMessage,
+  accessMessages,
   isVisibleMessage,
   parseMessageAccess,
+  projectLatestAssistantOutcomeAfter,
   projectLatestAssistantMessageAfter,
+  projectRawMessages,
   projectVisibleMessages
 } from "../../../src/contexts/pi-worker/runtime/message-projection.mjs";
 
@@ -76,6 +78,12 @@ test("projectVisibleMessages filters to visible user/assistant messages only", (
   ]);
 });
 
+test("projectRawMessages preserves every Pi message object without visibility filtering", () => {
+  assert.deepEqual(projectRawMessages(REAL_SESSION_ENTRIES), REAL_SESSION_ENTRIES
+    .filter((entry) => entry.type === "message")
+    .map((entry) => entry.message));
+});
+
 test("projectVisibleMessages strips thinking blocks from visible assistant content", () => {
   const entries = [
     { id: "m1", type: "message", message: { role: "assistant", content: [{ type: "thinking", thinking: "思考" }, { type: "text", text: "答复" }] } }
@@ -102,6 +110,25 @@ test("projectLatestAssistantMessageAfter returns text even when the reply carrie
   assert.deepEqual(projectLatestAssistantMessageAfter(entries, "inv-1"), { role: "assistant", content: [{ type: "text", text: "答复" }] });
 });
 
+test("projectLatestAssistantOutcomeAfter uses the final assistant terminal from the end", () => {
+  const recovered = [
+    { id: "inv-1", type: "custom", customType: "alice_pi_invocation", data: { message: "task" } },
+    { id: "m1", type: "message", message: { role: "assistant", content: [], stopReason: "error", errorMessage: "upstream failed" } },
+    { id: "m2", type: "message", message: { role: "assistant", content: [{ type: "text", text: "later" }] } },
+    { id: "inv-2", type: "custom", customType: "alice_pi_invocation", data: { message: "next task" } }
+  ];
+  assert.deepEqual(projectLatestAssistantOutcomeAfter(recovered, "inv-1"), { status: "completed", text: "later" });
+
+  const laterError = [
+    { id: "inv-1", type: "custom", customType: "alice_pi_invocation", data: { message: "task" } },
+    { id: "m1", type: "message", message: { role: "assistant", content: [{ type: "text", text: "earlier" }] } },
+    { id: "m2", type: "message", message: { role: "assistant", content: [], stopReason: "error", errorMessage: "later failure" } },
+    { id: "inv-2", type: "custom", customType: "alice_pi_invocation", data: { message: "next task" } }
+  ];
+  assert.deepEqual(projectLatestAssistantOutcomeAfter(laterError, "inv-1"), { status: "failed", text: "later failure" });
+  assert.equal(projectLatestAssistantOutcomeAfter(recovered, "missing"), undefined);
+});
+
 test("parseMessageAccess accepts integer and start:end slice only", () => {
   assert.deepEqual(parseMessageAccess("-1"), { kind: "index", index: -1 });
   assert.deepEqual(parseMessageAccess(":3"), { kind: "slice", start: undefined, end: 3 });
@@ -115,22 +142,22 @@ test("parseMessageAccess accepts integer and start:end slice only", () => {
   assert.throws(() => parseMessageAccess(undefined), /invalid_subagent_message_access/);
 });
 
-test("accessVisibleMessages applies Python index semantics to filtered messages", () => {
-  const visible: PiVisibleMessage[] = [
+test("accessMessages applies Python index semantics without changing message objects", () => {
+  const messages: PiRawMessage[] = [
     { role: "user", content: "a" },
-    { role: "assistant", content: "b" },
-    { role: "user", content: "c" }
+    { role: "assistant", content: [{ type: "thinking", thinking: "private" }], stopReason: "length" },
+    { role: "toolResult", toolCallId: "call-1", content: [{ type: "text", text: "c" }] }
   ];
-  assert.deepEqual(accessVisibleMessages(visible, "-1"), [{ role: "user", content: "c" }]);
-  assert.deepEqual(accessVisibleMessages(visible, "0"), [{ role: "user", content: "a" }]);
-  assert.deepEqual(accessVisibleMessages(visible, "2"), [{ role: "user", content: "c" }]);
-  assert.throws(() => accessVisibleMessages(visible, "3"), /subagent_message_access_out_of_range/);
-  assert.throws(() => accessVisibleMessages(visible, "-4"), /subagent_message_access_out_of_range/);
-  assert.deepEqual(accessVisibleMessages(visible, ":2"), visible.slice(0, 2));
-  assert.deepEqual(accessVisibleMessages(visible, "1:"), visible.slice(1));
-  assert.deepEqual(accessVisibleMessages(visible, "1:3"), visible.slice(1, 3));
-  assert.deepEqual(accessVisibleMessages(visible, ":"), visible);
+  assert.deepEqual(accessMessages(messages, "-1"), [messages[2]]);
+  assert.deepEqual(accessMessages(messages, "0"), [messages[0]]);
+  assert.deepEqual(accessMessages(messages, "2"), [messages[2]]);
+  assert.throws(() => accessMessages(messages, "3"), /subagent_message_access_out_of_range/);
+  assert.throws(() => accessMessages(messages, "-4"), /subagent_message_access_out_of_range/);
+  assert.deepEqual(accessMessages(messages, ":2"), messages.slice(0, 2));
+  assert.deepEqual(accessMessages(messages, "1:"), messages.slice(1));
+  assert.deepEqual(accessMessages(messages, "1:3"), messages.slice(1, 3));
+  assert.deepEqual(accessMessages(messages, ":"), messages);
   // Slices clamp out-of-range bounds instead of throwing (Python slice semantics).
-  assert.deepEqual(accessVisibleMessages(visible, "5:"), []);
-  assert.deepEqual(accessVisibleMessages(visible, ":99"), visible);
+  assert.deepEqual(accessMessages(messages, "5:"), []);
+  assert.deepEqual(accessMessages(messages, ":99"), messages);
 });

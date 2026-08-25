@@ -2,8 +2,10 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { timingSafeEqual, createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { loadPiModule, readPiPackageVersion } from "./pi-module-loader.mjs";
-import { accessVisibleMessages, projectLatestAssistantMessageAfter, projectVisibleMessages } from "./message-projection.mjs";
+import { createPiAgentNicknameMap, readPiAgentNames } from "./pi-agent-nickname-map.mjs";
+import { accessMessages, projectLatestAssistantMessageAfter, projectLatestAssistantOutcomeAfter, projectRawMessages, projectVisibleMessages } from "./message-projection.mjs";
 
 const packageName = "@earendil-works/pi-coding-agent";
 const relayProviderId = "alice-pi-relay";
@@ -14,6 +16,11 @@ if (!workerToken) throw new Error("pi_worker_token_missing");
 const cwd = process.env.HOME || "/";
 const sessionRoot = process.env.PI_SESSION_ROOT || "/home/alice/.pi-sessions";
 const piAgentDir = path.join(sessionRoot, ".pi-agent");
+const runtimeDir = path.dirname(fileURLToPath(import.meta.url));
+const nicknameMap = createPiAgentNicknameMap({
+  filePath: path.join(sessionRoot, "pi-agent-nicknames.json"),
+  names: readPiAgentNames(path.join(runtimeDir, "pi-agent-names.txt"))
+});
 const maxBodyBytes = 4 * 1024 * 1024;
 const maxConcurrency = positiveInteger(process.env.PI_MAX_CONCURRENCY, 2);
 const maxQueueSize = positiveInteger(process.env.PI_MAX_QUEUE_SIZE, 20);
@@ -29,6 +36,7 @@ let relayUrl = "";
 let relayToken = "";
 
 fs.mkdirSync(sessionRoot, { recursive: true });
+nicknameMap.pruneExpired();
 
 const server = http.createServer(async (request, response) => {
   const requestController = new AbortController();
@@ -64,17 +72,20 @@ async function route(request, body, signal) {
   if (request.method === "POST" && url.pathname === "/preview") return { status: 200, body: await previewSession(body) };
   if (request.method === "POST" && url.pathname === "/invocations") return { status: 200, body: await startInvocation(body) };
   if (request.method === "GET" && url.pathname === "/sessions") return { status: 200, body: await listSessions() };
-  const match = /^\/sessions\/([^/]+)(?:\/(messages|snapshot|status|send|wait|cancel|fork))?$/.exec(url.pathname);
+  const internalSnapshotMatch = /^\/sessions-by-id\/([^/]+)\/snapshot$/.exec(url.pathname);
+  if (request.method === "GET" && internalSnapshotMatch) return { status: 200, body: await sessionSnapshotBySessionId(decodeURIComponent(internalSnapshotMatch[1])) };
+  const match = /^\/sessions\/([^/]+)(?:\/(messages|result|snapshot|status|send|wait|cancel|fork))?$/.exec(url.pathname);
   if (!match) return { status: 404, body: { error: "worker_route_not_found" } };
-  const sessionId = decodeURIComponent(match[1]);
+  const nickname = decodeURIComponent(match[1]);
   const action = match[2];
-  if (request.method === "GET" && action === "messages") return { status: 200, body: await sessionMessages(sessionId, url.searchParams.get("access")) };
-  if (request.method === "GET" && action === "snapshot") return { status: 200, body: await sessionSnapshot(sessionId) };
-  if (request.method === "GET" && action === "status") return { status: 200, body: await subAgentStatus(sessionId) };
-  if (request.method === "POST" && action === "send") return { status: 200, body: await sendInvocation(sessionId, body) };
-  if (request.method === "POST" && action === "wait") return { status: 200, body: await waitSession(sessionId, body) };
-  if (request.method === "POST" && action === "cancel") return { status: 200, body: await cancelSession(sessionId) };
-  if (request.method === "POST" && action === "fork") return { status: 200, body: await forkSession(sessionId, body) };
+  if (request.method === "GET" && action === "messages") return { status: 200, body: await sessionMessages(nickname, url.searchParams.get("access")) };
+  if (request.method === "GET" && action === "result") return { status: 200, body: await resultSession(nickname) };
+  if (request.method === "GET" && action === "snapshot") return { status: 200, body: await sessionSnapshot(nickname) };
+  if (request.method === "GET" && action === "status") return { status: 200, body: await subAgentStatus(nickname) };
+  if (request.method === "POST" && action === "send") return { status: 200, body: await sendInvocation(nickname, body) };
+  if (request.method === "POST" && action === "wait") return { status: 200, body: await waitSession(nickname, body) };
+  if (request.method === "POST" && action === "cancel") return { status: 200, body: await cancelSession(nickname) };
+  if (request.method === "POST" && action === "fork") return { status: 200, body: await forkSession(nickname, body) };
   return { status: 404, body: { error: "worker_route_not_found" } };
 }
 
@@ -127,23 +138,32 @@ async function startInvocation(input) {
   const sessionId = sessionManager.getSessionId();
   const record = createSessionRecord(sessionId, sessionManager, sessionManager.getSessionFile());
   record.agentSession = await createAgentSessionFor(sessionManager, modelConfig);
-  const invocationId = enqueueInvocation(record, { message, ...input });
+  const nicknameEntry = nicknameMap.assign(sessionId);
+  record.nickname = nicknameEntry.nickname;
+  let invocationId;
+  try {
+    invocationId = enqueueInvocation(record, { message, nickname: nicknameEntry.nickname, ...input });
+  } catch (error) {
+    nicknameMap.release(nicknameEntry.nickname, sessionId);
+    throw error;
+  }
   sessions.set(sessionId, record);
   pumpSessions();
-  return { invocationId, sessionId, status: record.invocations.get(invocationId).status };
+  return { invocationId, sessionId, nickname: nicknameEntry.nickname, status: record.invocations.get(invocationId).status };
 }
 
-async function sendInvocation(sessionId, input) {
+async function sendInvocation(nickname, input) {
   await loadPi();
   const message = requiredString(input?.message, "pi_invocation_message_required");
-  const record = await openSessionRecord(sessionId);
+  const nicknameEntry = nicknameMap.resolve(nickname);
+  const record = await openSessionRecord(nicknameEntry.sessionId);
   const modelConfig = modelConfigFrom(input);
   if (!record.agentSession) {
     record.agentSession = await createAgentSessionFor(record.sessionManager, modelConfig);
   }
-  const invocationId = enqueueInvocation(record, { message, ...input });
+  const invocationId = enqueueInvocation(record, { message, nickname, ...input });
   pumpSessions();
-  return { invocationId, sessionId, status: record.invocations.get(invocationId).status };
+  return { invocationId, sessionId: nicknameEntry.sessionId, nickname, status: record.invocations.get(invocationId).status };
 }
 
 async function listSessions() {
@@ -151,41 +171,51 @@ async function listSessions() {
   const infos = await piModule.SessionManager.list(cwd, sessionRoot);
   return infos.map((info) => ({
     sessionId: info.id,
+    nickname: nicknameMap.findBySessionId(info.id)?.nickname,
     createdAt: new Date(info.created).toISOString(),
     updatedAt: new Date(info.modified).toISOString(),
     messageCount: info.messageCount
   }));
 }
 
-async function sessionMessages(sessionId, access) {
-  const record = await openSessionRecord(sessionId);
-  return accessVisibleMessages(visibleMessages(record.sessionManager), access);
+async function sessionMessages(nickname, access) {
+  const record = await openSessionRecord(nicknameMap.resolve(nickname).sessionId);
+  return accessMessages(rawMessages(record.sessionManager), access);
 }
 
-function sessionSnapshot(sessionId) {
+async function resultSession(nickname) {
+  const record = await openSessionRecord(nicknameMap.resolve(nickname).sessionId);
+  return sessionResult(record);
+}
+
+function sessionSnapshot(nickname) {
+  return openSessionRecord(nicknameMap.resolve(nickname).sessionId).then((record) => snapshot(record));
+}
+
+function sessionSnapshotBySessionId(sessionId) {
   return openSessionRecord(sessionId).then((record) => snapshot(record));
 }
 
-async function subAgentStatus(sessionId) {
-  const record = await openSessionRecord(sessionId);
+async function subAgentStatus(nickname) {
+  const record = await openSessionRecord(nicknameMap.resolve(nickname).sessionId);
   const status = currentInvocationStatus(record);
   if (!status) throw new Error("pi_session_invocation_missing");
   return { updatedAt: updatedAt(record.sessionManager), messages: visibleMessages(record.sessionManager).length, status };
 }
 
-async function waitSession(sessionId, input) {
-  const record = await openSessionRecord(sessionId);
+async function waitSession(nickname, input) {
+  const record = await openSessionRecord(nicknameMap.resolve(nickname).sessionId);
   const timeoutSeconds = positiveInteger(input?.timeoutSeconds, defaultTaskTimeoutSeconds);
   const deadline = Date.now() + timeoutSeconds * 1000;
   while (Date.now() <= deadline) {
-    if (isSessionIdle(record)) return waitResult(record);
+    if (isSessionIdle(record)) return sessionResult(record);
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  return isSessionIdle(record) ? waitResult(record) : { status: "running" };
+  return isSessionIdle(record) ? sessionResult(record) : { status: "running" };
 }
 
-async function cancelSession(sessionId) {
-  const record = await openSessionRecord(sessionId);
+async function cancelSession(nickname) {
+  const record = await openSessionRecord(nicknameMap.resolve(nickname).sessionId);
   if (record.activeRunInvocationIds.size > 0) {
     record.cancelRequested = true;
     void record.agentSession?.abort?.();
@@ -201,9 +231,9 @@ async function cancelSession(sessionId) {
   return "cancelled";
 }
 
-async function forkSession(sessionId, input) {
+async function forkSession(nickname, input) {
   await loadPi();
-  const record = await openSessionRecord(sessionId);
+  const record = await openSessionRecord(nicknameMap.resolve(nickname).sessionId);
   const entryId = input?.entryId;
   if (entryId !== undefined && (typeof entryId !== "string" || !entryId.trim())) throw new Error("pi_fork_entry_id_invalid");
   let forked;
@@ -215,9 +245,10 @@ async function forkSession(sessionId, input) {
     forked = piModule.SessionManager.forkFrom(record.sessionManager.getSessionFile(), cwd, sessionRoot);
   }
   const newSessionId = forked.getSessionId();
-  const newRecord = createSessionRecord(newSessionId, forked, forked.getSessionFile());
+  const nicknameEntry = nicknameMap.assign(newSessionId);
+  const newRecord = createSessionRecord(newSessionId, forked, forked.getSessionFile(), nicknameEntry.nickname);
   sessions.set(newSessionId, newRecord);
-  return { sessionId: newSessionId };
+  return { sessionId: newSessionId, nickname: nicknameEntry.nickname };
 }
 
 async function previewSession(input) {
@@ -239,9 +270,10 @@ async function previewSession(input) {
 // Session records
 // ============================================================================
 
-function createSessionRecord(sessionId, sessionManager, sessionFile) {
+function createSessionRecord(sessionId, sessionManager, sessionFile, nickname) {
   return {
     sessionId,
+    nickname,
     sessionManager,
     sessionFile,
     agentSession: undefined,
@@ -256,6 +288,7 @@ function enqueueInvocation(record, input) {
   const invocationId = appendInvocationEntry(record, input);
   const invocation = {
     invocationId,
+    nickname: input.nickname,
     status: "queued",
     messageTarget: input.messageTarget,
     timeoutSeconds: input.timeoutSeconds,
@@ -268,6 +301,7 @@ function enqueueInvocation(record, input) {
 function appendInvocationEntry(record, input) {
   const entryId = record.sessionManager.appendCustomEntry(invocationCustomType, {
     message: input.message,
+    nickname: input.nickname,
     messageTarget: input.messageTarget,
     timeoutSeconds: input.timeoutSeconds
   });
@@ -324,10 +358,15 @@ async function runInvocation(sessionId, invocationId) {
   }
   try {
     const invocation = record.invocations.get(invocationId);
+    // The gateway keeps retryable upstream attempts inside prompt(); do not
+    // project a persisted intermediate error while that promise is pending.
     await record.agentSession.prompt(invocation?.message ?? "");
     if (runTimedOut) finalizeRun(record, "timed_out", "pi_session_timed_out");
     else if (record.cancelRequested) finalizeRun(record, "aborted", "pi_session_aborted");
-    else finalizeRun(record, "completed", finalAssistantText(record.sessionManager));
+    else {
+      const outcome = projectLatestAssistantOutcomeAfter(record.sessionManager.getEntries(), invocationId);
+      finalizeRun(record, outcome?.status === "failed" ? "failed" : "completed", outcome?.text ?? finalAssistantText(record.sessionManager));
+    }
   } catch (error) {
     const errorText = error instanceof Error ? error.message : String(error);
     if (runTimedOut) finalizeRun(record, "timed_out", "pi_session_timed_out");
@@ -354,6 +393,7 @@ function finalizeRun(record, status, text) {
 function completionFrom(record, invocation) {
   return {
     sessionId: record.sessionId,
+    nickname: invocation.nickname,
     invocationId: invocation.invocationId,
     status: invocation.status,
     text: invocation.finalText ?? (invocation.status === "completed" ? finalAssistantText(record.sessionManager) : "pi_session_interrupted"),
@@ -379,6 +419,7 @@ function snapshot(record) {
     .map((invocation) => completionFrom(record, invocation));
   return {
     sessionId: record.sessionId,
+    nickname: record.nickname,
     idle: isSessionIdle(record),
     invocationStatus: active?.status ?? terminal?.status,
     createdAt: record.sessionManager.getHeader()?.timestamp || nowIso(),
@@ -398,7 +439,8 @@ function currentInvocationStatus(record) {
   return active?.status ?? terminal?.status;
 }
 
-function waitResult(record) {
+function sessionResult(record) {
+  if (!isSessionIdle(record)) return { status: "running" };
   const invocation = latestInvocation(record, false);
   if (!invocation) throw new Error("pi_session_invocation_missing");
   if (invocation.status !== "completed") return { status: invocation.status };
@@ -416,18 +458,19 @@ async function openSessionRecord(sessionId) {
   if (existing) return existing;
   await loadPi();
   const manager = openSessionManager(sessionId);
-  const record = createSessionRecord(sessionId, manager, manager.getSessionFile());
+  const record = createSessionRecord(sessionId, manager, manager.getSessionFile(), nicknameMap.findBySessionId(sessionId)?.nickname);
   // Rebuild the runtime projection of historical invocations from the Pi JSONL.
   for (const entry of manager.getEntries()) {
     if (entry.type !== "custom" || entry.customType !== invocationCustomType) continue;
-    const text = assistantTextAfter(manager, entry.id);
+    const outcome = projectLatestAssistantOutcomeAfter(manager.getEntries(), entry.id);
     record.invocations.set(entry.id, {
       invocationId: entry.id,
-      status: text === undefined ? "interrupted" : "completed",
+      nickname: typeof entry.data?.nickname === "string" ? entry.data.nickname : undefined,
+      status: outcome?.status ?? "interrupted",
       messageTarget: entry.data?.messageTarget,
       timeoutSeconds: entry.data?.timeoutSeconds,
       message: typeof entry.data?.message === "string" ? entry.data.message : "",
-      finalText: text ?? "pi_session_interrupted"
+      finalText: outcome?.text ?? "pi_session_interrupted"
     });
   }
   sessions.set(sessionId, record);
@@ -527,16 +570,12 @@ function getToolDefinitions(withExecutors = false) {
 // Pi JSONL helpers
 // ============================================================================
 
-function assistantTextAfter(manager, entryId) {
-  const entries = manager.getEntries();
-  const index = entries.findIndex((entry) => entry.id === entryId);
-  if (index < 0) return undefined;
-  const message = entries.slice(index).find((entry) => entry.type === "message" && entry.message?.role === "assistant");
-  return message ? messageText(message.message) : undefined;
-}
-
 function visibleMessages(manager) {
   return projectVisibleMessages(manager.getEntries());
+}
+
+function rawMessages(manager) {
+  return projectRawMessages(manager.getEntries());
 }
 
 function latestAssistantMessageAfter(manager, entryId) {

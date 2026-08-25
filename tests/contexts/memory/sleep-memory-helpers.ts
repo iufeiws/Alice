@@ -126,6 +126,9 @@ export function makeMemorySandbox(root: string): MemorySandbox {
     async statusSubAgent() {
       throw new Error("subagent is not available in memory sandbox tests");
     },
+    async resultSubAgent() {
+      throw new Error("subagent is not available in memory sandbox tests");
+    },
     async waitSubAgent() {
       throw new Error("subagent is not available in memory sandbox tests");
     },

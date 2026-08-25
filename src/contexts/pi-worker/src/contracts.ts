@@ -55,12 +55,14 @@ export type PiModelConfig = {
 export type PiInvocation = {
   invocationId: string;
   sessionId: string;
+  nickname: string;
   status: PiInvocationStatus;
 };
 
 /** Lightweight runtime projection of a Pi session; not an Alice session mirror. */
 export type PiSessionSnapshot = {
   sessionId: string;
+  nickname?: string;
   idle: boolean;
   invocationStatus?: PiInvocationStatus;
   createdAt: string;
@@ -73,6 +75,7 @@ export type PiSessionSnapshot = {
 
 export type PiSessionListEntry = {
   sessionId: string;
+  nickname?: string;
   createdAt: string;
   updatedAt: string;
   messageCount: number;
@@ -80,20 +83,25 @@ export type PiSessionListEntry = {
 
 export type PiVisibleMessage = { role: "user" | "assistant"; content: unknown };
 
+export type PiRawMessage = Record<string, unknown>;
+
 export type PiSubAgentStatus = {
   updatedAt: string;
   messages: number;
   status: PiInvocationStatus;
 };
 
-export type PiSubAgentWaitResult =
+export type PiSubAgentResult =
   | { status: "running" }
   | { status: "completed"; message: PiVisibleMessage & { role: "assistant" } }
   | { status: Exclude<PiInvocationStatus, "queued" | "running" | "completed"> };
 
+export type PiSubAgentWaitResult = PiSubAgentResult;
+
 /** Completion payload produced when an invocation finishes. */
 export type PiInvocationCompletion = {
   sessionId: string;
+  nickname: string;
   invocationId: string;
   status: Exclude<PiInvocationStatus, "queued" | "running">;
   /** Final assistant content, or the accurate error text for failed statuses. */
@@ -107,14 +115,16 @@ export type PiWorkerClient = {
   health(signal?: AbortSignal): Promise<PiWorkerHealth>;
   executeTool(input: { requestId: string; toolName: string; input: Record<string, unknown>; signal?: AbortSignal }): Promise<PiToolExecutionResult>;
   startInvocation(input: PiInvocationStartInput & { signal?: AbortSignal }): Promise<PiInvocation>;
-  sendInvocation(sessionId: string, input: PiInvocationSendInput & { signal?: AbortSignal }): Promise<PiInvocation>;
+  sendInvocation(nickname: string, input: PiInvocationSendInput & { signal?: AbortSignal }): Promise<PiInvocation>;
   listSessions(signal?: AbortSignal): Promise<PiSessionListEntry[]>;
-  sessionMessages(sessionId: string, access: string, signal?: AbortSignal): Promise<PiVisibleMessage[]>;
-  sessionStatus(sessionId: string, signal?: AbortSignal): Promise<PiSessionSnapshot>;
-  subAgentStatus(sessionId: string, signal?: AbortSignal): Promise<PiSubAgentStatus>;
-  waitSession(sessionId: string, timeoutSeconds?: number, signal?: AbortSignal): Promise<PiSubAgentWaitResult>;
-  cancelSession(sessionId: string, signal?: AbortSignal): Promise<"cancelled">;
-  forkSession(sessionId: string, entryId?: string, signal?: AbortSignal): Promise<{ sessionId: string }>;
+  sessionMessages(nickname: string, access: string, signal?: AbortSignal): Promise<PiRawMessage[]>;
+  sessionStatus(nickname: string, signal?: AbortSignal): Promise<PiSessionSnapshot>;
+  sessionStatusBySessionId(sessionId: string, signal?: AbortSignal): Promise<PiSessionSnapshot>;
+  subAgentStatus(nickname: string, signal?: AbortSignal): Promise<PiSubAgentStatus>;
+  resultSession(nickname: string, signal?: AbortSignal): Promise<PiSubAgentResult>;
+  waitSession(nickname: string, timeoutSeconds?: number, signal?: AbortSignal): Promise<PiSubAgentWaitResult>;
+  cancelSession(nickname: string, signal?: AbortSignal): Promise<"cancelled">;
+  forkSession(nickname: string, entryId?: string, signal?: AbortSignal): Promise<{ sessionId: string; nickname: string }>;
   previewSession(input: PiModelConfig & { signal?: AbortSignal }): Promise<{ sessionId: string; systemPrompt: string }>;
 };
 
@@ -146,12 +156,13 @@ export type PiWorkerRuntime = {
   executeTool(input: { requestId: string; toolName: string; input: Record<string, unknown>; context?: ToolExecutionContext }): Promise<PiToolExecutionResult>;
   startSubAgent(input: { message: string; timeoutSeconds?: number; messageTarget?: Record<string, unknown>; presetName?: string; signal?: AbortSignal }): Promise<PiInvocation>;
   listSubAgents(signal?: AbortSignal): Promise<PiSessionListEntry[]>;
-  messagesSubAgent(sessionId: string, access: string, signal?: AbortSignal): Promise<PiVisibleMessage[]>;
-  sendSubAgent(sessionId: string, input: { message: string; timeoutSeconds?: number; messageTarget?: Record<string, unknown>; presetName?: string; signal?: AbortSignal }): Promise<PiInvocation>;
-  statusSubAgent(sessionId: string, signal?: AbortSignal): Promise<PiSubAgentStatus>;
-  waitSubAgent(sessionId: string, timeoutSeconds?: number, signal?: AbortSignal): Promise<PiSubAgentWaitResult>;
-  cancelSubAgent(sessionId: string, signal?: AbortSignal): Promise<"cancelled">;
-  forkSubAgent(sessionId: string, entryId?: string, signal?: AbortSignal): Promise<{ sessionId: string }>;
+  messagesSubAgent(nickname: string, access: string, signal?: AbortSignal): Promise<PiRawMessage[]>;
+  sendSubAgent(nickname: string, input: { message: string; timeoutSeconds?: number; messageTarget?: Record<string, unknown>; presetName?: string; signal?: AbortSignal }): Promise<PiInvocation>;
+  statusSubAgent(nickname: string, signal?: AbortSignal): Promise<PiSubAgentStatus>;
+  resultSubAgent(nickname: string, signal?: AbortSignal): Promise<PiSubAgentResult>;
+  waitSubAgent(nickname: string, timeoutSeconds?: number, signal?: AbortSignal): Promise<PiSubAgentWaitResult>;
+  cancelSubAgent(nickname: string, signal?: AbortSignal): Promise<"cancelled">;
+  forkSubAgent(nickname: string, entryId?: string, signal?: AbortSignal): Promise<{ sessionId: string; nickname: string }>;
   onInvocationCompleted(listener: (completion: PiInvocationCompletion) => Promise<void> | void): () => void;
 };
 

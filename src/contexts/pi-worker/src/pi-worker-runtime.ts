@@ -124,33 +124,36 @@ export function createPiWorkerRuntime(input: {
     async listSubAgents(signal) {
       return input.worker.listSessions(signal);
     },
-    async messagesSubAgent(sessionId, access, signal) {
-      return input.worker.sessionMessages(sessionId, access, signal);
+    async messagesSubAgent(nickname, access, signal) {
+      return input.worker.sessionMessages(nickname, access, signal);
     },
-    async sendSubAgent(sessionId, subInput) {
+    async sendSubAgent(nickname, subInput) {
       const modelConfig = await resolveModelConfig(subInput.presetName);
       healthSnapshot = await ensureGranted();
-      const invocation = await input.worker.sendInvocation(sessionId, {
+      const invocation = await input.worker.sendInvocation(nickname, {
         message: subInput.message,
         timeoutSeconds: subInput.timeoutSeconds,
         messageTarget: subInput.messageTarget,
         ...modelConfig,
         signal: subInput.signal
       });
-      watch(sessionId);
+      watch(invocation.sessionId);
       return invocation;
     },
-    async statusSubAgent(sessionId, signal) {
-      return input.worker.subAgentStatus(sessionId, signal);
+    async statusSubAgent(nickname, signal) {
+      return input.worker.subAgentStatus(nickname, signal);
     },
-    async waitSubAgent(sessionId, timeoutSeconds, signal) {
-      return input.worker.waitSession(sessionId, timeoutSeconds, signal);
+    async resultSubAgent(nickname, signal) {
+      return input.worker.resultSession(nickname, signal);
     },
-    async cancelSubAgent(sessionId, signal) {
-      return input.worker.cancelSession(sessionId, signal);
+    async waitSubAgent(nickname, timeoutSeconds, signal) {
+      return input.worker.waitSession(nickname, timeoutSeconds, signal);
     },
-    async forkSubAgent(sessionId, entryId, signal) {
-      return input.worker.forkSession(sessionId, entryId, signal);
+    async cancelSubAgent(nickname, signal) {
+      return input.worker.cancelSession(nickname, signal);
+    },
+    async forkSubAgent(nickname, entryId, signal) {
+      return input.worker.forkSession(nickname, entryId, signal);
     },
     onInvocationCompleted(listener) {
       completionListeners.add(listener);
@@ -224,7 +227,7 @@ export function createPiWorkerRuntime(input: {
     const poll = async () => {
       watchers.delete(sessionId);
       try {
-        const snapshot = await input.worker.sessionStatus(sessionId);
+        const snapshot = await input.worker.sessionStatusBySessionId(sessionId);
         if (snapshot.terminalCompletions?.length) {
           for (const completion of snapshot.terminalCompletions) await deliverCompletion(completion);
         } else if (snapshot.lastInvocation) {

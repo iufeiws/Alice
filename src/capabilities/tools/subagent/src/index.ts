@@ -5,12 +5,13 @@ import { subAgentTool } from "../profile.js";
 
 export type SubAgentInput =
   | { action: "spawn"; message: string; timeoutSeconds?: number }
-  | { action: "messages"; sessionId: string; access: string }
-  | { action: "send"; sessionId: string; message: string; timeoutSeconds?: number }
-  | { action: "status"; sessionId: string }
-  | { action: "wait"; sessionId: string; timeoutSeconds?: number }
-  | { action: "cancel"; sessionId: string }
-  | { action: "fork"; sessionId: string; entryId?: string };
+  | { action: "messages"; nickname: string; access: string }
+  | { action: "result"; nickname: string }
+  | { action: "send"; nickname: string; message: string; timeoutSeconds?: number }
+  | { action: "status"; nickname: string }
+  | { action: "wait"; nickname: string; timeoutSeconds?: number }
+  | { action: "cancel"; nickname: string }
+  | { action: "fork"; nickname: string; entryId?: string };
 
 // Future plan only: `list` may gain its own input and dispatch branch later.
 // It is intentionally absent from the public union and cannot be called now.
@@ -56,11 +57,12 @@ export function createSubAgentTool(input: {
           activeInvocations.add(`${invocation.sessionId}:${invocation.invocationId}`);
           input.agentState?.acquireSubAgentHold();
         }
-        return { callId: call.id, ok: true, output: { sessionId: invocation.sessionId } };
+        return { callId: call.id, ok: true, output: { nickname: invocation.nickname } };
       }
-      if (value.action === "messages") return { callId: call.id, ok: true, output: await input.runtime.messagesSubAgent(value.sessionId, value.access, context?.signal) };
+      if (value.action === "messages") return { callId: call.id, ok: true, output: await input.runtime.messagesSubAgent(value.nickname, value.access, context?.signal) };
+      if (value.action === "result") return { callId: call.id, ok: true, output: await input.runtime.resultSubAgent(value.nickname, context?.signal) };
       if (value.action === "send") {
-        const invocation = await input.runtime.sendSubAgent(value.sessionId, {
+        const invocation = await input.runtime.sendSubAgent(value.nickname, {
           message: value.message,
           timeoutSeconds: value.timeoutSeconds,
           messageTarget,
@@ -70,12 +72,13 @@ export function createSubAgentTool(input: {
           activeInvocations.add(`${invocation.sessionId}:${invocation.invocationId}`);
           input.agentState?.acquireSubAgentHold();
         }
-        return { callId: call.id, ok: true, output: { sessionId: invocation.sessionId } };
+        return { callId: call.id, ok: true, output: { nickname: invocation.nickname } };
       }
-      if (value.action === "status") return { callId: call.id, ok: true, output: await input.runtime.statusSubAgent(value.sessionId, context?.signal) };
-      if (value.action === "wait") return { callId: call.id, ok: true, output: await input.runtime.waitSubAgent(value.sessionId, value.timeoutSeconds, context?.signal) };
-      if (value.action === "cancel") return { callId: call.id, ok: true, output: await input.runtime.cancelSubAgent(value.sessionId, context?.signal) };
-      return { callId: call.id, ok: true, output: await input.runtime.forkSubAgent(value.sessionId, value.entryId, context?.signal) };
+      if (value.action === "status") return { callId: call.id, ok: true, output: await input.runtime.statusSubAgent(value.nickname, context?.signal) };
+      if (value.action === "wait") return { callId: call.id, ok: true, output: await input.runtime.waitSubAgent(value.nickname, value.timeoutSeconds, context?.signal) };
+      if (value.action === "cancel") return { callId: call.id, ok: true, output: await input.runtime.cancelSubAgent(value.nickname, context?.signal) };
+      const result = await input.runtime.forkSubAgent(value.nickname, value.entryId, context?.signal);
+      return { callId: call.id, ok: true, output: { nickname: result.nickname } };
     }
   };
 }
@@ -132,24 +135,25 @@ function parseInput(call: ToolCall): SubAgentInput {
   if (action === "spawn" && onlyKeys(input, ["action", "message", "timeoutSeconds"]) && typeof input.message === "string" && input.message.trim() && validTimeout(input.timeoutSeconds)) {
     return { action, message: input.message, ...(typeof input.timeoutSeconds === "number" ? { timeoutSeconds: input.timeoutSeconds } : {}) };
   }
-  if (action === "messages" && onlyKeys(input, ["action", "sessionId", "access"]) && typeof input.sessionId === "string" && input.sessionId.trim() && typeof input.access === "string" && input.access.trim()) {
-    return { action, sessionId: input.sessionId, access: input.access };
+  if (action === "messages" && onlyKeys(input, ["action", "nickname", "access"]) && typeof input.nickname === "string" && input.nickname.trim() && typeof input.access === "string" && input.access.trim()) {
+    return { action, nickname: input.nickname, access: input.access };
   }
-  if (action === "send" && onlyKeys(input, ["action", "sessionId", "message", "timeoutSeconds"]) && typeof input.sessionId === "string" && input.sessionId.trim() && typeof input.message === "string" && input.message.trim() && validTimeout(input.timeoutSeconds)) {
+  if (action === "result" && onlyKeys(input, ["action", "nickname"]) && typeof input.nickname === "string" && input.nickname.trim()) return { action, nickname: input.nickname };
+  if (action === "send" && onlyKeys(input, ["action", "nickname", "message", "timeoutSeconds"]) && typeof input.nickname === "string" && input.nickname.trim() && typeof input.message === "string" && input.message.trim() && validTimeout(input.timeoutSeconds)) {
     return {
       action,
-      sessionId: input.sessionId,
+      nickname: input.nickname,
       message: input.message,
       ...(typeof input.timeoutSeconds === "number" ? { timeoutSeconds: input.timeoutSeconds } : {})
     };
   }
-  if (action === "status" && onlyKeys(input, ["action", "sessionId"]) && typeof input.sessionId === "string" && input.sessionId.trim()) return { action, sessionId: input.sessionId };
-  if (action === "wait" && onlyKeys(input, ["action", "sessionId", "timeoutSeconds"]) && typeof input.sessionId === "string" && input.sessionId.trim() && validTimeout(input.timeoutSeconds)) {
-    return { action, sessionId: input.sessionId, ...(typeof input.timeoutSeconds === "number" ? { timeoutSeconds: input.timeoutSeconds } : {}) };
+  if (action === "status" && onlyKeys(input, ["action", "nickname"]) && typeof input.nickname === "string" && input.nickname.trim()) return { action, nickname: input.nickname };
+  if (action === "wait" && onlyKeys(input, ["action", "nickname", "timeoutSeconds"]) && typeof input.nickname === "string" && input.nickname.trim() && validTimeout(input.timeoutSeconds)) {
+    return { action, nickname: input.nickname, ...(typeof input.timeoutSeconds === "number" ? { timeoutSeconds: input.timeoutSeconds } : {}) };
   }
-  if (action === "cancel" && onlyKeys(input, ["action", "sessionId"]) && typeof input.sessionId === "string" && input.sessionId.trim()) return { action, sessionId: input.sessionId };
-  if (action === "fork" && onlyKeys(input, ["action", "sessionId", "entryId"]) && typeof input.sessionId === "string" && input.sessionId.trim() && (input.entryId === undefined || typeof input.entryId === "string" && input.entryId.trim())) {
-    return { action, sessionId: input.sessionId, ...(typeof input.entryId === "string" ? { entryId: input.entryId } : {}) };
+  if (action === "cancel" && onlyKeys(input, ["action", "nickname"]) && typeof input.nickname === "string" && input.nickname.trim()) return { action, nickname: input.nickname };
+  if (action === "fork" && onlyKeys(input, ["action", "nickname", "entryId"]) && typeof input.nickname === "string" && input.nickname.trim() && (input.entryId === undefined || typeof input.entryId === "string" && input.entryId.trim())) {
+    return { action, nickname: input.nickname, ...(typeof input.entryId === "string" ? { entryId: input.entryId } : {}) };
   }
   throw new Error("invalid_subagent_input");
 }

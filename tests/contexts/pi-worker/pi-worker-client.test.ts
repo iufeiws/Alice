@@ -43,3 +43,39 @@ test("Pi worker config updates use the authenticated runtime config endpoint", a
     body: JSON.stringify({ relayUrl: "http://host.docker.internal:3411/v1", relayToken: "runtime-token" })
   });
 });
+
+test("Pi worker result requests use the nickname route", async () => {
+  let request: { url: string; method?: string; body?: string } | undefined;
+  const client = createPiWorkerHttpClient({
+    baseURL: "http://worker.test",
+    fetchImpl: async (input, init) => {
+      request = { url: String(input), method: init?.method, body: init?.body === undefined ? undefined : String(init.body) };
+      return new Response(JSON.stringify({ status: "running" }), { status: 200 });
+    }
+  });
+
+  assert.deepEqual(await client.resultSession("pikachu"), { status: "running" });
+  assert.deepEqual(request, {
+    url: "http://worker.test/sessions/pikachu/result",
+    method: "GET",
+    body: undefined
+  });
+});
+
+test("Pi worker watcher requests use the internal session-id route", async () => {
+  let request: { url: string; method?: string; body?: string } | undefined;
+  const client = createPiWorkerHttpClient({
+    baseURL: "http://worker.test",
+    fetchImpl: async (input, init) => {
+      request = { url: String(input), method: init?.method, body: init?.body === undefined ? undefined : String(init.body) };
+      return new Response(JSON.stringify({ sessionId: "session/1", idle: true }), { status: 200 });
+    }
+  });
+
+  assert.deepEqual(await client.sessionStatusBySessionId("session/1"), { sessionId: "session/1", idle: true });
+  assert.deepEqual(request, {
+    url: "http://worker.test/sessions-by-id/session%2F1/snapshot",
+    method: "GET",
+    body: undefined
+  });
+});

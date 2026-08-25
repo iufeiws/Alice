@@ -1,6 +1,6 @@
-// SubAgent 可见消息投影的唯一入口。
+// SubAgent 消息投影的唯一入口。
 //
-// messages / status.messages / wait 共用这里的过滤与访问语义：
+// status.messages / wait 共用这里的过滤与访问语义：
 //   1. 先过滤出可见 user/assistant 消息；
 //   2. 再对过滤结果执行 access 索引或切片。
 //
@@ -39,6 +39,13 @@ export function projectVisibleMessages(entries) {
     .map((entry) => ({ role: entry.message.role, content: stripThinkingBlocks(entry.message.content) }));
 }
 
+/** 保留 Pi JSONL 中的原始 message 对象，不做可见性、thinking 或 tool 过滤。 */
+export function projectRawMessages(entries) {
+  return entries
+    .filter((entry) => entry?.type === "message")
+    .map((entry) => entry.message);
+}
+
 /** entryId 之后（含）的最后一条可见 assistant 消息；无则 undefined。 */
 export function projectLatestAssistantMessageAfter(entries, entryId) {
   const index = entries.findIndex((entry) => entry.id === entryId);
@@ -50,11 +57,46 @@ export function projectLatestAssistantMessageAfter(entries, entryId) {
 }
 
 /**
- * 对已过滤的可见消息执行 access：
+ * entryId 之后最后一轮 assistant 的终态。
+ *
+ * Pi 会把失败的请求也写进 session message。重试成功时，较早的 error
+ * 不是 invocation 的终态，所以必须从 invocation 尾部向前找第一个终态。
+ */
+export function projectLatestAssistantOutcomeAfter(entries, entryId) {
+  const index = entries.findIndex((entry) => entry.id === entryId);
+  if (index < 0) return undefined;
+  const nextInvocationIndex = entries.findIndex((entry, candidateIndex) => candidateIndex > index && entry?.type === "custom" && entry.customType === "alice_pi_invocation");
+  const end = nextInvocationIndex < 0 ? entries.length : nextInvocationIndex;
+  for (let candidateIndex = end - 1; candidateIndex > index; candidateIndex -= 1) {
+    const message = entries[candidateIndex]?.message;
+    if (entries[candidateIndex]?.type !== "message" || message?.role !== "assistant") continue;
+    if (message.stopReason === "error") {
+      return {
+        status: "failed",
+        text: typeof message.errorMessage === "string" && message.errorMessage
+          ? message.errorMessage
+          : "pi_session_failed"
+      };
+    }
+    if (isVisibleMessage(message)) return { status: "completed", text: assistantMessageText(message) };
+  }
+  return undefined;
+}
+
+function assistantMessageText(message) {
+  const content = stripThinkingBlocks(message.content);
+  if (typeof content === "string") return content;
+  return Array.isArray(content)
+    ? content.filter((part) => part?.type === "text").map((part) => part.text).join("")
+    : "";
+}
+
+/**
+ * 对消息数组执行 access：
  * - 单个整数：Python 数组索引语义，负数从末尾数，越界抛错；
  * - start:end：Python 切片语义，开放区间允许，越界自动截断。
  */
-export function accessVisibleMessages(messages, access) {
+export function accessMessages(messages, access) {
   const parsed = parseMessageAccess(access);
   if (parsed.kind === "index") {
     const index = parsed.index < 0 ? messages.length + parsed.index : parsed.index;

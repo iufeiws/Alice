@@ -148,7 +148,7 @@ test("real Pi worker: start/send/fork/auth/persistent sessions", { skip: Number(
       });
       assert.deepEqual(configured, { ok: true });
       const configuredInvocation = await post("/invocations", { message: "Reply with exactly configured", model: "model-a", maxTokens: 128 });
-      const configuredStatus = await waitForIdle(base, configuredInvocation.sessionId, headers);
+      const configuredStatus = await waitForIdle(base, configuredInvocation.nickname, headers);
       const configuredCompletion = configuredStatus.terminalCompletions.find((entry: any) => entry.invocationId === configuredInvocation.invocationId);
       assert.equal(configuredCompletion?.text, "hello-1");
 
@@ -156,27 +156,29 @@ test("real Pi worker: start/send/fork/auth/persistent sessions", { skip: Number(
       const started = await post("/invocations", { message: "Reply with exactly hello", model: "model-a", maxTokens: 128 });
       assert.ok(started.status === "running" || started.status === "queued");
       assert.equal(typeof started.sessionId, "string");
+      assert.equal(typeof started.nickname, "string");
       const sessionId = started.sessionId;
+      const nickname = started.nickname;
       const inv1 = started.invocationId;
 
-      const status1 = await waitForIdle(base, sessionId, headers);
+      const status1 = await waitForIdle(base, nickname, headers);
       const completion1 = status1.terminalCompletions.find((entry: any) => entry.invocationId === inv1);
       assert.ok(completion1, "first invocation completed");
       assert.equal(completion1.status, "completed");
       assert.equal(completion1.text, "hello-1");
 
       // Second invocation on the same session; both completions stay distinct.
-      const sent = await post(`/sessions/${encodeURIComponent(sessionId)}/send`, { message: "Reply with exactly bye", model: "model-a", maxTokens: 128 });
+      const sent = await post(`/sessions/${encodeURIComponent(nickname)}/send`, { message: "Reply with exactly bye", model: "model-a", maxTokens: 128 });
       const inv2 = sent.invocationId;
       assert.notEqual(inv2, inv1);
-      const status2 = await waitForIdle(base, sessionId, headers);
+      const status2 = await waitForIdle(base, nickname, headers);
       const completions = status2.terminalCompletions as Array<{ invocationId: string; text: string; status: string }>;
       const byInvocation = new Map<string, { invocationId: string; text: string; status: string }>(completions.map((entry) => [entry.invocationId, entry]));
       assert.equal(byInvocation.get(inv1)?.text, "hello-1");
       assert.equal(byInvocation.get(inv2)?.text, "hello-2");
 
       // Session messages contain both user prompts and both assistant replies.
-      const read = await get(`/sessions/${encodeURIComponent(sessionId)}/messages?access=:`);
+      const read = await get(`/sessions/${encodeURIComponent(nickname)}/messages?access=:`);
       const texts = JSON.stringify(read);
       assert.ok(texts.includes("Reply with exactly hello"), "first user message persisted");
       assert.ok(texts.includes("hello-1"), "first assistant reply persisted");
@@ -185,25 +187,26 @@ test("real Pi worker: start/send/fork/auth/persistent sessions", { skip: Number(
 
       // Cancel a running invocation: the stalled upstream request is aborted
       // and the invocation ends as aborted; the session stays reusable.
-      const cancelled = await post(`/sessions/${encodeURIComponent(sessionId)}/send`, { message: "stall forever", model: "model-a", maxTokens: 128 });
+      const cancelled = await post(`/sessions/${encodeURIComponent(nickname)}/send`, { message: "stall forever", model: "model-a", maxTokens: 128 });
       const inv3 = cancelled.invocationId;
-      const cancelledStatus = await post(`/sessions/${encodeURIComponent(sessionId)}/cancel`);
+      const cancelledStatus = await post(`/sessions/${encodeURIComponent(nickname)}/cancel`);
       assert.equal(cancelledStatus, "cancelled");
-      const status3 = await waitForIdle(base, sessionId, headers);
+      const status3 = await waitForIdle(base, nickname, headers);
       const completion3 = status3.terminalCompletions.find((entry: any) => entry.invocationId === inv3);
       assert.equal(completion3?.status, "aborted");
       assert.equal(completion3?.text, "pi_session_aborted");
-      const afterCancel = await post(`/sessions/${encodeURIComponent(sessionId)}/send`, { message: "Reply with exactly done", model: "model-a", maxTokens: 128 });
+      const afterCancel = await post(`/sessions/${encodeURIComponent(nickname)}/send`, { message: "Reply with exactly done", model: "model-a", maxTokens: 128 });
       assert.ok(afterCancel.invocationId);
-      const status4 = await waitForIdle(base, sessionId, headers);
+      const status4 = await waitForIdle(base, nickname, headers);
       const completion4 = status4.terminalCompletions.find((entry: any) => entry.invocationId === afterCancel.invocationId);
       assert.equal(completion4?.status, "completed");
       assert.equal(completion4?.text, "hello-4");
 
       // Fork creates a new persistent session.
-      const forked = await post(`/sessions/${encodeURIComponent(sessionId)}/fork`);
+      const forked = await post(`/sessions/${encodeURIComponent(nickname)}/fork`);
       assert.equal(typeof forked.sessionId, "string");
       assert.notEqual(forked.sessionId, sessionId);
+      assert.equal(typeof forked.nickname, "string");
       const sessions = await get("/sessions");
       assert.ok(Array.isArray(sessions) && sessions.length >= 2);
 
@@ -214,7 +217,7 @@ test("real Pi worker: start/send/fork/auth/persistent sessions", { skip: Number(
       const second = startWorker(sessionRoot, port);
       worker = second.child;
       workerPort = await second.ready;
-      const rebuilt = await waitForIdle(base, sessionId, headers);
+      const rebuilt = await waitForIdle(base, nickname, headers);
       const rebuiltByInvocation = new Map((rebuilt.terminalCompletions as Array<{ invocationId: string; text: string; status: string }>).map((entry) => [entry.invocationId, entry]));
       assert.equal(rebuiltByInvocation.get(inv1)?.status, "completed");
       assert.equal(rebuiltByInvocation.get(inv1)?.text, "hello-1");
@@ -262,7 +265,7 @@ test("real Pi worker: reasoning relay uses the system role", { skip: Number(proc
 
       await post("/config", { relayUrl: `http://127.0.0.1:${port}/v1`, relayToken });
       const invocation = await post("/invocations", { message: "Reply with exactly ok", model: "model-a", maxTokens: 128, reasoning: true });
-      const status = await waitForIdle(() => base, invocation.sessionId, headers);
+      const status = await waitForIdle(() => base, invocation.nickname, headers);
       assert.equal(status.terminalCompletions[0]?.status, "completed");
       assert.equal((requestBody?.messages as Array<{ role?: string }>)[0]?.role, "system");
     } finally {
@@ -277,11 +280,11 @@ test("real Pi worker: reasoning relay uses the system role", { skip: Number(proc
   }
 });
 
-async function waitForIdle(base: () => string, sessionId: string, headers: Record<string, string>, timeoutMs = 90_000): Promise<any> {
+async function waitForIdle(base: () => string, nickname: string, headers: Record<string, string>, timeoutMs = 90_000): Promise<any> {
   const deadline = Date.now() + timeoutMs;
   let last: any;
   while (Date.now() < deadline) {
-    last = await fetch(`${base()}/sessions/${encodeURIComponent(sessionId)}/snapshot`, { headers }).then((response) => response.json());
+    last = await fetch(`${base()}/sessions/${encodeURIComponent(nickname)}/snapshot`, { headers }).then((response) => response.json());
     if (last.idle && last.terminalCompletions?.length) return last;
     await new Promise((resolve) => setTimeout(resolve, 200));
   }

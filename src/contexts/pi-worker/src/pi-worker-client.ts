@@ -1,4 +1,4 @@
-import type { PiInvocation, PiSessionListEntry, PiSessionSnapshot, PiSubAgentStatus, PiSubAgentWaitResult, PiToolExecutionResult, PiVisibleMessage, PiWorkerClient, PiWorkerHealth } from "./contracts.js";
+import type { PiInvocation, PiRawMessage, PiSessionListEntry, PiSessionSnapshot, PiSubAgentResult, PiSubAgentStatus, PiSubAgentWaitResult, PiToolExecutionResult, PiWorkerClient, PiWorkerHealth } from "./contracts.js";
 
 export function createPiWorkerHttpClient(input: { baseURL: string; token?: string; fetchImpl?: typeof fetch }): PiWorkerClient {
   const fetchImpl = input.fetchImpl ?? fetch;
@@ -19,29 +19,35 @@ export function createPiWorkerHttpClient(input: { baseURL: string; token?: strin
     startInvocation(body) {
       return request<PiInvocation>("/invocations", { method: "POST", body, signal: body.signal });
     },
-    sendInvocation(sessionId, body) {
-      return request<PiInvocation>(`/sessions/${encodeURIComponent(sessionId)}/send`, { method: "POST", body, signal: body.signal });
+    sendInvocation(nickname, body) {
+      return request<PiInvocation>(`/sessions/${encodeURIComponent(nickname)}/send`, { method: "POST", body, signal: body.signal });
     },
     listSessions(signal) {
       return request<PiSessionListEntry[]>("/sessions", { method: "GET", signal });
     },
-    sessionMessages(sessionId, access, signal) {
-      return request<PiVisibleMessage[]>(`/sessions/${encodeURIComponent(sessionId)}/messages?access=${encodeURIComponent(access)}`, { method: "GET", signal });
+    sessionMessages(nickname, access, signal) {
+      return request<PiRawMessage[]>(`/sessions/${encodeURIComponent(nickname)}/messages?access=${encodeURIComponent(access)}`, { method: "GET", signal });
     },
-    sessionStatus(sessionId, signal) {
-      return request<PiSessionSnapshot>(`/sessions/${encodeURIComponent(sessionId)}/snapshot`, { method: "GET", signal });
+    sessionStatus(nickname, signal) {
+      return request<PiSessionSnapshot>(`/sessions/${encodeURIComponent(nickname)}/snapshot`, { method: "GET", signal });
     },
-    subAgentStatus(sessionId, signal) {
-      return request<PiSubAgentStatus>(`/sessions/${encodeURIComponent(sessionId)}/status`, { method: "GET", signal });
+    sessionStatusBySessionId(sessionId, signal) {
+      return request<PiSessionSnapshot>(`/sessions-by-id/${encodeURIComponent(sessionId)}/snapshot`, { method: "GET", signal });
     },
-    waitSession(sessionId, timeoutSeconds, signal) {
-      return request<PiSubAgentWaitResult>(`/sessions/${encodeURIComponent(sessionId)}/wait`, { method: "POST", body: { timeoutSeconds }, signal });
+    subAgentStatus(nickname, signal) {
+      return request<PiSubAgentStatus>(`/sessions/${encodeURIComponent(nickname)}/status`, { method: "GET", signal });
     },
-    cancelSession(sessionId, signal) {
-      return request<"cancelled">(`/sessions/${encodeURIComponent(sessionId)}/cancel`, { method: "POST", signal });
+    resultSession(nickname, signal) {
+      return request<PiSubAgentResult>(`/sessions/${encodeURIComponent(nickname)}/result`, { method: "GET", signal });
     },
-    forkSession(sessionId, entryId, signal) {
-      return request<{ sessionId: string }>(`/sessions/${encodeURIComponent(sessionId)}/fork`, { method: "POST", body: { entryId }, signal });
+    waitSession(nickname, timeoutSeconds, signal) {
+      return request<PiSubAgentWaitResult>(`/sessions/${encodeURIComponent(nickname)}/wait`, { method: "POST", body: { timeoutSeconds }, signal });
+    },
+    cancelSession(nickname, signal) {
+      return request<"cancelled">(`/sessions/${encodeURIComponent(nickname)}/cancel`, { method: "POST", signal });
+    },
+    forkSession(nickname, entryId, signal) {
+      return request<{ sessionId: string; nickname: string }>(`/sessions/${encodeURIComponent(nickname)}/fork`, { method: "POST", body: { entryId }, signal });
     },
     previewSession(body) {
       return request<{ sessionId: string; systemPrompt: string }>("/preview", { method: "POST", body, signal: body.signal });

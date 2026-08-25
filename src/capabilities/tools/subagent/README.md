@@ -10,52 +10,64 @@
 
 ### `spawn`
 
-创建新的持久化 SubAgent session 并提交第一条任务消息，立即返回 sessionId，不等待任务完成。
+创建新的持久化 SubAgent session 并提交第一条任务消息，立即返回 nickname，不等待任务完成。
 
 ```ts
 { action: "spawn"; message: string; timeoutSeconds?: number }
 // output
-{ sessionId: string }
+{ nickname: string }
 ```
 
 ### `messages`
 
-先过滤指定 session 的可见 user/assistant 消息，再用 access 按 Python 索引或切片语义读取，例如 -1、:3、2:。
+读取指定 nickname 对应 session 的 Pi 原始消息，再用 access 按 Python 索引或切片语义读取，例如 -1、:3、2:。
 
 ```ts
-{ action: "messages"; sessionId: string; access: string }
+{ action: "messages"; nickname: string; access: string }
 // output
-Array<{ role: "user" | "assistant"; content: unknown }>
+Array<Record<string, unknown>>
 ```
 
-只保留 user 消息和不含 tool call 的 assistant 自然语言消息；system、tool use、tool result、progress 与 thinking 均不返回。`access` 只接受单个整数或 `start:end`；索引越界会报错，切片可以返回空数组。
+返回 Pi JSONL 中原始 `type: "message"` 的 `message` 对象，不过滤 user、assistant、tool result、tool call、progress 或 thinking。`access` 参数保持原有功能，只接受单个整数或 `start:end`；索引越界会报错，切片可以返回空数组。
+
+### `result`
+
+读取指定 nickname 对应 session 当前任务的结果；完成时返回最新 assistant message，运行中返回 `running`，其他终态只返回状态。
+
+```ts
+{ action: "result"; nickname: string }
+// output
+{ status: "running" }
+  | { status: "completed"; message: { role: "assistant"; content: unknown } }
+  | { status: "failed" | "interrupted" | "timed_out" | "aborted" }
+```
 
 ### `send`
 
-向已有 session 提交一条新任务消息并立即返回原 sessionId；需要结果时再调用 wait 或 messages。
+向指定 nickname 对应 session 提交一条新任务消息并立即返回原 nickname；需要结果时再调用 wait 或 result。
 
 ```ts
-{ action: "send"; sessionId: string; message: string; timeoutSeconds?: number }
+{ action: "send"; nickname: string; message: string; timeoutSeconds?: number }
 // output
-{ sessionId: string }
+{ nickname: string }
 ```
 
 ### `status`
 
-非阻塞查询 session 的单一状态、最后更新时间和可见消息数量，状态包含 queued、running 及五种终态。
+非阻塞查询 nickname 对应 session 的单一状态、最后更新时间和可见消息数量，状态包含 queued、running 及五种终态。
 
 ```ts
-{ action: "status"; sessionId: string }
+{ action: "status"; nickname: string }
 // output
 { updatedAt: string; messages: number; status: "queued" | "running" | "completed" | "failed" | "interrupted" | "timed_out" | "aborted" }
 ```
 
 ### `wait`
 
-等待 session 当前任务结束；完成时返回最新 assistant 消息，等待结束时仍未完成则返回 running，其他终态只返回状态。
+等待 nickname 对应 session 当前任务结束；完成时返回最新 assistant 消息，等待结束时仍未完成则返回 running，其他终态只返回状态。
 
 ```ts
-{ action: "wait"; sessionId: string; timeoutSeconds?: number }
+{ action: "wait"; nickname: string; timeoutSeconds?: number }
 // output
 { status: "running" }
   | { status: "completed"; message: { role: "assistant"; content: unknown } }
@@ -64,10 +76,10 @@ Array<{ role: "user" | "assistant"; content: unknown }>
 
 ### `cancel`
 
-请求取消 session 当前运行或排队的任务，成功返回 cancelled，session 保持可复用。
+请求取消 nickname 对应 session 当前运行或排队的任务，成功返回 cancelled，session 保持可复用。
 
 ```ts
-{ action: "cancel"; sessionId: string }
+{ action: "cancel"; nickname: string }
 // output
 "cancelled"
 ```
@@ -76,12 +88,12 @@ Array<{ role: "user" | "assistant"; content: unknown }>
 
 ### `fork`
 
-从指定 session 创建独立的新 session，可用 entryId 指定历史分支点，成功返回新 sessionId。
+从指定 nickname 对应 session 创建独立的新 session，可用 entryId 指定历史分支点，成功返回新 nickname。
 
 ```ts
-{ action: "fork"; sessionId: string; entryId?: string }
+{ action: "fork"; nickname: string; entryId?: string }
 // output
-{ sessionId: string }
+{ nickname: string }
 ```
 
 空字符串 `entryId` 非法。fork 不会自动提交新消息。

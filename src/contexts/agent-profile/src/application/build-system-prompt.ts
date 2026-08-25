@@ -37,7 +37,8 @@ export type PromptProfile = {
   layers: PromptLayer;
   appendLayers?: PromptLayer;
   interruptLayer?: PromptLayer;
-  messageDeliveryReminderLayer?: PromptLayer;
+  consecutiveToolReminderLayer?: PromptLayer;
+  silentEndingReminderLayer?: PromptLayer;
 };
 
 export type PromptRenderContext = {
@@ -105,7 +106,8 @@ export function defaultPromptProfile(): PromptProfile {
     layers: { meta: {}, messages: [] },
     appendLayers: { meta: {}, messages: [] },
     interruptLayer: defaultInterruptLayer(),
-    messageDeliveryReminderLayer: { meta: {}, messages: [] }
+    consecutiveToolReminderLayer: { meta: {}, messages: [] },
+    silentEndingReminderLayer: { meta: {}, messages: [] }
   };
 }
 
@@ -216,9 +218,13 @@ export function normalizePromptProfile(profile: PromptProfile): PromptProfile {
     layers: normalizePromptLayer(profile?.layers, fallback.layers),
     appendLayers: normalizePromptLayer(profile?.appendLayers, fallback.appendLayers),
     interruptLayer: normalizePromptLayer(profile?.interruptLayer, fallback.interruptLayer),
-    messageDeliveryReminderLayer: normalizePromptLayer(
-      profile?.messageDeliveryReminderLayer,
-      fallback.messageDeliveryReminderLayer
+    consecutiveToolReminderLayer: normalizePromptLayer(
+      profile?.consecutiveToolReminderLayer,
+      fallback.consecutiveToolReminderLayer
+    ),
+    silentEndingReminderLayer: normalizePromptLayer(
+      profile?.silentEndingReminderLayer,
+      fallback.silentEndingReminderLayer
     )
   };
 }
@@ -277,11 +283,19 @@ function validatePromptProfile(value: unknown): PromptProfile {
   validatePromptLayerForStorage(profile.layers, "layers");
   validatePromptLayerForStorage(profile.appendLayers, "appendLayers");
   validatePromptLayerForStorage(profile.interruptLayer, "interruptLayer");
-  if (profile.messageDeliveryReminderLayer !== undefined) {
-    validatePromptLayerForStorage(profile.messageDeliveryReminderLayer, "messageDeliveryReminderLayer");
-    for (const message of profile.messageDeliveryReminderLayer.messages) {
+  if (profile.consecutiveToolReminderLayer !== undefined) {
+    validatePromptLayerForStorage(profile.consecutiveToolReminderLayer, "consecutiveToolReminderLayer");
+    for (const message of profile.consecutiveToolReminderLayer.messages) {
       if (message.role !== "user") {
-        throw new PromptProfileValidationError("invalid_prompt_message_delivery_reminder_role");
+        throw new PromptProfileValidationError("invalid_prompt_consecutive_tool_reminder_role");
+      }
+    }
+  }
+  if (profile.silentEndingReminderLayer !== undefined) {
+    validatePromptLayerForStorage(profile.silentEndingReminderLayer, "silentEndingReminderLayer");
+    for (const message of profile.silentEndingReminderLayer.messages) {
+      if (message.role !== "user") {
+        throw new PromptProfileValidationError("invalid_prompt_silent_ending_reminder_role");
       }
     }
   }

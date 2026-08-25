@@ -7,7 +7,8 @@ import { registerLLMToolLoopTools, type LLMToolLoopContinuation } from "../../..
 import { defaultPromptProfile } from "../../../src/contexts/agent-profile/src/application/build-system-prompt.js";
 import { emptyPromptRenderer, fakeTime, textEvent } from "./agent-loop-runtime-helpers.js";
 
-const reminderContent = "configured delivery reminder";
+const consecutiveToolReminderContent = "configured consecutive tool reminder";
+const silentEndingReminderContent = "configured silent ending reminder";
 
 test("raw assistant content receives one user reminder and is not rewritten as Chat", async () => {
   const seenRequests: Array<Array<{ role: string; content?: unknown }>> = [];
@@ -27,9 +28,9 @@ test("raw assistant content receives one user reminder and is not rewritten as C
   assert.equal(seenRequests.length, 2);
   assert.deepEqual(seenRequests[1].slice(-2).map(({ role, content }) => ({ role, content })), [
     { role: "assistant", content: "raw first" },
-    { role: "user", content: reminderContent }
+    { role: "user", content: silentEndingReminderContent }
   ]);
-  assert.equal(result.messages.filter((message) => message.content === reminderContent).length, 1);
+  assert.equal(result.messages.filter((message) => message.content === silentEndingReminderContent).length, 1);
 });
 
 test("empty assistant response without tool calls receives the reminder once", async () => {
@@ -45,7 +46,7 @@ test("empty assistant response without tool calls receives the reminder once", a
   const result = await runAgentFunctionCallLoop(loop.spec);
 
   assert.equal(requests, 2);
-  assert.equal(result.messages.filter((message) => message.content === reminderContent).length, 1);
+  assert.equal(result.messages.filter((message) => message.content === silentEndingReminderContent).length, 1);
 });
 
 test("six consecutive non-sending tools append the reminder after the complete tool batch", async () => {
@@ -64,9 +65,9 @@ test("six consecutive non-sending tools append the reminder after the complete t
 
   assert.equal(result.stopReason, "completed");
   assert.equal(calls.filter((call) => call.toolName === "Work").length, 6);
-  assert.equal(seenRequests[5].some((message) => message.content === reminderContent), false);
-  assert.equal(seenRequests[6].at(-1)?.content, reminderContent);
-  assert.equal(result.messages.filter((message) => message.content === reminderContent).length, 1);
+  assert.equal(seenRequests[5].some((message) => message.content === consecutiveToolReminderContent), false);
+  assert.equal(seenRequests[6].at(-1)?.content, consecutiveToolReminderContent);
+  assert.equal(result.messages.filter((message) => message.content === consecutiveToolReminderContent).length, 1);
 });
 
 test("threshold reminder follows every tool result in a multi-call assistant response", async () => {
@@ -97,7 +98,27 @@ test("threshold reminder follows every tool result in a multi-call assistant res
   assert.deepEqual(followup.slice(-7).map((message) => message.role), [
     "tool", "tool", "tool", "tool", "tool", "tool", "user"
   ]);
-  assert.equal(followup.at(-1)?.content, reminderContent);
+  assert.equal(followup.at(-1)?.content, consecutiveToolReminderContent);
+});
+
+test("consecutive-tool reminder can be followed by one silent-ending reminder", async () => {
+  const loop = createReminderLoop({
+    tools: reminderTools([]),
+    async respond(round) {
+      if (round < 6) return toolCallResult(`work_${round}`, "Work", { round });
+      return { message: { role: "assistant", content: "still silent" } };
+    }
+  });
+
+  const result = await runAgentFunctionCallLoop(loop.spec);
+  const reminderMessages = result.messages.filter((message) =>
+    message.content === consecutiveToolReminderContent || message.content === silentEndingReminderContent
+  );
+
+  assert.deepEqual(reminderMessages.map((message) => message.content), [
+    consecutiveToolReminderContent,
+    silentEndingReminderContent
+  ]);
 });
 
 test("successful sending-class tool call suppresses the reminder regardless of action", async () => {
@@ -118,7 +139,9 @@ test("successful sending-class tool call suppresses the reminder regardless of a
   assert.equal(result.stopReason, "completed");
   assert.equal(calls[0]?.input.action, "poll");
   assert.equal(seenRequests.length, 2);
-  assert.equal(result.messages.some((message) => message.content === reminderContent), false);
+  assert.equal(result.messages.some((message) =>
+    message.content === consecutiveToolReminderContent || message.content === silentEndingReminderContent
+  ), false);
 });
 
 test("failed sending-class tool call does not suppress the reminder", async () => {
@@ -133,7 +156,7 @@ test("failed sending-class tool call does not suppress the reminder", async () =
 
   const result = await runAgentFunctionCallLoop(loop.spec);
 
-  assert.equal(result.messages.filter((message) => message.content === reminderContent).length, 1);
+  assert.equal(result.messages.filter((message) => message.content === silentEndingReminderContent).length, 1);
 });
 
 test("restored continuation state keeps the reminder deduplicated", async () => {
@@ -148,7 +171,9 @@ test("restored continuation state keeps the reminder deduplicated", async () => 
 
   const result = await runAgentFunctionCallLoop(loop.spec);
 
-  assert.equal(result.messages.some((message) => message.content === reminderContent), false);
+  assert.equal(result.messages.some((message) =>
+    message.content === consecutiveToolReminderContent || message.content === silentEndingReminderContent
+  ), false);
 });
 
 for (const action of ["finish", "await_chat"] as const) {
@@ -170,8 +195,8 @@ for (const action of ["finish", "await_chat"] as const) {
     assert.equal(result.stopReason, "completed");
     assert.equal(result.invalidateSession, false);
     assert.equal(seenRequests.length, 2);
-    assert.equal(seenRequests[1].at(-1)?.content, reminderContent);
-    assert.equal(result.messages.filter((message) => message.content === reminderContent).length, 1);
+    assert.equal(seenRequests[1].at(-1)?.content, silentEndingReminderContent);
+    assert.equal(result.messages.filter((message) => message.content === silentEndingReminderContent).length, 1);
   });
 }
 
@@ -205,12 +230,20 @@ function createReminderLoop(input: {
     applyModeStateToNewSession: () => {},
     promptProfile: {
       ...defaultPromptProfile(),
-      messageDeliveryReminderLayer: {
+      consecutiveToolReminderLayer: {
         meta: {},
         messages: [{
-          meta: { title: "Reminder", enabled: true },
+          meta: { title: "Consecutive Tool Reminder", enabled: true },
           role: "user",
-          content: reminderContent
+          content: consecutiveToolReminderContent
+        }]
+      },
+      silentEndingReminderLayer: {
+        meta: {},
+        messages: [{
+          meta: { title: "Silent Ending Reminder", enabled: true },
+          role: "user",
+          content: silentEndingReminderContent
         }]
       }
     },
@@ -277,8 +310,10 @@ function continuationWithReminderInjected(): LLMToolLoopContinuation {
       messageDeliveryReminder: {
         successfulSendSeen: false,
         consecutiveNonSendingToolCalls: 1,
-        reminderInjected: true,
-        reminderPending: false
+        consecutiveToolReminderInjected: true,
+        consecutiveToolReminderPending: false,
+        silentEndingReminderInjected: true,
+        silentEndingReminderPending: false
       }
     }
   };

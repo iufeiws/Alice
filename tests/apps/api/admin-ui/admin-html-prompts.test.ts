@@ -16,8 +16,10 @@ test("promptEditor_initialRender_exposesPromptWorkspace", () => {
     "Memorize",
     "Chat API Preset",
     "Talk API Preset",
-    "Message Delivery Reminder",
-    "Add Reminder Message",
+    "Consecutive Tool Reminder",
+    "Add Consecutive Tool Reminder Message",
+    "Silent Ending Reminder",
+    "Add Silent Ending Reminder Message",
     "Save Prompt Profile",
     "变量解析树"
   ]);

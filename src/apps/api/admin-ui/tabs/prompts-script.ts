@@ -42,7 +42,8 @@ export function renderPromptsScript(): string {
         if (!activeProfile.visibleTools) activeProfile.visibleTools = {};
         if (!activeProfile.layers) activeProfile.layers = { meta: {}, messages: [] };
         if (!activeProfile.appendLayers) activeProfile.appendLayers = { meta: {}, messages: [] };
-        if (!isTalk && !activeProfile.messageDeliveryReminderLayer) activeProfile.messageDeliveryReminderLayer = { meta: {}, messages: [] };
+        if (!isTalk && !activeProfile.consecutiveToolReminderLayer) activeProfile.consecutiveToolReminderLayer = { meta: {}, messages: [] };
+        if (!isTalk && !activeProfile.silentEndingReminderLayer) activeProfile.silentEndingReminderLayer = { meta: {}, messages: [] };
         $("promptProfile").innerHTML = \`
           <div class="prompt-editor-grid">
             <div class="subtabs prompt-mode-cell">
@@ -65,10 +66,14 @@ export function renderPromptsScript(): string {
               <div id="promptInterruptLayer">\${renderLayerDocument(activeProfile.interruptLayer, { editorId: "interrupt", roles: ["system", "user", "assistant"], showActions: false })}</div>
               \`}
               \${isTalk ? "" : \`
-              <h2>Message Delivery Reminder</h2>
-              <p class="muted">Conditionally appended as a user message after six consecutive non-sending tools, or before a silent raw/Yield ending. It is injected at most once per turn.</p>
-              <div id="promptMessageDeliveryReminder">\${renderLayerDocument(activeProfile.messageDeliveryReminderLayer, { editorId: "message-delivery-reminder", roles: ["user"] })}</div>
-              <button type="button" id="prompt-message-delivery-reminder-add">Add Reminder Message</button>
+              <h2>Consecutive Tool Reminder</h2>
+              <p class="muted">Appended as a user message after six consecutive non-sending tools. It is injected at most once per turn.</p>
+              <div id="promptConsecutiveToolReminder">\${renderLayerDocument(activeProfile.consecutiveToolReminderLayer, { editorId: "consecutive-tool-reminder", roles: ["user"] })}</div>
+              <button type="button" id="prompt-consecutive-tool-reminder-add">Add Consecutive Tool Reminder Message</button>
+              <h2>Silent Ending Reminder</h2>
+              <p class="muted">Appended as a user message before a raw, empty, or Yield finish/await_chat ending. It is injected at most once per turn, independently of the consecutive-tool reminder.</p>
+              <div id="promptSilentEndingReminder">\${renderLayerDocument(activeProfile.silentEndingReminderLayer, { editorId: "silent-ending-reminder", roles: ["user"] })}</div>
+              <button type="button" id="prompt-silent-ending-reminder-add">Add Silent Ending Reminder Message</button>
               \`}
               <h2>Initial Layers</h2>
               <div id="promptLayers">\${renderLayerDocument(activeProfile.layers, { editorId: "prompt-layers" })}</div>
@@ -92,7 +97,8 @@ export function renderPromptsScript(): string {
         $("toolPhotoVisible").addEventListener("change", () => { activeProfile.visibleTools.photo = $("toolPhotoVisible").checked; delete activeProfile.visibleTools.media; });
         $("toolShellVisible").addEventListener("change", () => { activeProfile.visibleTools.shell = $("toolShellVisible").checked; });
         if (activeProfile.interruptLayer) bindLayerDocument(activeProfile.interruptLayer, { editorId: "interrupt", render: renderPromptProfile });
-        if (!isTalk) bindLayerDocument(activeProfile.messageDeliveryReminderLayer, { editorId: "message-delivery-reminder", render: renderPromptProfile });
+        if (!isTalk) bindLayerDocument(activeProfile.consecutiveToolReminderLayer, { editorId: "consecutive-tool-reminder", render: renderPromptProfile });
+        if (!isTalk) bindLayerDocument(activeProfile.silentEndingReminderLayer, { editorId: "silent-ending-reminder", render: renderPromptProfile });
         bindLayerDocument(activeProfile.layers, { editorId: "prompt-layers", render: renderPromptProfile });
         bindLayerDocument(activeProfile.appendLayers, { editorId: "prompt-append-layers", render: renderPromptProfile });
         $("prompt-add").addEventListener("click", () => {
@@ -103,8 +109,12 @@ export function renderPromptsScript(): string {
           addLayerMessage(activeProfile.appendLayers, { title: "New Append Layer", toolCall: true, toolName: promptTools[0]?.name || "Chat" });
           renderPromptProfile();
         });
-        $("prompt-message-delivery-reminder-add")?.addEventListener("click", () => {
-          addLayerMessage(activeProfile.messageDeliveryReminderLayer, { title: "Message Delivery Reminder", role: "user" });
+        $("prompt-consecutive-tool-reminder-add")?.addEventListener("click", () => {
+          addLayerMessage(activeProfile.consecutiveToolReminderLayer, { title: "Consecutive Tool Reminder", role: "user" });
+          renderPromptProfile();
+        });
+        $("prompt-silent-ending-reminder-add")?.addEventListener("click", () => {
+          addLayerMessage(activeProfile.silentEndingReminderLayer, { title: "Silent Ending Reminder", role: "user" });
           renderPromptProfile();
         });
         $("prompt-save").addEventListener("click", savePromptProfile);

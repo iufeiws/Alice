@@ -56,19 +56,25 @@ test("promptProfileStore_interruptLayer_persistsMessages", () => {
   assert.equal(reopened.messages[0].name, "CustomName");
 });
 
-test("promptProfileStore_messageDeliveryReminderLayer_acceptsOnlyUserMessages", () => {
+test("promptProfileStore_deliveryReminderLayers_acceptOnlyUserMessages", () => {
   const filePath = path.join(makeTempDir("prompt-store-message-delivery-reminder"), "prompt-profile.json");
   const store = createPromptProfileStore(filePath);
   const saved = store.save({
     ...store.get(),
-    messageDeliveryReminderLayer: layer(message("Reminder", "user", "configured reminder"))
+    consecutiveToolReminderLayer: layer(message("Tool Reminder", "user", "configured tool reminder")),
+    silentEndingReminderLayer: layer(message("Ending Reminder", "user", "configured ending reminder"))
   });
 
-  assert.equal(saved.messageDeliveryReminderLayer?.messages[0]?.role, "user");
+  assert.equal(saved.consecutiveToolReminderLayer?.messages[0]?.role, "user");
+  assert.equal(saved.silentEndingReminderLayer?.messages[0]?.role, "user");
   assert.throws(() => store.save({
     ...store.get(),
-    messageDeliveryReminderLayer: layer(message("Reminder", "system", "invalid reminder"))
-  }), /invalid_prompt_message_delivery_reminder_role/);
+    consecutiveToolReminderLayer: layer(message("Reminder", "system", "invalid reminder"))
+  }), /invalid_prompt_consecutive_tool_reminder_role/);
+  assert.throws(() => store.save({
+    ...store.get(),
+    silentEndingReminderLayer: layer(message("Reminder", "assistant", "invalid reminder"))
+  }), /invalid_prompt_silent_ending_reminder_role/);
 });
 
 test("promptProfileStore_projectConfigUsername_rejectsProfileField", () => {

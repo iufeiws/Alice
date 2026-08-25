@@ -130,9 +130,13 @@ export const messageDeliveryReminderToolThreshold = 6;
 type MessageDeliveryReminderState = {
   successfulSendSeen: boolean;
   consecutiveNonSendingToolCalls: number;
-  reminderInjected: boolean;
-  reminderPending: boolean;
+  consecutiveToolReminderInjected: boolean;
+  consecutiveToolReminderPending: boolean;
+  silentEndingReminderInjected: boolean;
+  silentEndingReminderPending: boolean;
 };
+
+type MessageDeliveryReminderKind = "consecutiveTool" | "silentEnding";
 
 export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgentLoop {
   let session = input.session;
@@ -208,8 +212,8 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
     },
     continuationState: () => ({ messageDeliveryReminder: { ...messageDeliveryState } }),
     afterAssistantMessage() {
-      queueMessageDeliveryReminder(input, messageDeliveryState);
-      return takeMessageDeliveryReminderFollowup(input, messageDeliveryState);
+      queueMessageDeliveryReminder(input, messageDeliveryState, "silentEnding");
+      return takeMessageDeliveryReminderFollowup(input, messageDeliveryState, "silentEnding");
     },
     shouldCancel() {
       return input.isLLMRunCancelled?.() === true;
@@ -234,7 +238,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
     async afterToolResult({ call, result, toolInput, toolResult, toolMessage, toolDefinition }): Promise<AgentFunctionCallToolExecution> {
       noteMessageDeliveryToolResult(messageDeliveryState, toolDefinition.sendsMessage === true, toolResult.ok);
       if (shouldDeferYieldForMessageDelivery(call.function.name, toolInput, toolResult)
-        && queueMessageDeliveryReminder(input, messageDeliveryState)) {
+        && queueMessageDeliveryReminder(input, messageDeliveryState, "silentEnding")) {
         input.setLastCompletedToolName(call.function.name);
         return { message: toolMessage, control: {} };
       }
@@ -289,7 +293,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
         : execution;
     },
     afterToolBatch() {
-      return takeMessageDeliveryReminderFollowup(input, messageDeliveryState);
+      return takePendingMessageDeliveryReminderFollowup(input, messageDeliveryState);
     },
     async onMessagesChanged({ messages }) {
       session.messages = messages;
@@ -499,15 +503,16 @@ function noteMessageDeliveryToolResult(
     state.consecutiveNonSendingToolCalls = 0;
     if (succeeded) {
       state.successfulSendSeen = true;
-      state.reminderPending = false;
+      state.consecutiveToolReminderPending = false;
+      state.silentEndingReminderPending = false;
     }
     return;
   }
   state.consecutiveNonSendingToolCalls += 1;
   if (!state.successfulSendSeen
-    && !state.reminderInjected
+    && !state.consecutiveToolReminderInjected
     && state.consecutiveNonSendingToolCalls >= messageDeliveryReminderToolThreshold) {
-    state.reminderPending = true;
+    state.consecutiveToolReminderPending = true;
   }
 }
 
@@ -525,46 +530,94 @@ function shouldDeferYieldForMessageDelivery(
 
 function queueMessageDeliveryReminder(
   input: ChatAgentLoopInput,
-  state: MessageDeliveryReminderState
+  state: MessageDeliveryReminderState,
+  kind: MessageDeliveryReminderKind
 ): boolean {
-  if (state.successfulSendSeen || state.reminderInjected) return false;
-  if (!hasMessageDeliveryReminder(input)) return false;
-  state.reminderPending = true;
+  if (state.successfulSendSeen || reminderWasInjected(state, kind)) return false;
+  if (!hasMessageDeliveryReminder(input, kind)) return false;
+  setReminderPending(state, kind, true);
   return true;
 }
 
-function hasMessageDeliveryReminder(input: ChatAgentLoopInput): boolean {
+function hasMessageDeliveryReminder(input: ChatAgentLoopInput, kind: MessageDeliveryReminderKind): boolean {
   if (!input.promptProfile) return false;
-  return normalizePromptProfile(input.promptProfile).messageDeliveryReminderLayer!.messages
+  return messageDeliveryReminderLayer(input.promptProfile, kind).messages
     .some((message) => message.meta.enabled);
 }
 
 function takeMessageDeliveryReminderFollowup(
   input: ChatAgentLoopInput,
-  state: MessageDeliveryReminderState
+  state: MessageDeliveryReminderState,
+  kind: MessageDeliveryReminderKind
 ): { messages: LLMChatInput["messages"]; continue: true } | undefined {
-  if (state.successfulSendSeen || state.reminderInjected) return undefined;
-  if (!state.reminderPending) return undefined;
-  const messages = messageDeliveryReminderMessages(input);
+  if (state.successfulSendSeen || reminderWasInjected(state, kind)) return undefined;
+  if (!reminderIsPending(state, kind)) return undefined;
+  const messages = messageDeliveryReminderMessages(input, kind);
   if (messages.length === 0) {
-    state.reminderPending = false;
+    setReminderPending(state, kind, false);
     return undefined;
   }
-  state.reminderInjected = true;
-  state.reminderPending = false;
+  setReminderInjected(state, kind);
+  setReminderPending(state, kind, false);
   return { messages, continue: true };
 }
 
-function messageDeliveryReminderMessages(input: ChatAgentLoopInput): LLMChatInput["messages"] {
+function takePendingMessageDeliveryReminderFollowup(
+  input: ChatAgentLoopInput,
+  state: MessageDeliveryReminderState
+): { messages: LLMChatInput["messages"]; continue: true } | undefined {
+  const consecutiveTool = takeMessageDeliveryReminderFollowup(input, state, "consecutiveTool");
+  const silentEnding = takeMessageDeliveryReminderFollowup(input, state, "silentEnding");
+  const messages = [...(consecutiveTool?.messages ?? []), ...(silentEnding?.messages ?? [])];
+  return messages.length > 0 ? { messages, continue: true } : undefined;
+}
+
+function messageDeliveryReminderMessages(
+  input: ChatAgentLoopInput,
+  kind: MessageDeliveryReminderKind
+): LLMChatInput["messages"] {
   if (!input.promptProfile) return [];
-  const layer = normalizePromptProfile(input.promptProfile).messageDeliveryReminderLayer!;
+  const layer = messageDeliveryReminderLayer(input.promptProfile, kind);
   const renderer = input.buildTextVariables(input.event);
   return layer.messages
     .filter((message) => message.meta.enabled)
     .map((message) => {
-      if (message.role !== "user") throw new Error("message_delivery_reminder_role_user_required");
+      if (message.role !== "user") throw new Error(`${kind}_reminder_role_user_required`);
       return promptMessageToMessage(message, renderer);
     });
+}
+
+function messageDeliveryReminderLayer(profile: PromptProfile, kind: MessageDeliveryReminderKind) {
+  const normalized = normalizePromptProfile(profile);
+  return kind === "consecutiveTool"
+    ? normalized.consecutiveToolReminderLayer!
+    : normalized.silentEndingReminderLayer!;
+}
+
+function reminderWasInjected(state: MessageDeliveryReminderState, kind: MessageDeliveryReminderKind): boolean {
+  return kind === "consecutiveTool"
+    ? state.consecutiveToolReminderInjected
+    : state.silentEndingReminderInjected;
+}
+
+function reminderIsPending(state: MessageDeliveryReminderState, kind: MessageDeliveryReminderKind): boolean {
+  return kind === "consecutiveTool"
+    ? state.consecutiveToolReminderPending
+    : state.silentEndingReminderPending;
+}
+
+function setReminderPending(
+  state: MessageDeliveryReminderState,
+  kind: MessageDeliveryReminderKind,
+  pending: boolean
+): void {
+  if (kind === "consecutiveTool") state.consecutiveToolReminderPending = pending;
+  else state.silentEndingReminderPending = pending;
+}
+
+function setReminderInjected(state: MessageDeliveryReminderState, kind: MessageDeliveryReminderKind): void {
+  if (kind === "consecutiveTool") state.consecutiveToolReminderInjected = true;
+  else state.silentEndingReminderInjected = true;
 }
 
 function restoreMessageDeliveryReminderState(value: unknown): MessageDeliveryReminderState {
@@ -579,7 +632,9 @@ function restoreMessageDeliveryReminderState(value: unknown): MessageDeliveryRem
     consecutiveNonSendingToolCalls: Number.isInteger(state.consecutiveNonSendingToolCalls)
       ? Math.max(0, Number(state.consecutiveNonSendingToolCalls))
       : 0,
-    reminderInjected: state.reminderInjected === true,
-    reminderPending: state.reminderPending === true
+    consecutiveToolReminderInjected: state.consecutiveToolReminderInjected === true,
+    consecutiveToolReminderPending: state.consecutiveToolReminderPending === true,
+    silentEndingReminderInjected: state.silentEndingReminderInjected === true,
+    silentEndingReminderPending: state.silentEndingReminderPending === true
   };
 }

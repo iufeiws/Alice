@@ -72,7 +72,7 @@ src/
 | **agent-loop** | ChatAgent 核心。`createChatAgent`（policy 检查、session 解析、intent 路由、profile/tool 过滤）→ `createAgentLoopRuntime`（串行 requestRun、interrupt、activeMainLLMSession；**MainAgentActivity 占用模型**：`isMainAgentBusy()`/`beginClearSession()`，idle/running/clearing 三态，requestRun 与统一 clear 共用占用、busy 时互斥拒绝，clear 先获取占用、结束或失败后释放，run 内 clear 为 busy 连续交接无 idle 空窗）→ `buildChatAgentLoop`（function-call loop hooks）。Chat loop 持有两类独立的消息投递 reminder 状态：连续 6 次非发送类工具调用后追加一次 consecutive-tool user reminder；首次以 raw/空 content 或 `Yield finish|await_chat` 静默结束且本轮没有成功调用发送类工具时追加一次 silent-ending user reminder。两类 reminder 在同一 turn 各最多一次，前者触发后仍可触发后者，再次静默允许结束；tool batch 同时满足两类条件时按 consecutive-tool、silent-ending 顺序追加。发送类按 ToolDefinition 工具级 `sendsMessage` 判断，当前 `Chat` 任意成功 action 均计为发送。raw assistant content 保持原样，不再重写为伪造 `Chat` tool call。心跳 `agent-heartbeat-runtime`：idle transition、randomized initiative、timed yield、talk session、sleep cocoon、calendar reminder、pending session，全部受 canRunHeartbeat 门控。Agent 状态机 `AgentStateController`（idle/waiting/calling/away/sleeping 等）。进程重启续跑 continuation 存储。**无 index.ts**，出口在 `application/chat-agent.ts` 的 re-export |
 | **memory** | 长期记忆/日记/睡眠 Memorize。`store.ts`（SQLite WAL，persistent/userPreferences/diary 表）、`induction.ts`（`runSleepMemoryInduction` 等，用独立 memory preset 的 LLM 跑归纳 loop）、`prompt-build`/`prompt-store`（三个 target 的归纳 prompt）、`self-talk-tool`（Memorize 私有思考工具 `self_talk`，不落盘）。Short Memory：`short-memory-store.ts`（主库 `alice.sqlite` 的 `short_memory_entries` 表：id/created_at/created_at_utc/content + 索引，统一 schema v10 幂等迁移，BEGIN IMMEDIATE 且每事务一次 insert，listLatest/listByCreatedAtUtcRange）、`short-memory-worker.ts`（`createShortMemoryWorker` 串行采集宿主 `~/.short_memory`：read→校验 `/[\p{L}\p{N}]/u`→事务 insert→原子 replace("\n")→commit，commit 失败补偿恢复原内容；`createHostShortMemoryFile` 按 `config.bashSandbox.hostWorkspaceDir` 映射容器路径并校验越界） |
 | **llm-session** | LLM 会话管理。`sqlite-llm-session-store`（主库 `memory-files/llm-sessions.sqlite`：总表 `llm_session_meta` 六列 + 每 agent 类型 messages 分表三列）、`llm-session-pointer`（`current.json` 仅 `{sessionId, agentType}`，原子写）、`llm-session-runtime`（ensure/note/clear/delta transcript，单一内存所有者，SQLite 事务失败内存不变；请求审计保存清洗后的实际 transport payload，前缀校验、delta 与权威 transcript 使用 agent loop 的未清洗 messages；`clearCurrentLLMSession` 异步，经统一清除协调器，`clearCurrentLLMSessionDirect` 供 Talk 回调内直接清除避免队列自等待）、浏览/列表/admin API、一次性迁移脚本 `scripts/migrate-llm-sessions-sqlite.ts`。`application/session-clear-coordinator.ts`：Chat/Talk/Memorize 三种会话清除统一串行协调入口（exists 执行时求值、Short Memory 采集成功后才清除、失败传播但队列继续，日志不记录正文） |
-| **llm-gateway** | LLM 调用入口。`createOpenAICompatibleClient`（chat/completions + SSE + listModels）、`llm-requests.ts`（send + buildTools）、`llm-tool-loop.ts`（多轮 function-call loop，round/call 上限 100、continuation 恢复、全局 tool 注册表 `executeRegisteredLLMTool`）、运行时钩子（请求日志/usage/subagent transcript，SubAgent 转录落独立库 `memory-files/llm-subagent-sessions.sqlite`，失败降级不中断 LLM）、preset 配置（chat/talk 分离；每个 LLM API preset 可独立选择是否沿用进程代理，默认直连）；Pi relay 重建上游请求时只取 Pi 的 `messages`，模型、stream、采样参数及其他请求参数均来自 LLM preset；chat/talk 的延迟 response 会在格式化完成后通过同一 request 上下文提交，保留 usage 记录 |
+| **llm-gateway** | LLM 调用入口。`createOpenAICompatibleClient`（chat/completions + SSE + listModels，assistant response 中括号内容归一化默认关闭）、`llm-requests.ts`（send + buildTools）、`llm-tool-loop.ts`（多轮 function-call loop，round/call 上限 100、continuation 恢复、全局 tool 注册表 `executeRegisteredLLMTool`；模型调用未注册工具时写回同轮失败 tool result 并继续 loop）、运行时钩子（请求日志/usage/subagent transcript，SubAgent 转录落独立库 `memory-files/llm-subagent-sessions.sqlite`，失败降级不中断 LLM）、preset 配置（chat/talk 分离；每个 LLM API preset 可独立选择是否沿用进程代理，默认直连）；OpenAI upstream requester 的同一两次尝试路径覆盖建连与调用方响应消费，SSE 读取阶段因内部 timeout/传输错误失败时会在现有 2 秒间隔后重新发起请求，外部 AbortSignal 取消不重试；Pi relay 重建上游请求时透传 Pi 的 `messages`、`tools`、`tool_choice`，模型、stream、采样参数及其他请求参数仍来自 LLM preset；Pi relay 按 preset 的 `stream` 选择上游 JSON/SSE，非流 JSON 转换为 Pi 可消费的 SSE；chat/talk 的延迟 response 会在格式化完成后通过同一 request 上下文提交，保留 usage 记录 |
 | **agent-profile** | Prompt 层管理。`domain/prompt-layer.ts` 为**唯一公共 layer 解析入口**（normalize、layer→LLMMessage、tool 参数解析）；`build-system-prompt.ts`（PromptProfile + build/append messages + layer 内嵌 tool call 回填 + staticPromptFingerprint）；PromptProfile 的 `consecutiveToolReminderLayer` 与 `silentEndingReminderLayer` 分别配置两类动态 user reminder，均只接受 user-role 消息，在管理后台独立编辑，运行时按条件注入而不属于初始/append prompt；`shell.ts`（每日 persona/relationship/outfit，`createDailyShellStore`；选项级 `enabled` 开关，关闭的选项不参与随机选中） |
 | **talk-session** | WebRTC 语音 talk 会话。SQLite 适配器（`logs/talk/talk.sqlite`，talk_sessions/events/transcript/outputs）、`createTalkRuntime`（open/append/delta/interrupt/claim；`closeSession` 异步，经统一清除协调器，成功后按序：重写 Talk LLM transcript → 标记 LLM session cleared 并清 pointer → 关闭 talk.sqlite 会话 → conversation-hub 投影 → 切 waiting，采集失败时保持打开）、`createTalkRuntimeRuntime`（+ conversation-hub 投影，会话关闭转 inbound 消息） |
 | **conversation-hub** | 多渠道消息统一入口。`createMessageRuntime`（ingestEvent/ingestLifecycle/appendAlbertMessage/sendSystemNotice/processNow/flushAll）内部组装 agentLoopRuntime + heartbeat 全部任务；`canRunHeartbeat` 检查 Main Agent 占用（`isMainAgentBusy`），清除期间到达的消息只入库并标记 pending、不进入 loop，force_wake 先获取 clearing 占用再清除、成功后才唤醒；`sqlite-conversation-store` 为 Core 侧消息历史 |
@@ -81,10 +81,10 @@ src/
 | **prompt-context** | Prompt 模板变量渲染运行时（统一使用 `${{variable}}`，user/时间/dailyShell/memory/calendar/skills/notes_list/outfit 变量树）。未解析变量 warning 后保留原占位符，不再抛错；旧式 `{{variable}}` 作为普通文本。Short Memory 变量 `memory/shortMemory/content`：必填依赖 `shortMemoryStore`，取最新 wake boundary 的 `occurredAtUtc` 前 24 小时至当前的闭区间记录，输出 `<short_memories>` XML（`& < >` 转义，空结果固定空 XML），是否加入 Prompt layer 完全由用户 Prompt 编辑器配置决定 |
 | **world-wanderer** | Google Street View 世界漫步空闲行为（移动 runtime、选路 policy、geo 计算）；选路优先近期未走过的有向 pano 边，当前出口的有向边全部耗尽时每次 idle 最多搜索一次附近可移动 pano，搜索失败则保留旧链接回退，因此兼容死路原路返回与小型 pano 环路脱困 |
 | **bash-sandbox** | Docker 沙箱 bash 执行（`createBashSandboxRuntime` + `createDockerBashExecutor`、命令权限分类）；`readSandboxNotesIndex` 同步读取容器内笔记目录索引（供 prompt 变量动态构建） |
-| **pi-worker** | Pi worker 客户端（授权握手、后台唤起 wake、tool relay、健康轮询） |
+| **pi-worker** | Pi worker 客户端（授权握手、后台唤起 wake、tool relay、健康轮询）；按 invocation 内最后一轮 assistant 终态判定 completed/failed，重试期间保留 running；SubAgent 对外使用持久化 nickname（来自 `runtime/pi-agent-names.txt`，空格替换为 `_`），映射写入 Pi session 根目录，池满时淘汰最早映射，worker 启动时清除 30 天前映射；内部 watcher 仍按真实 sessionId 读取状态；SubAgent 的 result/wait 返回完成 message 或运行/终态状态，messages 保留 access 语义并返回 Pi 原始 message |
 | **approval** | 基于飞书动态卡片的一对一审批服务（含卡片动作回调鉴权） |
 | **skills** | 技能注册表/加载器/占位符/资源路径 |
-| **agent-run-indicator** | Agent run 指示器抽象（begin/setTyping/fail）+ 飞书动态卡片与 tool 执行上报适配器。Tool execution reporter 持有一个与 session 无关的全局内存消息 ID 游标，每次 tool call 直接查询数据库中最新的已发送 assistant 消息或已读 user 消息 ID；未读 user 消息不参与分界。查询 ID 与内存游标不同时新建卡片并更新游标。游标初始为 null 且不持久化，重启后首个 tool call 新建卡片 |
+| **agent-run-indicator** | Agent run 指示器抽象（begin/setTyping/fail）+ 飞书动态卡片与 tool 执行上报适配器。Tool execution reporter 持有一个与 session 无关的全局内存消息 ID 游标，每次 tool call 直接查询数据库中最新的已发送 assistant 消息或已读 user 消息 ID；未读 user 消息不参与分界。查询 ID 与内存游标不同时新建卡片并更新游标。游标初始为 null 且不持久化，重启后首个 tool call 新建卡片。工具执行卡片的创建、分组、更新和 streaming 设置不写系统日志 |
 | **persona / wardrobe** | 纯类型与工具函数（persona 快照；outfit 选择/查找） |
 
 无独立 index.ts 的 context：agent-loop、agent-profile、talk-session、initiative、capabilities（跨 context 直接引用内部路径）。
@@ -109,18 +109,18 @@ src/
 | 工具 | Tool 名 | 职责 |
 |---|---|---|
 | messaging | `Chat` | 查看聊天记录 / 发送消息（text/markdown/image/voice/file）；`today` 比较“睡眠茧时间点前最后 10 条消息”与“最后一条 Short Memory 写入时间前最后 10 条消息”的窗口起点并取较晚者，无睡眠茧时以今日锚点参与比较 |
-| photo | `Selfie` | 自拍（pose 描述，生成前发进行中提示，失败后同一 agent loop 30 秒内阻止重试，超时自动允许；禁止连续两次调用） |
+| photo | `Selfie` | 自拍（pose 描述，生成结果发送图片，失败后同一 agent loop 30 秒内阻止重试，超时自动允许；不再发送拍照中/失败系统通知） |
 | calendar | `calendar` | 日历增删查搜 + 上下文渲染（SQLite CalendarStore） |
 | shell | `Bash` | 沙盒 bash 执行（透传 PiWorker） |
 | file | `Read`/`Write`/`Edit`/`Glob` | 文件读写改查（图片转 llmFollowupAttachments） |
 | location | Panorama | 街景与世界漫游：current 查看当前位置/teleport 传送重置轨迹/navigation 设导航目标 |
 | restart | `restart` | 重启 Alice 服务（systemd） |
-| subagent | `SubAgent` | 持久化 SubAgent 会话（spawn/send/wait/cancel/fork，走 PiWorker） |
+| subagent | `SubAgent` | 持久化 SubAgent 会话（spawn/messages/result/send/status/wait/cancel/fork，走 PiWorker；公开会话标识使用 nickname，messages 保留 access 语义并返回 Pi 原始 message） |
 | skills | `Skill` | 按名称加载技能（XML 输出） |
 | dice | `Dice` | 投骰子 |
-| sleep-cocoon | `sleep_cocoon` | 睡眠茧：in 钻进入睡（随机 ±15 分钟）/ out 取消 |
+| sleep-cocoon | `sleep_cocoon` | 睡眠茧：in 钻进入睡（随机 ±15 分钟）/ out 取消；不再发送就寝/起床系统通知 |
 | bookcase | `Bookcase` | 书橱抽书讲故事 / 还书（assets/tools/bookcase/booksummaries.sqlite） |
-| wardrobe | `Wardrobe` | 查看/切换服装（list/mirror/switch/random，可触发 on-body 生成） |
+| wardrobe | `Wardrobe` | 查看/切换服装（list/mirror/switch/random，可触发 on-body 生成；不再发送更衣系统通知） |
 | finish-and-wait | `Yield` | 等待、清空上下文或结束：clear 清除当前 LLM 对话并在同一 loop 开启新一轮，同时追加仅供 Core/Albert 使用的 `<Alert info="上下文历史已清空" />`；await_chat 固定等待 15 分钟；schedule（10s–15min 定时返回）实现保留但不在 profile 中暴露；连续 schedule 且无 subagent 运行时拒绝（防空转） |
 
 `Yield`、`SubAgent`、`Panorama` 的 tool 输入 schema 使用 `action` 字符串 `enum` 与可选参数；各 action 的实际参数要求仍由工具执行层校验，不使用 `oneOf`。
@@ -160,7 +160,7 @@ first-party skill 位于 `capabilities/skills/{name}/SKILL.md`（frontmatter 含
 - `platform/storage`：`calendar-store`（holiday/birthday/schedule）、`diary-store`（日记 + 睡眠边界）、`token-usage-store`、`sqlite-compat`（better-sqlite3 薄封装）、`admin-asset-utils`（资源路径安全校验）。
 - `platform/scheduler`：`createDailyScheduler` 每日定时调度器。
 - `platform/output-router`：按 `output.target.plugin` 注册/路由 `ChannelSender`。
-- `shared/errors`（describeError）、`shared/admin-input`（管理后台输入校验）、`shared/clock`（CurrentTimeProvider 契约）、`shared/uuid`（createId）。
+- `shared/errors`（describeError、formatErrorNotice）、`shared/admin-input`（管理后台输入校验）、`shared/clock`（CurrentTimeProvider 契约）、`shared/uuid`（createId）。
 
 ## 5. 核心运行时流程
 
@@ -173,11 +173,11 @@ first-party skill 位于 `capabilities/skills/{name}/SKILL.md`（frontmatter 含
 
 ### 5.2 心跳与主动行为（heartbeat）
 
-`agent-heartbeat-runtime.runHeartbeatTasks` 依次处理：idle timer transition、randomized initiated behavior、timed yield（Yield 工具 schedule 到期）、talk session、sleep cocoon wake/goodnight、calendar reminder、pending session 队列。Agent 状态机 `AgentStateController`（idle/waiting/calling/away/sleeping 等）。最近一次 Chat Agent session 请求失败时会保留失败标记；`waiting` 状态切换到期后先重试同一 session 并退出本次切换，成功请求清除标记，LLM 请求结束仍通过既有 settlement 路径重置状态切换倒计时。
+`agent-heartbeat-runtime.runHeartbeatTasks` 在 Main Agent 占用门控后先检查失败 session 重试，再处理既有状态约束、idle timer transition、randomized initiated behavior、timed yield（Yield 工具 schedule 到期）、talk session、sleep cocoon wake/goodnight、calendar reminder、pending session 队列。Agent 状态机 `AgentStateController`（idle/waiting/calling/away/sleeping 等）。最近一次 Chat Agent session 请求失败时会保留失败标记；`waiting` 状态切换到期后先重试同一 session 并退出本次切换，成功请求清除标记，LLM 请求结束仍通过既有 settlement 路径重置状态切换倒计时。
 
 ### 5.3 睡眠记忆归纳（Memorize）
 
-睡眠窗口内对当天消息跑记忆归纳 loop：persistent（长期偏好）→ userPreferences → yesterdaySummary 三个 target，写入 `alice.sqlite` 的 long-term-memory / diary 表；`self_talk` 私有思考工具只记录不落盘。
+睡眠窗口内对当天消息跑记忆归纳 loop：persistent（长期偏好）→ userPreferences → yesterdaySummary 三个 target，写入 `alice.sqlite` 的 long-term-memory / diary 表；失败通知沿用 `formatErrorNotice` 输出具体错误 title/message，不包含 JSON 或 traceback；`self_talk` 私有思考工具只记录不落盘。
 
 ## 6. 数据存储
 
@@ -188,6 +188,7 @@ first-party skill 位于 `capabilities/skills/{name}/SKILL.md`（frontmatter 含
 | talk 语音会话 | `logs/talk/talk.sqlite` |
 | LLM 会话（chat/talk/memorize） | `memory-files/llm-sessions.sqlite`（总表 + agent messages 分表） |
 | SubAgent 会话 | `memory-files/llm-subagent-sessions.sqlite` |
+| Pi session 与 nickname 映射 | `memory-files/pi-sessions/pi-agent-nicknames.json`（Pi worker 的 session 根目录） |
 | LLM 会话 current 指针 | `memory-files/llm-sessions/current.json`（仅 `{sessionId, agentType}`） |
 | 旧 JSONL 会话归档（一次性迁移后） | `memory-files/llm-sessions-jsonl-legacy-*`（运行时不再访问） |
 | 系统日志（保留 7 天） | `logs/system/` |

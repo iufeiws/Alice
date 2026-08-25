@@ -227,6 +227,42 @@ test("LLM tool loop returns tool execution errors to the LLM and continues", asy
   assert.equal(result.stopReason, "completed");
 });
 
+test("LLM tool loop returns an unavailable tool result to the LLM and continues", async () => {
+  let requests = 0;
+  const result = await runLLMToolLoop({
+    initialMessages: [{ role: "user", content: "run it" }],
+    buildRequest({ messages }) {
+      return { agentId: "memorize", messages, toolNames: [], toolVariables: testPromptRuntime() };
+    },
+    async sendRequest(input) {
+      requests += 1;
+      if (input.round === 0) {
+        return {
+          message: {
+            role: "assistant",
+            content: "",
+            toolCalls: [{
+              id: "unknown_1",
+              type: "function",
+              function: { name: "self_tool", arguments: "{}" }
+            }]
+          }
+        };
+      }
+      const toolMessage = input.messages.at(-1);
+      assert.equal(toolMessage?.role, "tool");
+      assert.equal(toolMessage?.toolCallId, "unknown_1");
+      assert.equal(toolMessage?.name, "self_tool");
+      assert.equal(toolMessage?.content, "<error type=\"tool unavailable\">llm_tool_unavailable:self_tool</error>");
+      return { message: { role: "assistant", content: "I will use an available tool." } };
+    },
+    toolRegistryName: "llm-tool-loop-unknown-tool-test"
+  });
+
+  assert.equal(requests, 2);
+  assert.equal(result.stopReason, "completed");
+});
+
 test("LLM tool loop preserves legacy mustache text returned by a tool", async () => {
   registerLLMToolLoopTools("llm-tool-loop-legacy-mustache-test", [{
     id: "test",

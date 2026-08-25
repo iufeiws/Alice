@@ -221,128 +221,121 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
     handlers: LLMStreamHandlers | undefined,
     signal?: AbortSignal
   ): Promise<LLMChatResult> {
-    const fetchAttempt = await requestUpstream({
+    return requestUpstream({
       path,
       init: {
         method: "POST",
         body: JSON.stringify({ ...body, stream: true })
       },
-      signal
-    });
-    const { response } = fetchAttempt;
-    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-    let completed = false;
-    try {
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`LLM request failed: ${response.status} ${response.statusText} ${text}`);
-      }
-      if (!response.body) throw new Error("LLM stream response did not include a body");
+      signal,
+      async consume(response) {
+        let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+        let completed = false;
+        try {
+          if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`LLM request failed: ${response.status} ${response.statusText} ${text}`);
+          }
+          if (!response.body) throw new Error("LLM stream response did not include a body");
 
-      reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let id: string | undefined;
-      let model: string | undefined;
-      let content = "";
-      let reasoningContent = "";
-      let finishReason: string | undefined;
-      let rawUsage: OpenAIUsage | null | undefined;
-      let usage: LLMUsage | undefined;
-      const toolCalls = new Map<number, LLMToolCall>();
-      const contentStripper = shouldSanitizeAssistantResponseContent()
-        ? createParenthesizedContentStripper()
-        : undefined;
-      const processLine = async (line: string) => {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith("data:")) return;
-        const data = trimmed.slice("data:".length).trim();
-        if (!data || data === "[DONE]") return;
-        const chunk = JSON.parse(data) as OpenAIChatCompletionChunk;
-        id = chunk.id ?? id;
-        model = chunk.model ?? model;
-        rawUsage = chunk.usage ?? rawUsage;
-        usage = normalizeUsage(chunk.usage) ?? usage;
-        const choice = chunk.choices?.[0];
-        finishReason = choice?.finish_reason ?? finishReason;
-        const deltaContent = choice?.delta?.content;
-        if (deltaContent) {
-          const sanitizedDelta = contentStripper ? contentStripper.push(deltaContent) : deltaContent;
-          content += sanitizedDelta;
-          if (sanitizedDelta) await handlers?.onContentDelta?.(sanitizedDelta);
-        }
-        const deltaReasoningContent = choice?.delta?.reasoning_content;
-        if (deltaReasoningContent) {
-          reasoningContent += deltaReasoningContent;
-          await handlers?.onReasoningDelta?.(deltaReasoningContent);
-        }
-        for (const rawCall of choice?.delta?.tool_calls ?? []) {
-          const index = typeof rawCall.index === "number" ? rawCall.index : 0;
-          const current = toolCalls.get(index) ?? {
-            id: rawCall.id ?? `tool_${index}`,
-            type: "function" as const,
-            function: {
-              name: "",
-              arguments: ""
+          reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          let id: string | undefined;
+          let model: string | undefined;
+          let content = "";
+          let reasoningContent = "";
+          let finishReason: string | undefined;
+          let rawUsage: OpenAIUsage | null | undefined;
+          let usage: LLMUsage | undefined;
+          const toolCalls = new Map<number, LLMToolCall>();
+          const contentStripper = shouldSanitizeAssistantResponseContent()
+            ? createParenthesizedContentStripper()
+            : undefined;
+          const processLine = async (line: string) => {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data:")) return;
+            const data = trimmed.slice("data:".length).trim();
+            if (!data || data === "[DONE]") return;
+            const chunk = JSON.parse(data) as OpenAIChatCompletionChunk;
+            id = chunk.id ?? id;
+            model = chunk.model ?? model;
+            rawUsage = chunk.usage ?? rawUsage;
+            usage = normalizeUsage(chunk.usage) ?? usage;
+            const choice = chunk.choices?.[0];
+            finishReason = choice?.finish_reason ?? finishReason;
+            const deltaContent = choice?.delta?.content;
+            if (deltaContent) {
+              const sanitizedDelta = contentStripper ? contentStripper.push(deltaContent) : deltaContent;
+              content += sanitizedDelta;
+              if (sanitizedDelta) await handlers?.onContentDelta?.(sanitizedDelta);
+            }
+            const deltaReasoningContent = choice?.delta?.reasoning_content;
+            if (deltaReasoningContent) {
+              reasoningContent += deltaReasoningContent;
+              await handlers?.onReasoningDelta?.(deltaReasoningContent);
+            }
+            for (const rawCall of choice?.delta?.tool_calls ?? []) {
+              const index = typeof rawCall.index === "number" ? rawCall.index : 0;
+              const current = toolCalls.get(index) ?? {
+                id: rawCall.id ?? `tool_${index}`,
+                type: "function" as const,
+                function: {
+                  name: "",
+                  arguments: ""
+                }
+              };
+              if (rawCall.id) current.id = rawCall.id;
+              if (rawCall.function?.name) current.function.name = rawCall.function.name;
+              if (rawCall.function?.arguments) current.function.arguments += rawCall.function.arguments;
+              toolCalls.set(index, current);
+              await handlers?.onToolCallDelta?.({
+                index,
+                id: rawCall.id,
+                type: rawCall.type === "function" ? "function" : undefined,
+                function: {
+                  name: rawCall.function?.name,
+                  arguments: rawCall.function?.arguments
+                }
+              });
             }
           };
-          if (rawCall.id) current.id = rawCall.id;
-          if (rawCall.function?.name) current.function.name = rawCall.function.name;
-          if (rawCall.function?.arguments) current.function.arguments += rawCall.function.arguments;
-          toolCalls.set(index, current);
-          await handlers?.onToolCallDelta?.({
-            index,
-            id: rawCall.id,
-            type: rawCall.type === "function" ? "function" : undefined,
-            function: {
-              name: rawCall.function?.name,
-              arguments: rawCall.function?.arguments
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split(/\r?\n/);
+            buffer = lines.pop() ?? "";
+            for (const line of lines) {
+              await processLine(line);
             }
-          });
-        }
-      };
+          }
+          buffer += decoder.decode();
+          if (buffer.trim()) await processLine(buffer);
+          completed = true;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split(/\r?\n/);
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          await processLine(line);
+          return {
+            id,
+            model,
+            message: sanitizeOpenAIResponseMessage({
+              role: "assistant",
+              content,
+              reasoningContent: reasoningContent || undefined,
+              toolCalls: [...toolCalls.entries()]
+                .sort(([left], [right]) => left - right)
+                .map(([, call]) => call)
+                .filter((call) => call.function.name)
+            }),
+            finishReason,
+            usage,
+            raw: rawUsage === undefined ? undefined : { usage: rawUsage }
+          };
+        } finally {
+          if (!completed) await reader?.cancel().catch(() => undefined);
         }
       }
-      buffer += decoder.decode();
-      if (buffer.trim()) await processLine(buffer);
-      completed = true;
-
-      return {
-        id,
-        model,
-        message: sanitizeOpenAIResponseMessage({
-          role: "assistant",
-          content,
-          reasoningContent: reasoningContent || undefined,
-          toolCalls: [...toolCalls.entries()]
-            .sort(([left], [right]) => left - right)
-            .map(([, call]) => call)
-            .filter((call) => call.function.name)
-        }),
-        finishReason,
-        usage,
-        raw: rawUsage === undefined ? undefined : { usage: rawUsage }
-      };
-    } finally {
-      fetchAttempt.cleanup();
-      if (!completed) {
-        try {
-          await reader?.cancel();
-        } catch {
-          // The stream may already be aborted or locked by the runtime.
-        }
-        fetchAttempt.abort();
-      }
-    }
+    });
   }
 
   return {

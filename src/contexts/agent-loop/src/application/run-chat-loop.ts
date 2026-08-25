@@ -236,7 +236,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
     },
     transformToolInput: (toolName, toolInput) => fixedPrefixToolInput(toolName, toolInput, session),
     async afterToolResult({ call, result, toolInput, toolResult, toolMessage, toolDefinition }): Promise<AgentFunctionCallToolExecution> {
-      noteMessageDeliveryToolResult(messageDeliveryState, toolDefinition.sendsMessage === true, toolResult.ok);
+      noteMessageDeliveryToolResult(messageDeliveryState, toolDefinition?.sendsMessage === true, toolResult.ok);
       if (shouldDeferYieldForMessageDelivery(call.function.name, toolInput, toolResult)
         && queueMessageDeliveryReminder(input, messageDeliveryState, "silentEnding")) {
         input.setLastCompletedToolName(call.function.name);

@@ -138,7 +138,8 @@ export type LLMToolLoopInput = {
     toolInput: Record<string, unknown>;
     toolResult: ToolResult;
     toolMessage: NonNullable<LLMToolLoopExecution["message"]>;
-    toolDefinition: ToolDefinition;
+    /** 未注册的模型工具调用没有本地定义，但仍会收到同轮失败结果。 */
+    toolDefinition?: ToolDefinition;
   }): Promise<LLMToolLoopExecution | undefined> | LLMToolLoopExecution | undefined;
   afterToolBatch?(input: {
     round: number;
@@ -555,7 +556,7 @@ async function executeTool(
     recoveredToolResult?: ToolResult;
   }
 ): Promise<LLMToolLoopExecution> {
-  const tool = toolForCall(input.toolRegistryName ?? defaultToolRegistryName, call.function.name);
+  const tool = findToolForCall(input.toolRegistryName ?? defaultToolRegistryName, call.function.name);
   const parsedInput = parseToolInput(call.function.arguments);
   const toolInput = input.transformToolInput?.(call.function.name, parsedInput) ?? parsedInput;
   let toolResult: ToolResult;
@@ -565,7 +566,13 @@ async function executeTool(
     processRestartPrepared = false;
     await input.onProcessRestartCancelled?.();
   };
-  if (context.recoveredToolResult) {
+  if (!tool) {
+    toolResult = {
+      callId: call.id,
+      ok: false,
+      output: `<error type="tool unavailable">${escapeXmlText(`llm_tool_unavailable:${call.function.name}`)}</error>`
+    };
+  } else if (context.recoveredToolResult) {
     if (context.recoveredToolResult.callId !== call.id) throw new Error("llm_tool_loop_continuation_call_mismatch");
     toolResult = context.recoveredToolResult;
   } else try {
@@ -605,7 +612,7 @@ async function executeTool(
     role: "tool" as const,
     toolCallId: call.id,
     name: call.function.name,
-    content: formatToolMessageContent(toolResult, request.toolVariables, tool.definition.passRenderText === true)
+    content: formatToolMessageContent(toolResult, request.toolVariables, tool?.definition.passRenderText === true)
   };
   return await input.afterToolResult?.({
     ...context,
@@ -613,7 +620,7 @@ async function executeTool(
     toolInput,
     toolResult,
     toolMessage,
-    toolDefinition: tool.definition
+    toolDefinition: tool?.definition
   }) ?? {
     message: toolMessage,
     control: toolControlFromResult(toolResult)
@@ -635,9 +642,13 @@ function escapeXmlText(value: string): string {
 }
 
 function toolForCall(registryName: string, toolName: string): RegisteredTool {
-  const tool = toolRegistries.get(registryName)?.get(toolName);
+  const tool = findToolForCall(registryName, toolName);
   if (!tool) throw new Error(`llm_tool_unavailable:${toolName}`);
   return tool;
+}
+
+function findToolForCall(registryName: string, toolName: string): RegisteredTool | undefined {
+  return toolRegistries.get(registryName)?.get(toolName);
 }
 
 function buildToolPluginMap(plugins: readonly ToolPlugin[]): Map<string, RegisteredTool> {

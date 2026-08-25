@@ -249,6 +249,8 @@ async function handleRelayRequest(
     stream: preset.stream,
     temperature: preset.temperature,
     messages: parsed.messages,
+    ...(Object.prototype.hasOwnProperty.call(parsed, "tools") ? { tools: parsed.tools } : {}),
+    ...(Object.prototype.hasOwnProperty.call(parsed, "tool_choice") ? { tool_choice: parsed.tool_choice } : {}),
     ...(preset.maxTokens === undefined ? {} : { max_tokens: preset.maxTokens })
   };
   delete upstreamBody.authorization;
@@ -300,7 +302,15 @@ async function forwardResponse(
   if (!isSse(response.headers.get("content-type"))) {
     try {
       const bytes = new Uint8Array(await response.arrayBuffer());
-      if (response.ok) recordUsageFromJson(bytes, preset, input);
+      if (response.ok) {
+        recordUsageFromJson(bytes, preset, input);
+        if (preset.stream === false) {
+          const sseHeaders = new Headers(responseHeaders);
+          sseHeaders.set("content-type", "text/event-stream");
+          sseHeaders.set("cache-control", "no-cache");
+          return new Response(nonStreamingJsonToSse(bytes, input.time), { status: response.status, headers: sseHeaders });
+        }
+      }
       return new Response(bytes, { status: response.status, headers: responseHeaders });
     } finally {
       cleanup();
@@ -394,6 +404,9 @@ function recordUsage(raw: Record<string, unknown>, preset: PiPresetSnapshot, inp
   const usage = raw.usage;
   if (!usage || typeof usage !== "object" || Array.isArray(usage)) return;
   const value = usage as Record<string, unknown>;
+  const firstChoice = Array.isArray(raw.choices) && raw.choices[0] && typeof raw.choices[0] === "object"
+    ? raw.choices[0] as Record<string, unknown>
+    : undefined;
   const time = input.time.now();
   input.recordTokenUsageEvent({
     createdAt: time.iso,
@@ -403,12 +416,65 @@ function recordUsage(raw: Record<string, unknown>, preset: PiPresetSnapshot, inp
     result: {
       id: typeof raw.id === "string" ? raw.id : undefined,
       model: typeof raw.model === "string" ? raw.model : preset.model,
-      finishReason: typeof raw.finish_reason === "string" ? raw.finish_reason : undefined,
+      finishReason: typeof raw.finish_reason === "string"
+        ? raw.finish_reason
+        : typeof firstChoice?.finish_reason === "string" ? firstChoice.finish_reason : undefined,
       message: { role: "assistant", content: "" },
       usage: normalizeUsage(value),
       raw
     }
   });
+}
+
+function nonStreamingJsonToSse(bytes: Uint8Array, time: CurrentTimeProvider): string {
+  const raw = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("pi_relay_non_stream_response_invalid");
+  const rawChoice = Array.isArray(raw.choices) ? raw.choices[0] : undefined;
+  if (!rawChoice || typeof rawChoice !== "object" || Array.isArray(rawChoice)) throw new Error("pi_relay_non_stream_choice_missing");
+  const choice = rawChoice as Record<string, unknown>;
+  const rawMessage = choice.message;
+  if (!rawMessage || typeof rawMessage !== "object" || Array.isArray(rawMessage)) throw new Error("pi_relay_non_stream_message_missing");
+  const message = rawMessage as Record<string, unknown>;
+  const finishReason = typeof choice.finish_reason === "string" ? choice.finish_reason : undefined;
+  if (!finishReason) throw new Error("pi_relay_non_stream_finish_reason_missing");
+  const delta: Record<string, unknown> = {
+    role: typeof message.role === "string" ? message.role : "assistant"
+  };
+  if (typeof message.content === "string") delta.content = message.content;
+  for (const key of ["reasoning_content", "reasoning", "reasoning_text"]) {
+    if (typeof message[key] === "string") delta[key] = message[key];
+  }
+  if (Array.isArray(message.tool_calls)) {
+    delta.tool_calls = message.tool_calls.map((rawToolCall, index) => {
+      if (!rawToolCall || typeof rawToolCall !== "object" || Array.isArray(rawToolCall)) throw new Error("pi_relay_non_stream_tool_call_invalid");
+      const toolCall = rawToolCall as Record<string, unknown>;
+      const rawFunction = toolCall.function;
+      if (!rawFunction || typeof rawFunction !== "object" || Array.isArray(rawFunction)) throw new Error("pi_relay_non_stream_tool_function_missing");
+      const toolFunction = rawFunction as Record<string, unknown>;
+      return {
+        index,
+        ...(typeof toolCall.id === "string" ? { id: toolCall.id } : {}),
+        type: typeof toolCall.type === "string" ? toolCall.type : "function",
+        function: {
+          ...(typeof toolFunction.name === "string" ? { name: toolFunction.name } : {}),
+          arguments: typeof toolFunction.arguments === "string" ? toolFunction.arguments : JSON.stringify(toolFunction.arguments ?? {})
+        }
+      };
+    });
+  }
+  const chunk = {
+    id: typeof raw.id === "string" ? raw.id : undefined,
+    object: "chat.completion.chunk",
+    created: typeof raw.created === "number" ? raw.created : Math.floor(time.now().date.getTime() / 1000),
+    model: typeof raw.model === "string" ? raw.model : undefined,
+    choices: [{
+      index: typeof choice.index === "number" ? choice.index : 0,
+      delta,
+      finish_reason: finishReason
+    }],
+    ...(raw.usage && typeof raw.usage === "object" && !Array.isArray(raw.usage) ? { usage: raw.usage } : {})
+  };
+  return `data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`;
 }
 
 function normalizeUsage(value: Record<string, unknown>) {

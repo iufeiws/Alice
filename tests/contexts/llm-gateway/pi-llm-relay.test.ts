@@ -20,7 +20,7 @@ const preset: PiPresetSnapshot = {
   extraParams: {}
 };
 
-test("relay ignores Pi request parameters except messages", async () => {
+test("relay forwards Pi tools while keeping preset-owned request parameters", async () => {
   const requests: RequestInit[] = [];
   const usage: any[] = [];
   const relay = createPiLLMRelay({
@@ -30,7 +30,14 @@ test("relay ignores Pi request parameters except messages", async () => {
       assert.equal(url, "https://upstream.example/v1/chat/completions");
       requests.push(init!);
       assert.equal(new Headers(init!.headers).get("authorization"), "Bearer upstream-secret");
-      assert.deepEqual(JSON.parse(String(init!.body)), { model: "model-a", stream: true, temperature: 0.2, messages: [{ role: "user", content: "hi" }] });
+      assert.deepEqual(JSON.parse(String(init!.body)), {
+        model: "model-a",
+        stream: true,
+        temperature: 0.2,
+        messages: [{ role: "user", content: "hi" }],
+        tools: [{ type: "function", function: { name: "read", parameters: { type: "object" } } }],
+        tool_choice: "auto"
+      });
       return new Response(JSON.stringify({ id: "r1", model: "model-a", choices: [], usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 } }), { status: 200, headers: { "content-type": "application/json" } });
     }
   });
@@ -41,14 +48,15 @@ test("relay ignores Pi request parameters except messages", async () => {
     body: JSON.stringify({
       model: "pi-selected-model",
       messages: [{ role: "user", content: "hi" }],
+      tools: [{ type: "function", function: { name: "read", parameters: { type: "object" } } }],
+      tool_choice: "auto",
       authorization: "bad",
       metadata: { session_id: "pi-selected-session" },
       stream: false,
       temperature: 1.9,
       max_tokens: 1,
       reasoning_effort: "medium",
-      thinking: { type: "disabled" },
-      tools: [{ type: "function", function: { name: "not-forwarded" } }]
+      thinking: { type: "disabled" }
     })
   }));
   assert.equal(response.status, 200);
@@ -86,7 +94,7 @@ test("relay applies the immutable preset sampling values", async () => {
     body: JSON.stringify({ model: "model-a", stream: false, temperature: 0.1, top_p: 0.1, reasoning_effort: "medium", messages: [], tools: [] })
   }));
   assert.equal(response.status, 200);
-  assert.deepEqual(body, { model: "model-a", top_p: 0.8, stream: true, temperature: 0.7, messages: [] });
+  assert.deepEqual(body, { model: "model-a", top_p: 0.8, stream: true, temperature: 0.7, messages: [], tools: [] });
 });
 
 test("relay omits upstream authorization when the project preset has no api key", async () => {
@@ -123,6 +131,46 @@ test("relay preserves SSE and records only the usage-bearing chunk", async () =>
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(usage.length, 1);
   assert.equal(usage[0].result.usage.totalTokens, 11);
+});
+
+test("relay converts a non-stream preset JSON response into SSE for Pi", async () => {
+  const usage: any[] = [];
+  let upstreamBody: Record<string, unknown> | undefined;
+  const relay = createPiLLMRelay({
+    time,
+    recordTokenUsageEvent: (event) => usage.push(event),
+    fetchImpl: async (_url, init) => {
+      upstreamBody = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({
+        id: "r-json",
+        model: "model-a",
+        choices: [{
+          index: 0,
+          message: { role: "assistant", content: "json answer" },
+          finish_reason: "stop"
+        }],
+        usage: { prompt_tokens: 5, completion_tokens: 6, total_tokens: 11 }
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+  });
+  relay.createCapability({ sandboxId: "sandbox-a", token: "token-a", preset: { ...preset, stream: false } });
+  const response = await relay.handle(new Request("http://relay/v1/chat/completions", {
+    method: "POST",
+    headers: { authorization: "Bearer token-a", accept: "text/event-stream" },
+    body: JSON.stringify({ model: "model-a", messages: [], stream: true })
+  }));
+
+  const body = await response.text();
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "text/event-stream");
+  assert.equal(upstreamBody?.stream, false);
+  assert.match(body, /data: \{"id":"r-json"/);
+  assert.match(body, /"content":"json answer"/);
+  assert.match(body, /"finish_reason":"stop"/);
+  assert.match(body, /data: \[DONE\]/);
+  assert.equal(usage.length, 1);
+  assert.equal(usage[0].result.usage.totalTokens, 11);
+  assert.equal(usage[0].result.finishReason, "stop");
 });
 
 test("relay enforces maxConcurrency before establishing upstream requests", async () => {

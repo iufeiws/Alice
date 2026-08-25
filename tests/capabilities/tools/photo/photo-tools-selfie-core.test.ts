@@ -505,3 +505,58 @@ test("selfie_sameLoopFailure_blocksRetryUntilNextRun", async () => {
     fs.rmSync(referenceRoot, { recursive: true, force: true });
   }
 });
+
+test("selfie_sameLoopFailure_allowsRetryAfterThirtySeconds", async () => {
+  const outputRoot = makeAssetTempDir("selfie-round-failure-timeout");
+  const referenceRoot = makeTempDir("selfie-ref-round-failure-timeout");
+  const store = createTestStore("selfie-round-failure-timeout-db");
+  const initialTimeMs = Date.parse("2026-05-26T12:00:00.000Z");
+  let nowMs = initialTimeMs;
+  let executorCalls = 0;
+  writeReferenceFiles(referenceRoot);
+
+  try {
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
+      store,
+      time: createCurrentTimeProvider("UTC", () => new Date(nowMs)),
+      selfieReferenceDir: referenceRoot,
+      selfieOutputDir: outputRoot,
+      selfieAssetRoot: assetRootFromOutputDir(outputRoot),
+      selfieExecutor: async () => {
+        executorCalls += 1;
+        throw new Error("image api failed");
+      },
+      outputRouter: { async send() {} },
+      getSelfieContext: selfieContext,
+      getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+    });
+
+    const first = await tools.execute({
+      id: "call_selfie_timeout_1",
+      toolName: "Selfie",
+      input: { pose: "失败自拍" }
+    }, { llmSessionId: 123, agentLoopRunSeq: 4 });
+
+    nowMs = initialTimeMs + 29_999;
+    const beforeCooldown = await tools.execute({
+      id: "call_selfie_timeout_2",
+      toolName: "Selfie",
+      input: { pose: "冷却期内重试" }
+    }, { llmSessionId: 123, agentLoopRunSeq: 4 });
+
+    nowMs = initialTimeMs + 30_000;
+    const afterCooldown = await tools.execute({
+      id: "call_selfie_timeout_3",
+      toolName: "Selfie",
+      input: { pose: "冷却结束重试" }
+    }, { llmSessionId: 123, agentLoopRunSeq: 4 });
+
+    assert.equal(first.ok, false);
+    assert.equal(beforeCooldown.error, "selfie is blocked in this agent loop run after a previous failure");
+    assert.equal(afterCooldown.error, "image api failed");
+    assert.equal(executorCalls, 2);
+  } finally {
+    fs.rmSync(outputRoot, { recursive: true, force: true });
+    fs.rmSync(referenceRoot, { recursive: true, force: true });
+  }
+});

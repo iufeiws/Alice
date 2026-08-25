@@ -109,7 +109,7 @@ src/
 | 工具 | Tool 名 | 职责 |
 |---|---|---|
 | messaging | `Chat` | 查看聊天记录 / 发送消息（text/markdown/image/voice/file）；`today` 比较“睡眠茧时间点前最后 10 条消息”与“最后一条 Short Memory 写入时间前最后 10 条消息”的窗口起点并取较晚者，无睡眠茧时以今日锚点参与比较 |
-| photo | `Selfie` | 自拍（pose 描述，生成前发进行中提示，禁止连续两次调用） |
+| photo | `Selfie` | 自拍（pose 描述，生成前发进行中提示，失败后同一 agent loop 30 秒内阻止重试，超时自动允许；禁止连续两次调用） |
 | calendar | `calendar` | 日历增删查搜 + 上下文渲染（SQLite CalendarStore） |
 | shell | `Bash` | 沙盒 bash 执行（透传 PiWorker） |
 | file | `Read`/`Write`/`Edit`/`Glob` | 文件读写改查（图片转 llmFollowupAttachments） |

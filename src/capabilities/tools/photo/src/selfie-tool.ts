@@ -55,14 +55,17 @@ export type PhotoToolsDeps = Partial<PhotoPluginConfig> & PhotoSendDeps & {
 const selfiePromptFileName = "selfie-prompt.txt";
 const characterReferenceFileName = "alice-character-reference.jpg";
 const libraryReferenceFileName = "magic-library-reference.jpg";
+const selfieFailureCooldownMs = 30_000;
 
 export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProvider, proxyUrl?: string): (call: ToolCall, executionContext?: ToolExecutionContext) => Promise<ToolResult> {
-  let failedSelfieMarker: number | undefined;
+  let failedSelfie: { marker: number; failedAtMs: number } | undefined;
   return selfie;
 
   async function selfie(call: ToolCall, executionContext?: ToolExecutionContext): Promise<ToolResult> {
     const marker = selfieMarker(executionContext);
-    if (marker !== undefined && failedSelfieMarker === marker) {
+    if (marker !== undefined
+      && failedSelfie?.marker === marker
+      && time.now().epochMs - failedSelfie.failedAtMs < selfieFailureCooldownMs) {
       return toolError(call, photoToolText.previousFailureBlocked);
     }
 
@@ -188,7 +191,7 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
         codexResult?.events ? `generator events: ${excerpt(codexResult.events, 4000)}` : ""
       ].filter(Boolean).join("\n");
       deps.appendLog?.("warn", `selfie generation failed: ${reason}${tempDir ? ` files=${listDirForLog(tempDir)}` : ""}`);
-      if (marker !== undefined) failedSelfieMarker = marker;
+      if (marker !== undefined) failedSelfie = { marker, failedAtMs: time.now().epochMs };
       await sendSelfieFailureNotice(deps, time, target);
       return toolError(call, reason);
     } finally {

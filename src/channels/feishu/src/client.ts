@@ -392,7 +392,6 @@ export function createFeishuClient(config: FeishuConfig, accountId: string, deps
         }
       }, time);
       if (!message.messageId) throw new Error("Feishu tool execution card message create did not return message_id");
-      deps.log?.("info", `[${tag}] created tool execution card ${cardId} for ${input.receiveIdType}:${input.receiveId}`);
       return {
         messageId: message.messageId,
         cardId
@@ -411,7 +410,6 @@ export function createFeishuClient(config: FeishuConfig, accountId: string, deps
           uuid: `tool_execution_group_${input.cardId}_${input.sequence}`
         }
       });
-      deps.log?.("info", `[${tag}] grouped ${input.panels.length} tool execution panels ${input.cardId} sequence=${input.sequence}`);
     },
     async updateToolExecutionCard(input) {
       assertStarted(client);
@@ -447,7 +445,6 @@ export function createFeishuClient(config: FeishuConfig, accountId: string, deps
           }
         });
       }
-      deps.log?.("info", `[${tag}] updated tool execution card ${input.cardId} block=${input.block} sequence=${input.sequence}`);
     },
     async setToolExecutionCardStreaming(input) {
       assertStarted(client);
@@ -461,7 +458,6 @@ export function createFeishuClient(config: FeishuConfig, accountId: string, deps
           uuid: `tool_execution_streaming_${input.cardId}_${input.sequence}`
         }
       });
-      deps.log?.("info", `[${tag}] set tool execution card ${input.cardId} streaming=${input.enabled} sequence=${input.sequence}`);
     }
   };
 }

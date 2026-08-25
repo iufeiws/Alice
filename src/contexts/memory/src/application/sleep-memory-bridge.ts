@@ -13,7 +13,7 @@ export function createSleepMemoryBridgeRuntime(input: {
   resolveMemoryPreset(): any;
   time: any;
   sessionRoot(): string;
-  sendFailureNotice(): Promise<void>;
+  sendFailureNotice(error: unknown): Promise<void>;
   appendLog(level: "info" | "warn" | "error", message: string): void;
 }) {
   return createSleepMemoryInductionRuntime({

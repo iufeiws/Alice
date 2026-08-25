@@ -14,7 +14,7 @@ export function createApiSupportRuntime(input: {
   buildPromptPreviewMessages(profile: any, event: any, includeFakeCheckChat?: boolean): Promise<any>;
   visibleToolSpecs(profile: any): any;
   getLLMRequestSender(): any;
-  sendMemoryFailureNotice(): Promise<void>;
+  sendMemoryFailureNotice(error: unknown): Promise<void>;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   sessionClearCoordinator: any;
   /** Main Agent clearing 占用获取口(§7.3): 转发给 Memorize memory console clearSession。 */

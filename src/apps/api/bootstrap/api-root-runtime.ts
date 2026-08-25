@@ -152,7 +152,7 @@ export function createApiRootRuntime() {
       });
       return streetView.filePath;
     },
-    sendMemoryFailureNotice: () => apiControlRuntime.outboundNoticeRuntime.sendMemoryFailureNoticeToFeishu(),
+    sendMemoryFailureNotice: (error) => apiControlRuntime.outboundNoticeRuntime.sendMemoryFailureNoticeToFeishu(error),
     getApprovalService: () => apiServerStackRuntime.apiCommunicationRuntime.approvalService,
     appendLog: foundation.appendLog,
     resolvePromptApiPreset: foundation.resolvePromptApiPreset,

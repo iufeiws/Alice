@@ -16,7 +16,7 @@ export function createApiToolingRuntime(input: {
   getDefaultTarget(): any;
   getGoogleStreetView(): any;
   getWorldWandererStreetViewReferenceImage?(): Promise<string | undefined> | string | undefined;
-  sendMemoryFailureNotice(): Promise<void>;
+  sendMemoryFailureNotice(error: unknown): Promise<void>;
   appendLog(level: "info" | "warn" | "error", message: string): void;
   appendMessageLog(input: any): unknown;
   sessionClearCoordinator: any;

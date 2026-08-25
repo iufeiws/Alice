@@ -31,7 +31,7 @@ export function createSleepMemoryInductionRuntime(input: {
   resolveMemoryPreset(): LLMApiPreset | undefined;
   time: CurrentTimeProvider;
   sessionRoot(): string;
-  sendFailureNotice(): Promise<void>;
+  sendFailureNotice(error: unknown): Promise<void>;
   appendLog: AppendLog;
 }) {
   let queue: Promise<void> = Promise.resolve();
@@ -86,10 +86,13 @@ export function createSleepMemoryInductionRuntime(input: {
         sessionRoot: input.sessionRoot(),
         log: input.appendLog
       });
-      if (!ok) await input.sendFailureNotice();
+      if (!ok) {
+        const failure = input.stateStore.read().lastFailure ?? "memory_induction_failed";
+        await input.sendFailureNotice(new Error(failure));
+      }
     } catch (error) {
       input.appendLog("error", `sleep Memorize failed: ${error instanceof Error ? error.message : String(error)}`);
-      await input.sendFailureNotice();
+      await input.sendFailureNotice(error);
     } finally {
       active = false;
     }

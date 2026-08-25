@@ -1,4 +1,5 @@
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
+import { formatErrorNotice } from "../../../../shared/errors/src/index.js";
 import type { DefaultMessagingTarget } from "../../../../apps/api/bootstrap/default-target-runtime.js";
 import { sendSystemNoticeFromRuntime } from "./message-runtime.js";
 
@@ -62,11 +63,10 @@ export function createOutboundNoticeRuntime(input: {
     });
   }
 
-  async function sendMemoryFailureNoticeToFeishu(): Promise<void> {
+  async function sendMemoryFailureNoticeToFeishu(error: unknown): Promise<void> {
     const target = input.getDefaultFeishuTarget();
     const store = input.getStore();
     if (!target || !store) return;
-    const text = "记忆整理大失败";
     await sendSystemNoticeFromRuntime({
       time: input.time,
       store,
@@ -74,7 +74,7 @@ export function createOutboundNoticeRuntime(input: {
       appendMessageLog: input.appendMessageLog
     }, {
       target,
-      text
+      text: formatErrorNotice(error)
     });
   }
 }

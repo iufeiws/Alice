@@ -33,6 +33,7 @@ test("prompt variable tree reads through runtime", () => {
   assert.equal(typeof tree.user, "string");
   assert.equal(typeof (tree.dailyShell as any).persona.content, "string");
   assert.equal(typeof (tree.memory as any).userPreferences.content, "string");
+  assert.deepEqual(tree.selfie, { pose: "", hair: "", composition: "", expression: "" });
 });
 
 test("prompt runtime renders the new syntax and preserves unresolved variables with a warning", () => {

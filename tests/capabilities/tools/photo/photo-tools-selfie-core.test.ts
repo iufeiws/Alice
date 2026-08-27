@@ -2,6 +2,7 @@ import { test } from "node:test";
 import { testPromptRuntime } from "../../../helpers/prompt-runtime.js";
 import assert from "node:assert/strict";
 import { createPhotoTools, type SelfieExecutorInput } from "../../../../src/capabilities/tools/photo/src/index.js";
+import { selfieTool } from "../../../../src/capabilities/tools/photo/profile.js";
 import { createCurrentTimeProvider } from "../../../../src/platform/time/src/index.js";
 import { createToolOutputTargetResolver } from "../../../../src/contexts/capabilities/src/tool-output-target.js";
 import type { AgentOutput } from "../../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
@@ -38,7 +39,17 @@ test("photo_promptAssets_useCurrentVariableSyntax", () => {
   }
 });
 
-function makeSuccessfulSelfieFixture(name: string, generatedImageCount = 1) {
+function makeSuccessfulSelfieFixture(
+  name: string,
+  generatedImageCount = 1,
+  promptDefaults: Partial<{
+    selfieDefaultPose: string;
+    selfieDefaultExpression: string;
+    selfieDefaultHair: string;
+    selfieDefaultComposition: string;
+  }> = {},
+  returnImageToLLM = false
+) {
   const outputRoot = makeAssetTempDir(name);
   const referenceRoot = makeTempDir(`${name}-ref`);
   const outfitImage = path.join(makeTempDir(`${name}-outfit`), "dress.jpg");
@@ -47,11 +58,14 @@ function makeSuccessfulSelfieFixture(name: string, generatedImageCount = 1) {
   const executorInputs: SelfieExecutorInput[] = [];
   const sandboxMounts: Array<{ hostPath: string; containerPath: string }> = [];
   let nextMessageId = 1;
+  const previousReturnImageToLLM = selfieTool.returnImageToLLM;
+  selfieTool.returnImageToLLM = returnImageToLLM;
   writeReferenceFiles(referenceRoot);
   fs.writeFileSync(outfitImage, "dress-image");
   const tools = createPhotoTools({ promptContextRuntime: selfiePromptRuntime(),
     store,
     time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T12:00:00.000Z")),
+    ...promptDefaults,
     selfieReferenceDir: referenceRoot,
     selfieOutputDir: outputRoot,
     selfieAssetRoot: assetRootFromOutputDir(outputRoot),
@@ -85,6 +99,7 @@ function makeSuccessfulSelfieFixture(name: string, generatedImageCount = 1) {
     referenceRoot,
     outfitImage,
     cleanup() {
+      selfieTool.returnImageToLLM = previousReturnImageToLLM;
       fs.rmSync(outputRoot, { recursive: true, force: true });
       fs.rmSync(referenceRoot, { recursive: true, force: true });
       fs.rmSync(path.dirname(outfitImage), { recursive: true, force: true });
@@ -114,7 +129,49 @@ test("selfie_validContext_passesPromptAndReferencesToExecutor", async () => {
   }
 });
 
-test("selfie_validContext_sendsImageAndFollowupAttachment", async () => {
+test("selfie_optionalPromptInputs_useDefaultsAndAllowOverrides", async () => {
+  const fixture = makeSuccessfulSelfieFixture("selfie-optional-prompt-inputs", 1, {
+    selfieDefaultPose: "默认姿势",
+    selfieDefaultExpression: "默认表情",
+    selfieDefaultHair: "默认发型",
+    selfieDefaultComposition: "默认构图"
+  });
+  try {
+    const defaultResult = await fixture.tools.execute({
+      id: "call_selfie_defaults",
+      toolName: "Selfie",
+      input: {}
+    });
+
+    assert.equal(defaultResult.ok, true);
+    assert.match(fixture.executorInputs[0].prompt, /角色动作:\n默认姿势/);
+    assert.match(fixture.executorInputs[0].prompt, /角色表情:\n表情: 默认表情\n/);
+    assert.match(fixture.executorInputs[0].prompt, /角色发型:\n发型: 默认发型\n/);
+    assert.match(fixture.executorInputs[0].prompt, /构图:\n默认构图/);
+
+    const overrideResult = await fixture.tools.execute({
+      id: "call_selfie_overrides",
+      toolName: "Selfie",
+      input: {
+        pose: "自定义姿势",
+        expression: "自定义表情",
+        hair: "自定义发型",
+        composition: "自定义构图"
+      }
+    });
+
+    assert.equal(overrideResult.ok, true);
+    assert.match(fixture.executorInputs[1].prompt, /角色动作:\n自定义姿势/);
+    assert.match(fixture.executorInputs[1].prompt, /角色表情:\n表情: 自定义表情\n/);
+    assert.match(fixture.executorInputs[1].prompt, /角色发型:\n发型: 自定义发型\n/);
+    assert.match(fixture.executorInputs[1].prompt, /构图:\n自定义构图/);
+    assert.doesNotMatch(fixture.executorInputs[1].prompt, /默认表情|默认发型|默认构图/);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("selfie_defaultProfile_sendsImageWithoutFollowupAttachment", async () => {
   const fixture = makeSuccessfulSelfieFixture("selfie-success-send");
   try {
     const result = await fixture.tools.execute({
@@ -125,6 +182,22 @@ test("selfie_validContext_sendsImageAndFollowupAttachment", async () => {
 
     const imageContent = fixture.sent.at(-1)?.content;
     assert.equal(imageContent?.kind, "image");
+    assert.equal(result.llmFollowupAttachments, undefined);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("selfie_profileEnabled_returnsFollowupAttachmentForMultimodalModel", async () => {
+  const fixture = makeSuccessfulSelfieFixture("selfie-success-followup", 1, {}, true);
+  try {
+    const result = await fixture.tools.execute({
+      id: "call_selfie_followup",
+      toolName: "Selfie",
+      input: { pose: "踮脚靠近镜头，比一个很小的剪刀手" }
+    }, { llmCapabilities: { supportsImage: true } });
+
+    assert.equal(result.ok, true);
     assert.equal(result.llmFollowupAttachments?.[0]?.kind, "image");
     assert.equal(result.llmFollowupAttachments?.[0]?.mime, "image/jpeg");
   } finally {
@@ -133,7 +206,7 @@ test("selfie_validContext_sendsImageAndFollowupAttachment", async () => {
 });
 
 test("selfie_validContext_sendsAllGeneratedImagesAndFollowupAttachments", async () => {
-  const fixture = makeSuccessfulSelfieFixture("selfie-success-multiple", 3);
+  const fixture = makeSuccessfulSelfieFixture("selfie-success-multiple", 3, {}, true);
   try {
     const result = await fixture.tools.execute({
       id: "call_selfie_multiple",
@@ -254,6 +327,8 @@ test("selfie_nonJpegOutput_convertsAttachmentToJpeg", async () => {
   const referenceRoot = makeTempDir("selfie-ref-png-conversion");
   const store = createTestStore("selfie-png-conversion-db");
   const sent: AgentOutput[] = [];
+  const previousReturnImageToLLM = selfieTool.returnImageToLLM;
+  selfieTool.returnImageToLLM = true;
   writeReferenceFiles(referenceRoot);
 
   try {
@@ -287,6 +362,7 @@ test("selfie_nonJpegOutput_convertsAttachmentToJpeg", async () => {
     const finalBytes = fs.readFileSync(result.llmFollowupAttachments?.[0]?.path ?? "");
     assert.deepEqual([...finalBytes.subarray(0, 3)], [0xff, 0xd8, 0xff]);
   } finally {
+    selfieTool.returnImageToLLM = previousReturnImageToLLM;
     fs.rmSync(outputRoot, { recursive: true, force: true });
     fs.rmSync(referenceRoot, { recursive: true, force: true });
   }

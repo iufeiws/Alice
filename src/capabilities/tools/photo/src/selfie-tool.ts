@@ -75,8 +75,10 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
     const target = resolveTarget(call);
     if (!target) return toolError(call, photoToolText.noCurrentSession);
 
-    const pose = stringValue(call.input.pose).trim();
-    if (!pose) return toolError(call, photoToolText.poseRequired);
+    const pose = resolveSelfieArgument(call.input.pose, photoConfig.selfieDefaultPose);
+    const expression = formatSelfieLabel("表情", resolveSelfieArgument(call.input.expression, photoConfig.selfieDefaultExpression));
+    const hair = formatSelfieLabel("发型", resolveSelfieArgument(call.input.hair, photoConfig.selfieDefaultHair));
+    const composition = resolveSelfieArgument(call.input.composition, photoConfig.selfieDefaultComposition);
 
     const context = deps.getSelfieContext?.();
     if (!context) return toolError(call, photoToolText.contextUnavailable);
@@ -100,7 +102,12 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
 
       const fileBaseName = `selfie_${formatFileDateTime(time.now().iso)}`;
       const references = await resolveReferenceImages(context);
-      const prompt = buildSelfiePrompt(pose);
+      const prompt = buildSelfiePrompt({
+        "selfie/pose": pose,
+        "selfie/expression": expression,
+        "selfie/hair": hair,
+        "selfie/composition": composition
+      }, photoConfig);
       deps.appendLog?.("info", [
         "selfie generation start:",
         `workDir=${tempDir}`,
@@ -141,6 +148,7 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
       }
       const sentFileNames: string[] = [];
       const followupAttachments: NonNullable<ToolResult["llmFollowupAttachments"]> = [];
+      const returnImageToLLM = selfieTool.returnImageToLLM === true && executionContext?.llmCapabilities?.supportsImage === true;
       for (const tempFilePath of generatedFiles) {
         let fileName = path.basename(tempFilePath);
         validateGeneratedImage(tempFilePath, tempDir, photoConfig.selfieMaxBytes);
@@ -166,7 +174,7 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
           containerPath: path.posix.join("/assets/generated/selfies", path.basename(fileName))
         });
         deps.appendLog?.("info", `selfie generation sent: assetId=${assetId} messageId=${extractSentMessageId(sent) ?? ""}`);
-        if (executionContext?.llmCapabilities?.supportsImage) {
+        if (returnImageToLLM) {
           followupAttachments.push({
             kind: "image",
             path: finalFilePath,
@@ -180,7 +188,7 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
         callId: call.id,
         ok: true,
         output: sentFileNames.map((fileName) => photoToolText.sent(fileName)).join("\n"),
-        llmFollowupAttachments: executionContext?.llmCapabilities?.supportsImage ? followupAttachments : undefined
+        llmFollowupAttachments: returnImageToLLM ? followupAttachments : undefined
       };
     } catch (error) {
       const reason = [
@@ -199,12 +207,11 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
     }
   }
 
-  function buildSelfiePrompt(pose: string): string {
-    const photoConfig = runtimePhotoConfig();
+  function buildSelfiePrompt(variables: { "selfie/pose": string; "selfie/expression": string; "selfie/hair": string; "selfie/composition": string }, photoConfig: PhotoPluginConfig): string {
     const referenceDir = photoConfig.selfieReferenceDir;
     const templatePath = path.resolve(referenceDir, selfiePromptFileName);
     if (!fs.existsSync(templatePath)) throw new Error(photoToolText.promptTemplateNotFound);
-    const runtime = deps.promptContextRuntime.withVariables({ pose });
+    const runtime = deps.promptContextRuntime.withVariables(variables);
     const prompt = runtime.renderText(fs.readFileSync(templatePath, "utf8"));
     return photoConfig.selfie2DinRealEnabled && photoConfig.selfie2DinRealPrompt
       ? `${prompt}\n\n${runtime.renderText(photoConfig.selfie2DinRealPrompt)}`
@@ -302,6 +309,14 @@ function toolError(call: ToolCall, error: string): ToolResult {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : value === undefined || value === null ? "" : String(value);
+}
+
+function resolveSelfieArgument(value: unknown, defaultValue: string): string {
+  return value === undefined || value === null ? defaultValue : stringValue(value).trim();
+}
+
+function formatSelfieLabel(label: string, value: string): string {
+  return value ? `${label}: ${value}\n` : "";
 }
 
 function safeFilePart(value: string): string {

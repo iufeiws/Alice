@@ -6,13 +6,18 @@ Media tools 供 ChatAgent 使用。当前实现暴露一个 LLM 工具：
 
 ## Selfie 工具说明
 
-`selfie` 接收一个必填输入：
+`selfie` 接收以下输入，其中 `pose` 必填，其余参数可选：
 
 ```json
 {
-  "pose": "lean close to the camera and smile shyly"
+  "pose": "lean close to the camera and smile shyly",
+  "expression": "shy smile",
+  "hair": "long straight hair",
+  "composition": "medium close-up"
 }
 ```
+
+未提供的参数使用 Photo 配置中 Main Prompt 分组的默认值。`expression` 和 `hair` 有值时，分别以 `表情: {arg}\n` 和 `发型: {arg}\n` 写入主 prompt；`composition` 直接写入主 prompt。默认值为：姿势、表情和发型为空，构图为“镜头距离为超近景, 一臂距离, 人物占画面80%以上”。
 
 调用后，工具会：
 
@@ -28,6 +33,8 @@ Media tools 供 ChatAgent 使用。当前实现暴露一个 LLM 工具：
 5. 如果当前 outfit 图片缺失，不直接失败；只传角色和图书馆参考图，并把服装信息作为文字写入 prompt。
 6. `codex` 模式由新会话返回 Codex 生成图路径，再由 photo tool 脚本复制到临时工作目录并写入 `assets/generated/selfies/selfie_{datetime}.jpg`。
 7. 通过当前渠道的 image output 路径发送生成图片。
+
+Selfie profile 的 `returnImageToLLM` 默认关闭。关闭时即使当前模型支持图片，也只通过渠道发送图片并向模型返回图片路径；开启后且模型支持图片时，才会把生成图片作为工具后续附件回传给模型。
 
 生成图片目录故意被 git 忽略。参考图和 prompt 模板是源码资产，应提交。
 
@@ -47,7 +54,7 @@ config/plugin/photo/config.json
 
 `codex` 模式的生图行为、速度约束和图像参数集中定义在 `src/capabilities/skills/external/alice-selfie-fast/SKILL.md`。photo tool 只负责构造任务 prompt、传参考图、启动新会话、解析生成图路径和搬运文件。
 
-API key 可以在 Configure 页面填写，保存后不会在 config 响应里回显明文；空值表示保留当前 key。
+API key 可以在 Configure 页面填写，保存后不会在 config 响应里回显明文；空值表示保留当前 key。Selfie 的主 prompt 模板和四个默认参数位于 Configure 页面 `Main Prompt` 分组。
 
 ## Image API 配置说明
 

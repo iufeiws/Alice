@@ -8,6 +8,10 @@ export type PhotoPluginConfig = {
   selfieMode: SelfieGenerationMode;
   selfieReferenceDir: string;
   selfieOutputDir: string;
+  selfieDefaultPose: string;
+  selfieDefaultExpression: string;
+  selfieDefaultHair: string;
+  selfieDefaultComposition: string;
   selfieCodexCommand: string;
   selfieCodexExtraPrompt: string;
   selfieCodexTimeoutMs: number;
@@ -58,6 +62,7 @@ export type ImageApiSettings = {
 };
 
 export const defaultPhotoPluginConfigPath = "config/plugin/photo/config.json";
+export const defaultSelfieComposition = "镜头距离为超近景, 一臂距离, 人物占画面80%以上";
 
 export function readPhotoPluginConfig(configPath?: string, defaults: Partial<PhotoPluginConfig> = {}): PhotoPluginConfig {
   let parsed: Record<string, unknown> = {};
@@ -83,6 +88,10 @@ export function normalizePhotoPluginConfig(parsed: Record<string, unknown>, defa
     selfieMode: selfieModeValue(parsed.selfieMode, defaults.selfieMode ?? "openai", "selfieMode"),
     selfieReferenceDir: requiredStringValue(parsed.selfieReferenceDir, defaults.selfieReferenceDir ?? "assets/selfie/references", "selfieReferenceDir"),
     selfieOutputDir: requiredStringValue(parsed.selfieOutputDir, defaults.selfieOutputDir ?? "assets/generated/selfies", "selfieOutputDir"),
+    selfieDefaultPose: optionalRawStringValue(parsed.selfieDefaultPose, defaults.selfieDefaultPose, "selfieDefaultPose") ?? "",
+    selfieDefaultExpression: optionalRawStringValue(parsed.selfieDefaultExpression, defaults.selfieDefaultExpression, "selfieDefaultExpression") ?? "",
+    selfieDefaultHair: optionalRawStringValue(parsed.selfieDefaultHair, defaults.selfieDefaultHair, "selfieDefaultHair") ?? "",
+    selfieDefaultComposition: optionalRawStringValue(parsed.selfieDefaultComposition, defaults.selfieDefaultComposition ?? defaultSelfieComposition, "selfieDefaultComposition") ?? defaultSelfieComposition,
     selfieCodexCommand: requiredStringValue(parsed.selfieCodexCommand, defaults.selfieCodexCommand ?? "codex", "selfieCodexCommand"),
     selfieCodexExtraPrompt: optionalRawStringValue(parsed.selfieCodexExtraPrompt, defaults.selfieCodexExtraPrompt, "selfieCodexExtraPrompt") ?? "",
     selfieCodexTimeoutMs: numberValue(parsed.selfieCodexTimeoutMs, defaults.selfieCodexTimeoutMs ?? 300_000, "selfieCodexTimeoutMs"),

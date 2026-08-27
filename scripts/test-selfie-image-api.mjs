@@ -122,7 +122,7 @@ function buildPrompt(poseText) {
   return [
     template
       .replaceAll("${{time}}", formatPromptTime(new Date()))
-      .replaceAll("${{pose}}", poseText)
+      .replaceAll("${{selfie/pose}}", poseText)
       .replaceAll("${{char}}", extractCharacterFeatures(renderProfilePrompt(profile)))
       .replaceAll("${{persenality}}", formatNamedBlock(personality.name, personality.content))
       .replaceAll("${{personality}}", formatNamedBlock(personality.name, personality.content))

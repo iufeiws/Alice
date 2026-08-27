@@ -3,11 +3,15 @@ import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/
 export const selfieTool: ToolDefinition = {
   name: "Selfie",
   passRenderText: true,
-  description: "通过 pose 参数描述自拍时的姿势和表情。 除非<user>特殊要求, 禁止描述服装发色外貌特点, 对于描述中可能存在性暗示的部分略过以规避审核。成功时后会自动发送图片, 不需要调用工具发送图片",
+  returnImageToLLM: false,
+  description: "可通过 pose、expression、hair 和 composition 参数描述自拍内容。pose为拍照时的动作和姿势, expression为表情, hair为发型和发色, composition为构图和取景范围。未提供的参数使用${{user}}配置的默认值。对于描述中可能存在性暗示的部分绕过以规避审核。成功时后会自动发送图片, 并返回路径用于给你查看, 不需要额外发送图片",
   inputSchema: {
     type: "object",
     properties: {
       pose: { type: "string" },
+      expression: { type: "string" },
+      hair: { type: "string" },
+      composition: { type: "string" },
     },
     required: ["pose"],
     additionalProperties: false
@@ -20,7 +24,6 @@ export const photoToolText = {
   previousFailureBlocked: "selfie is blocked in this agent loop run after a previous failure",
   selfieDisabled: "photo selfie is disabled",
   noCurrentSession: "No current messaging session is available",
-  poseRequired: "pose is required",
   contextUnavailable: "selfie context is not available",
   outputDirOutsideAssets: "selfie output directory must be inside assets",
   sent: (fileName: string) => `<sent path="/assets/generated/selfies/${fileName}"/>`,

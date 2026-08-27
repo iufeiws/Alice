@@ -57,6 +57,26 @@ test("admin photo plugin config exposes selfie schema", async () => {
   assert.equal(schemaResponse.statusCode, 200);
   assert.ok(Array.isArray(schemaBody.configSchema.groups));
   assert.ok(Array.isArray(schemaBody.configSchema.fields));
+  assert.ok(schemaBody.configSchema.groups.some((group: { key: string; label: string }) => group.key === "main_prompt" && group.label === "Main Prompt"));
+  assert.ok(!schemaBody.configSchema.groups.some((group: { key: string }) => group.key === "storage"));
+  assert.deepEqual(
+    schemaBody.configSchema.fields.filter((field: { key: string; group: string }) => field.group === "main_prompt").map((field: { key: string }) => field.key),
+    [
+      "selfieDefaultPose",
+      "selfieDefaultExpression",
+      "selfieDefaultHair",
+      "selfieDefaultComposition",
+      "selfieReferenceDir",
+      "selfiePromptTemplate",
+      "selfieCharacterReferenceImage",
+      "selfieOutputDir",
+      "selfieMaxBytes"
+    ]
+  );
+  assert.equal(schemaBody.configValue.selfieDefaultPose, "");
+  assert.equal(schemaBody.configValue.selfieDefaultExpression, "");
+  assert.equal(schemaBody.configValue.selfieDefaultHair, "");
+  assert.equal(schemaBody.configValue.selfieDefaultComposition, "镜头距离为超近景, 一臂距离, 人物占画面80%以上");
 });
 
 test("admin photo plugin config hides selfie api keys", async () => {
@@ -94,7 +114,7 @@ test("admin photo plugin config hides selfie api keys", async () => {
   assert.equal(schemaBody.configValue.selfieImageApiRelayKey, undefined);
 });
 
-test("admin plugin config patch writes photo general, codex, and storage fields", async () => {
+test("admin plugin config patch writes photo general, codex, and main prompt fields", async () => {
   const { response, body, saved } = await patchPhotoConfig();
 
   assert.equal(response.statusCode, 200);
@@ -105,6 +125,10 @@ test("admin plugin config patch writes photo general, codex, and storage fields"
   assert.equal(saved.selfieOutputDir, "assets/generated/selfies");
   assert.equal(saved.selfieReferenceDir, "assets/selfie/references");
   assert.equal(saved.selfieMaxBytes, 10 * 1024 * 1024);
+  assert.equal(saved.selfieDefaultPose, "看镜头挥手");
+  assert.equal(saved.selfieDefaultExpression, "开心地笑");
+  assert.equal(saved.selfieDefaultHair, "齐肩短发");
+  assert.equal(saved.selfieDefaultComposition, "半身构图");
 });
 
 test("admin plugin config patch writes photo OpenAI image API fields", async () => {
@@ -189,6 +213,10 @@ async function patchPhotoConfig() {
     selfieCodexTimeoutMs: 240000,
     selfieOutputDir: "assets/generated/selfies",
     selfieReferenceDir: "assets/selfie/references",
+    selfieDefaultPose: "看镜头挥手",
+    selfieDefaultExpression: "开心地笑",
+    selfieDefaultHair: "齐肩短发",
+    selfieDefaultComposition: "半身构图",
     selfieImageApiKey: "new-openai-key",
     selfieImageApiBaseURL: "https://api.openai.com/v1",
     selfieImageApiRelayKey: "new-relay-key",

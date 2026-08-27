@@ -23,6 +23,10 @@ const variableNames = [
   "weekday_utc",
   "timezone",
   "appearance",
+  "selfie/pose",
+  "selfie/hair",
+  "selfie/composition",
+  "selfie/expression",
   "library/content",
   "dailyShell/date",
   "dailyShell/createdAt",
@@ -67,6 +71,7 @@ export function createPromptContextRuntime(input: {
     const time = timeVariable(name);
     if (time !== undefined) return time;
     if (name === "appearance") return coreProfile().appearanceDescription?.trim() || "";
+    if (name === "selfie/pose" || name === "selfie/hair" || name === "selfie/composition" || name === "selfie/expression") return "";
     if (name === "library/content") return librarySetting();
     if (name.startsWith("dailyShell/")) return dailyShellVariable(name);
     if (name.startsWith("outfit/")) return optionVariable(dailyShell()?.outfit, name.slice("outfit/".length));

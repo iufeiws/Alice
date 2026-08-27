@@ -186,6 +186,8 @@ export type ToolDefinition = {
   suppressExecutionCard?: boolean;
   /** 成功执行该工具即视为已向用户发送消息；当前按工具级别判断。 */
   sendsMessage?: boolean;
+  /** 允许工具将图片作为附件回传给支持图片的 LLM；默认关闭。 */
+  returnImageToLLM?: boolean;
 };
 
 export type ToolCall = {

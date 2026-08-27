@@ -13,7 +13,7 @@ import {
   selfieContext
 } from "./photo-tools-helpers.js";
 
-test("selfie_schema_exposesPoseOnly", () => {
+test("selfie_schema_exposesPromptInputsWithRequiredPose", () => {
   const store = createTestStore("selfie-schema-db");
   const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
     store,
@@ -24,9 +24,18 @@ test("selfie_schema_exposesPoseOnly", () => {
 
   const selfie = tools.listTools()[0];
   assert.equal(selfie.name, "Selfie");
-  assert.equal((selfie.inputSchema.properties as Record<string, unknown>).description, undefined);
-  assert.equal((selfie.inputSchema.properties as Record<string, unknown>).aspectRatio, undefined);
+  assert.deepEqual(Object.keys(selfie.inputSchema.properties as Record<string, unknown>), ["pose", "expression", "hair", "composition"]);
   assert.deepEqual(selfie.inputSchema.required, ["pose"]);
+  assert.equal(selfie.returnImageToLLM, false);
+});
+
+test("photoConfig_defaultsSelfiePromptInputs", () => {
+  const config = readPhotoPluginConfig(path.join(makeTempDir("selfie-default-config"), "missing.json"));
+
+  assert.equal(config.selfieDefaultPose, "");
+  assert.equal(config.selfieDefaultExpression, "");
+  assert.equal(config.selfieDefaultHair, "");
+  assert.equal(config.selfieDefaultComposition, "镜头距离为超近景, 一臂距离, 人物占画面80%以上");
 });
 
 test("photoConfig_invalidPersistedValues_throwsConfigError", () => {

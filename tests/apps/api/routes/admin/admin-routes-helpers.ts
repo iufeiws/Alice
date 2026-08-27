@@ -205,6 +205,10 @@ export function photoDefaults() {
   return {
     selfieReferenceDir: "assets/selfie/references",
     selfieOutputDir: "assets/generated/selfies",
+    selfieDefaultPose: "",
+    selfieDefaultExpression: "",
+    selfieDefaultHair: "",
+    selfieDefaultComposition: "镜头距离为超近景, 一臂距离, 人物占画面80%以上",
     selfieCodexCommand: "codex",
     selfieCodexExtraPrompt: "",
     selfieCodexTimeoutMs: 180_000,

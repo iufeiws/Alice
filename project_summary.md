@@ -109,7 +109,7 @@ src/
 | 工具 | Tool 名 | 职责 |
 |---|---|---|
 | messaging | `Chat` | 查看聊天记录 / 发送消息（text/markdown/image/voice/file）；`today` 比较“睡眠茧时间点前最后 10 条消息”与“最后一条 Short Memory 写入时间前最后 10 条消息”的窗口起点并取较晚者，无睡眠茧时以今日锚点参与比较 |
-| photo | `Selfie` | 自拍（pose 描述，生成器实际产出的全部图片逐张发送、入库，并在模型支持图片时全部回传；失败后同一 agent loop 30 秒内阻止重试，超时自动允许；不再发送拍照中/失败系统通知） |
+| photo | `Selfie` | 自拍（pose 必填，expression、hair、composition 为可选参数；未提供时使用 Photo 配置 Main Prompt 分组的默认值，其中 expression/hair 分别自动加上“表情: ”/“发型: ”和换行，composition 默认使用“镜头距离为超近景, 一臂距离, 人物占画面80%以上”；四个 Selfie prompt 变量位于 `selfie` 父节点下；`returnImageToLLM` 默认关闭，开启后且模型支持图片时才回传图片附件；生成器实际产出的全部图片逐张发送、入库；失败后同一 agent loop 30 秒内阻止重试，超时自动允许；不再发送拍照中/失败系统通知） |
 | calendar | `calendar` | 日历增删查搜 + 上下文渲染（SQLite CalendarStore） |
 | shell | `Bash` | 沙盒 bash 执行（透传 PiWorker） |
 | file | `Read`/`Write`/`Edit`/`Glob` | 文件读写改查（图片转 llmFollowupAttachments） |

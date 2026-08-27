@@ -98,7 +98,7 @@ src/
 | **webrtc-voice** | 自研 WebSocket 信令（offer/ICE/speech-state/interrupt/hangup 等）；两个 peer 实现（werift 进程内 / fork 媒体处理子进程）；`createCallState` 通话状态机 + interrupt epoch + TTS producer 输出 pump + 播放队列；ffmpeg 转 Opus RTP 帧；浏览器测试页 |
 | **tts** | 多 provider 路由（router）：转换 provider（OpenAI API/Bailian 百炼/Mimo）+ 本地服务（MOSS 8765 voice-clone、Genie 8767 stream 模式）；LLM 翻译后合成；流式合成与文本切块；preset 体系（core/shell/edit 四档）；纯符号输入返回静音 PCM |
 | **asr** | 转写分发（tencent / multimodal_llm / openai_compatible）；ffmpeg 静音检测切分；伪流式会话（1.5s 长暂停 flush partial）；腾讯实时 WebSocket 流 |
-| **image-generation** | 自拍图片生成（gateway 全局并发 2）：OpenAI `images/edits` 表单 / codex runner 两种模式；产物校验（扩展名白名单、路径防护、JPEG 归一化）。**无插件对象**，纯函数库 |
+| **image-generation** | 自拍图片生成（gateway 全局并发 2）：OpenAI `images/edits` 表单、xAI Grok Imagine `images/edits` JSON（最多三张 data URI 参考图、`b64_json` 响应）与 codex runner 三种模式；产物校验（扩展名白名单、路径防护、JPEG 归一化）。**无插件对象**，纯函数库 |
 | **image-recognition** | 单文件纯函数：多模态 LLM 识别图片（base64 data URL 内联，不落盘），固定错误码集合。无插件对象 |
 | **google-streetview** | 完整插件：坐标元数据/街景图（半径递增搜索）、pano graph、随机取点；pano 落盘复用；region/随机点/坐标 bucket 地理工具 |
 

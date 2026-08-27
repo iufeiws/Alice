@@ -44,7 +44,8 @@ test("admin photo plugin config exposes selfie schema", async () => {
       photo: {
         ...photoDefaults(),
         selfieImageApiKey: "secret-image-key",
-        selfieImageApiRelayKey: "secret-relay-key"
+        selfieImageApiRelayKey: "secret-relay-key",
+        selfieXaiImageApiKey: "secret-xai-key"
       }
     },
     pluginConfigs: { photo: { configPath } }
@@ -97,7 +98,8 @@ test("admin photo plugin config hides selfie api keys", async () => {
       photo: {
         ...photoDefaults(),
         selfieImageApiKey: "secret-image-key",
-        selfieImageApiRelayKey: "secret-relay-key"
+        selfieImageApiRelayKey: "secret-relay-key",
+        selfieXaiImageApiKey: "secret-xai-key"
       }
     },
     pluginConfigs: { photo: { configPath } }
@@ -110,8 +112,10 @@ test("admin photo plugin config hides selfie api keys", async () => {
 
   assert.equal(schemaBody.configValue.selfieImageApiKeySet, true);
   assert.equal(schemaBody.configValue.selfieImageApiRelayKeySet, true);
+  assert.equal(schemaBody.configValue.selfieXaiImageApiKeySet, true);
   assert.equal(schemaBody.configValue.selfieImageApiKey, undefined);
   assert.equal(schemaBody.configValue.selfieImageApiRelayKey, undefined);
+  assert.equal(schemaBody.configValue.selfieXaiImageApiKey, undefined);
 });
 
 test("admin plugin config patch writes photo general, codex, and main prompt fields", async () => {
@@ -149,6 +153,18 @@ test("admin plugin config patch writes photo relay image API fields", async () =
   assert.equal(saved.selfieImageApiRelayBaseURL, "https://relay.example.test/v1");
   assert.equal(saved.selfieImageApiRelayModel, "relay-image-model");
   assert.equal(saved.selfieImageApiRelayOutputFormat, "webp");
+});
+
+test("admin plugin config patch writes photo xAI image API fields", async () => {
+  const { response, saved } = await patchPhotoConfig();
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(saved.selfieXaiImageApiKey, "new-xai-key");
+  assert.equal(saved.selfieXaiImageApiBaseURL, "https://api.x.ai/v1");
+  assert.equal(saved.selfieXaiImageApiModel, "grok-imagine-image-2.0");
+  assert.equal(saved.selfieXaiImageApiAspectRatio, "2:3");
+  assert.equal(saved.selfieXaiImageApiResolution, "2k");
+  assert.equal(saved.selfieXaiImageApiQuality, "medium");
 });
 
 test("admin plugin config patch writes photo on-body fields", async () => {
@@ -235,6 +251,13 @@ async function patchPhotoConfig() {
     selfieImageApiRelayOutputFormat: "webp",
     selfieImageApiRelayOutputCompression: 77,
     selfieImageApiRelayTimeoutMs: 90000,
+    selfieXaiImageApiKey: "new-xai-key",
+    selfieXaiImageApiBaseURL: "https://api.x.ai/v1",
+    selfieXaiImageApiModel: "grok-imagine-image-2.0",
+    selfieXaiImageApiAspectRatio: "2:3",
+    selfieXaiImageApiResolution: "2k",
+    selfieXaiImageApiQuality: "medium",
+    selfieXaiImageApiTimeoutMs: 90000,
     selfieMaxBytes: 10 * 1024 * 1024,
     autoGenerateOutfitOnBody: true,
     onBodyReferenceImage: "assets/selfie/references/full-body-reference.jpg",

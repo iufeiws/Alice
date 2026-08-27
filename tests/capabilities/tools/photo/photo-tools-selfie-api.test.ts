@@ -142,6 +142,50 @@ test("selfie_openaiMode_sendsGeneratedImage", async () => {
   }
 });
 
+test("selfie_xaiMode_sendsJsonEditRequestWithThreeDataUriReferences", async () => {
+  const outputRoot = makeAssetTempDir("selfie-xai");
+  const referenceRoot = makeTempDir("selfie-ref-xai");
+  const store = createTestStore("selfie-xai-db");
+  const previousFetch = globalThis.fetch;
+  writeReferenceFiles(referenceRoot);
+  globalThis.fetch = (async (url, init) => {
+    assert.equal(String(url), "https://api.x.ai/v1/images/edits");
+    assert.equal(init?.method, "POST");
+    assert.deepEqual(init?.headers, { authorization: "Bearer xai-key", "content-type": "application/json" });
+    const body = JSON.parse(String(init?.body));
+    assert.equal(body.model, "grok-imagine-image-2.0");
+    assert.equal(body.response_format, "b64_json");
+    assert.equal(body.aspect_ratio, "2:3");
+    assert.equal(body.resolution, "1k");
+    assert.equal(body.quality, "low");
+    assert.equal(body.images.length, 3);
+    assert.ok(body.images.every((image: { type: string; url: string }) => image.type === "image_url" && image.url.startsWith("data:image/jpeg;base64,")));
+    return new Response(JSON.stringify({ data: [{ b64_json: fakeJpegBytes.toString("base64") }] }), { status: 200, statusText: "OK" });
+  }) as typeof fetch;
+
+  try {
+    const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
+      store,
+      time: createCurrentTimeProvider("UTC", () => new Date("2026-05-26T12:00:00.000Z")),
+      selfieReferenceDir: referenceRoot,
+      selfieOutputDir: outputRoot,
+      selfieAssetRoot: assetRootFromOutputDir(outputRoot),
+      selfieMode: "xai",
+      selfieXaiImageApiKey: "xai-key",
+      outputRouter: { async send() {} },
+      getSelfieContext: selfieContext,
+      getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
+    });
+
+    const result = await tools.execute({ id: "call_selfie_xai", toolName: "Selfie", input: { pose: "靠近镜头" } });
+    assert.equal(result.ok, true);
+  } finally {
+    globalThis.fetch = previousFetch;
+    fs.rmSync(outputRoot, { recursive: true, force: true });
+    fs.rmSync(referenceRoot, { recursive: true, force: true });
+  }
+});
+
 test("selfie_openaiRelayMode_sendsRelayRequestContract", async () => {
   const outputRoot = makeAssetTempDir("selfie-api-relay");
   const referenceRoot = makeTempDir("selfie-ref-api-relay");

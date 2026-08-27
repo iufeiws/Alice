@@ -1,7 +1,7 @@
 const fs = await import("node:fs");
 const path = await import("node:path");
 
-export type SelfieGenerationMode = "openai" | "codex" | "openaiRelay";
+export type SelfieGenerationMode = "openai" | "codex" | "openaiRelay" | "xai";
 
 export type PhotoPluginConfig = {
   enabled: boolean;
@@ -33,6 +33,13 @@ export type PhotoPluginConfig = {
   selfieImageApiRelayOutputFormat: string;
   selfieImageApiRelayOutputCompression: number;
   selfieImageApiRelayTimeoutMs: number;
+  selfieXaiImageApiKey?: string;
+  selfieXaiImageApiBaseURL: string;
+  selfieXaiImageApiModel: string;
+  selfieXaiImageApiAspectRatio: string;
+  selfieXaiImageApiResolution: string;
+  selfieXaiImageApiQuality: string;
+  selfieXaiImageApiTimeoutMs: number;
   selfieMaxBytes: number;
   autoGenerateOutfitOnBody: boolean;
   onBodyReferenceImage: string;
@@ -43,15 +50,16 @@ export type PhotoPluginConfig = {
   selfie2DinRealPrompt: string;
 };
 
-export type PhotoPluginPublicConfig = Omit<PhotoPluginConfig, "selfieImageApiKey" | "selfieImageApiRelayKey"> & {
+export type PhotoPluginPublicConfig = Omit<PhotoPluginConfig, "selfieImageApiKey" | "selfieImageApiRelayKey" | "selfieXaiImageApiKey"> & {
   selfieImageApiKeySet: boolean;
   selfieImageApiRelayKeySet: boolean;
+  selfieXaiImageApiKeySet: boolean;
 };
 
 export type ImageApiSettings = {
   key?: string;
   baseURL: string;
-  endpoint: "edits" | "relayEdits";
+  endpoint: "edits" | "relayEdits" | "xaiEdits";
   model: string;
   size: string;
   quality: string;
@@ -59,10 +67,13 @@ export type ImageApiSettings = {
   outputFormat: string;
   outputCompression: number;
   timeoutMs: number;
+  xaiAspectRatio?: string;
+  xaiResolution?: string;
 };
 
 export const defaultPhotoPluginConfigPath = "config/plugin/photo/config.json";
 export const defaultSelfieComposition = "镜头距离为超近景, 一臂距离, 人物占画面80%以上";
+export const defaultXaiImageApiBaseURL = "https://api.x.ai/v1";
 
 export function readPhotoPluginConfig(configPath?: string, defaults: Partial<PhotoPluginConfig> = {}): PhotoPluginConfig {
   let parsed: Record<string, unknown> = {};
@@ -74,11 +85,12 @@ export function readPhotoPluginConfig(configPath?: string, defaults: Partial<Pho
 }
 
 export function publicPhotoPluginConfig(config: PhotoPluginConfig): PhotoPluginPublicConfig {
-  const { selfieImageApiKey, selfieImageApiRelayKey, ...publicConfig } = config;
+  const { selfieImageApiKey, selfieImageApiRelayKey, selfieXaiImageApiKey, ...publicConfig } = config;
   return {
     ...publicConfig,
     selfieImageApiKeySet: Boolean(selfieImageApiKey),
-    selfieImageApiRelayKeySet: Boolean(selfieImageApiRelayKey)
+    selfieImageApiRelayKeySet: Boolean(selfieImageApiRelayKey),
+    selfieXaiImageApiKeySet: Boolean(selfieXaiImageApiKey)
   };
 }
 
@@ -113,6 +125,13 @@ export function normalizePhotoPluginConfig(parsed: Record<string, unknown>, defa
     selfieImageApiRelayOutputFormat: outputFormatValue(parsed.selfieImageApiRelayOutputFormat, defaults.selfieImageApiRelayOutputFormat ?? defaults.selfieImageApiOutputFormat ?? "jpeg", "selfieImageApiRelayOutputFormat"),
     selfieImageApiRelayOutputCompression: numberValue(parsed.selfieImageApiRelayOutputCompression, defaults.selfieImageApiRelayOutputCompression ?? defaults.selfieImageApiOutputCompression ?? 45, "selfieImageApiRelayOutputCompression"),
     selfieImageApiRelayTimeoutMs: numberValue(parsed.selfieImageApiRelayTimeoutMs, defaults.selfieImageApiRelayTimeoutMs ?? defaults.selfieImageApiTimeoutMs ?? 120_000, "selfieImageApiRelayTimeoutMs"),
+    selfieXaiImageApiKey: optionalStringValue(parsed.selfieXaiImageApiKey, defaults.selfieXaiImageApiKey, "selfieXaiImageApiKey"),
+    selfieXaiImageApiBaseURL: requiredStringValue(parsed.selfieXaiImageApiBaseURL, defaults.selfieXaiImageApiBaseURL ?? defaultXaiImageApiBaseURL, "selfieXaiImageApiBaseURL").replace(/\/+$/, ""),
+    selfieXaiImageApiModel: requiredStringValue(parsed.selfieXaiImageApiModel, defaults.selfieXaiImageApiModel ?? "grok-imagine-image-2.0", "selfieXaiImageApiModel"),
+    selfieXaiImageApiAspectRatio: requiredStringValue(parsed.selfieXaiImageApiAspectRatio, defaults.selfieXaiImageApiAspectRatio ?? "2:3", "selfieXaiImageApiAspectRatio"),
+    selfieXaiImageApiResolution: requiredStringValue(parsed.selfieXaiImageApiResolution, defaults.selfieXaiImageApiResolution ?? "1k", "selfieXaiImageApiResolution"),
+    selfieXaiImageApiQuality: requiredStringValue(parsed.selfieXaiImageApiQuality, defaults.selfieXaiImageApiQuality ?? "low", "selfieXaiImageApiQuality"),
+    selfieXaiImageApiTimeoutMs: numberValue(parsed.selfieXaiImageApiTimeoutMs, defaults.selfieXaiImageApiTimeoutMs ?? 120_000, "selfieXaiImageApiTimeoutMs"),
     selfieMaxBytes: numberValue(parsed.selfieMaxBytes, defaults.selfieMaxBytes ?? 10 * 1024 * 1024, "selfieMaxBytes"),
     autoGenerateOutfitOnBody: booleanValue(parsed.autoGenerateOutfitOnBody, defaults.autoGenerateOutfitOnBody ?? false, "autoGenerateOutfitOnBody"),
     onBodyReferenceImage: requiredStringValue(parsed.onBodyReferenceImage, defaults.onBodyReferenceImage ?? "assets/selfie/references/full-body-reference.jpg", "onBodyReferenceImage"),
@@ -125,6 +144,22 @@ export function normalizePhotoPluginConfig(parsed: Record<string, unknown>, defa
 }
 
 export function selectedImageApiSettings(config: PhotoPluginConfig): ImageApiSettings {
+  if (config.selfieMode === "xai") {
+    return {
+      key: config.selfieXaiImageApiKey,
+      baseURL: config.selfieXaiImageApiBaseURL,
+      endpoint: "xaiEdits",
+      model: config.selfieXaiImageApiModel,
+      size: "",
+      quality: config.selfieXaiImageApiQuality,
+      moderation: "",
+      outputFormat: "jpeg",
+      outputCompression: 100,
+      timeoutMs: config.selfieXaiImageApiTimeoutMs,
+      xaiAspectRatio: config.selfieXaiImageApiAspectRatio,
+      xaiResolution: config.selfieXaiImageApiResolution
+    };
+  }
   if (config.selfieMode === "openaiRelay") {
     return {
       key: config.selfieImageApiRelayKey,
@@ -166,7 +201,7 @@ function normalizeOutputFormat(value: string, name: string): string {
 
 function selfieModeValue(value: unknown, defaultValue: SelfieGenerationMode, name: string): SelfieGenerationMode {
   if (value === undefined || value === null) return defaultValue;
-  if (value === "codex" || value === "openaiRelay" || value === "openai") return value;
+  if (value === "codex" || value === "openaiRelay" || value === "openai" || value === "xai") return value;
   throw new Error(`invalid ${name}: ${String(value)}`);
 }
 

@@ -44,6 +44,7 @@ export function photoPluginEntry(): AdminPluginRegistryEntry {
         { key: "general", label: "General" },
         { key: "openai", label: "OpenAI" },
         { key: "openai_relay", label: "OpenAI Relay" },
+        { key: "xai", label: "xAI" },
         { key: "codex", label: "Codex" },
         { key: "main_prompt", label: "Main Prompt" },
         { key: "on_body", label: "On Body" },
@@ -54,8 +55,9 @@ export function photoPluginEntry(): AdminPluginRegistryEntry {
         { key: "selfieMode", label: "Selfie Mode", type: "select", group: "general", options: [
           { value: "openai", label: "OpenAI" },
           { value: "openaiRelay", label: "OpenAI Relay" },
+          { value: "xai", label: "xAI" },
           { value: "codex", label: "Codex" }
-        ], description: "OpenAI and OpenAI Relay use the same Image API build settings with different keys/base URLs. Codex starts an ephemeral Codex CLI session with alice-selfie-fast." },
+        ], description: "OpenAI, OpenAI Relay, and xAI use separate Image API settings. Codex starts an ephemeral Codex CLI session with alice-selfie-fast." },
         { key: "selfieImageApiKeySet", label: "API Key Set", type: "readonly", group: "openai" },
         { key: "selfieImageApiKey", label: "API Key", type: "password", group: "openai", description: "Leave blank to keep the current key." },
         { key: "selfieImageApiBaseURL", label: "Base URL", type: "text", group: "openai" },
@@ -90,6 +92,14 @@ export function photoPluginEntry(): AdminPluginRegistryEntry {
         ] },
         { key: "selfieImageApiRelayOutputCompression", label: "Output Compression", type: "number", group: "openai_relay", min: 0, max: 100, step: 1 },
         { key: "selfieImageApiRelayTimeoutMs", label: "Timeout Ms", type: "number", group: "openai_relay", min: 1000, step: 1000 },
+        { key: "selfieXaiImageApiKeySet", label: "API Key Set", type: "readonly", group: "xai" },
+        { key: "selfieXaiImageApiKey", label: "API Key", type: "password", group: "xai", description: "Leave blank to keep the current key." },
+        { key: "selfieXaiImageApiBaseURL", label: "Base URL", type: "text", group: "xai" },
+        { key: "selfieXaiImageApiModel", label: "Model", type: "text", group: "xai" },
+        { key: "selfieXaiImageApiAspectRatio", label: "Aspect Ratio", type: "text", group: "xai" },
+        { key: "selfieXaiImageApiResolution", label: "Resolution", type: "select", group: "xai", options: [{ value: "1k", label: "1k" }, { value: "2k", label: "2k" }] },
+        { key: "selfieXaiImageApiQuality", label: "Quality", type: "select", group: "xai", options: [{ value: "low", label: "low" }, { value: "medium", label: "medium" }] },
+        { key: "selfieXaiImageApiTimeoutMs", label: "Timeout Ms", type: "number", group: "xai", min: 1000, step: 1000 },
         { key: "selfieCodexCommand", label: "Codex Command", type: "text", group: "codex" },
         { key: "selfieCodexExtraPrompt", label: "Extra Prompt", type: "textarea", group: "codex", description: "Prepended exactly before the rendered selfie prompt. Empty by default." },
         { key: "selfieCodexTimeoutMs", label: "Codex Timeout Ms", type: "number", group: "codex", min: 1000, max: 600000, step: 1000 },
@@ -129,7 +139,7 @@ export function photoPluginEntry(): AdminPluginRegistryEntry {
 
 
 function photoPluginSummary(context: AdminRoutesContext, config = readPhotoConfigForAdmin(context)): AdminPluginSummary {
-  const missingConfig = config.enabled && (config.selfieMode === "openai" || config.selfieMode === "openaiRelay") && !selectedPhotoImageApiKey(config);
+  const missingConfig = config.enabled && (config.selfieMode === "openai" || config.selfieMode === "openaiRelay" || config.selfieMode === "xai") && !selectedPhotoImageApiKey(config);
   return {
     id: "photo",
     name: "Photo",
@@ -218,6 +228,13 @@ function updatePhotoConfig(context: AdminRoutesContext, patch: Record<string, un
     selfieImageApiRelayOutputFormat: patch.selfieImageApiRelayOutputFormat === undefined ? current.selfieImageApiRelayOutputFormat : photoOutputFormatFromUnknown(patch.selfieImageApiRelayOutputFormat),
     selfieImageApiRelayOutputCompression: patch.selfieImageApiRelayOutputCompression === undefined ? current.selfieImageApiRelayOutputCompression : photoNumberFromUnknown(patch.selfieImageApiRelayOutputCompression),
     selfieImageApiRelayTimeoutMs: patch.selfieImageApiRelayTimeoutMs === undefined ? current.selfieImageApiRelayTimeoutMs : photoNumberFromUnknown(patch.selfieImageApiRelayTimeoutMs),
+    selfieXaiImageApiKey: patch.selfieXaiImageApiKey === undefined ? current.selfieXaiImageApiKey : secretStringFromUnknown(patch.selfieXaiImageApiKey, current.selfieXaiImageApiKey),
+    selfieXaiImageApiBaseURL: patch.selfieXaiImageApiBaseURL === undefined ? current.selfieXaiImageApiBaseURL : requiredString(patch.selfieXaiImageApiBaseURL).trim().replace(/\/+$/, ""),
+    selfieXaiImageApiModel: patch.selfieXaiImageApiModel === undefined ? current.selfieXaiImageApiModel : requiredString(patch.selfieXaiImageApiModel).trim(),
+    selfieXaiImageApiAspectRatio: patch.selfieXaiImageApiAspectRatio === undefined ? current.selfieXaiImageApiAspectRatio : requiredString(patch.selfieXaiImageApiAspectRatio).trim(),
+    selfieXaiImageApiResolution: patch.selfieXaiImageApiResolution === undefined ? current.selfieXaiImageApiResolution : requiredString(patch.selfieXaiImageApiResolution).trim(),
+    selfieXaiImageApiQuality: patch.selfieXaiImageApiQuality === undefined ? current.selfieXaiImageApiQuality : requiredString(patch.selfieXaiImageApiQuality).trim(),
+    selfieXaiImageApiTimeoutMs: patch.selfieXaiImageApiTimeoutMs === undefined ? current.selfieXaiImageApiTimeoutMs : photoNumberFromUnknown(patch.selfieXaiImageApiTimeoutMs),
     selfieMaxBytes: patch.selfieMaxBytes === undefined ? current.selfieMaxBytes : photoNumberFromUnknown(patch.selfieMaxBytes),
     autoGenerateOutfitOnBody: patch.autoGenerateOutfitOnBody === undefined ? current.autoGenerateOutfitOnBody : booleanFromUnknown(patch.autoGenerateOutfitOnBody),
     onBodyReferenceImage: patch.onBodyReferenceImage === undefined ? current.onBodyReferenceImage : requiredString(patch.onBodyReferenceImage).trim(),
@@ -235,7 +252,7 @@ function updatePhotoConfig(context: AdminRoutesContext, patch: Record<string, un
 }
 
 function validatePhotoConfig(config: PhotoPluginConfig): string | undefined {
-  if (config.selfieMode !== "openai" && config.selfieMode !== "openaiRelay" && config.selfieMode !== "codex") return "invalid_selfie_mode";
+  if (config.selfieMode !== "openai" && config.selfieMode !== "openaiRelay" && config.selfieMode !== "xai" && config.selfieMode !== "codex") return "invalid_selfie_mode";
   if (!config.selfieReferenceDir) return "missing_selfie_reference_dir";
   if (!config.selfieOutputDir || !isPathUnderAssets(config.selfieOutputDir)) return "invalid_selfie_output_dir";
   if (!config.selfieCodexCommand) return "missing_selfie_codex_command";
@@ -256,6 +273,12 @@ function validatePhotoConfig(config: PhotoPluginConfig): string | undefined {
   if (!["jpeg", "png", "webp"].includes(config.selfieImageApiRelayOutputFormat)) return "invalid_selfie_relay_output_format";
   if (invalidNumber(config.selfieImageApiRelayOutputCompression, 0, 100)) return "invalid_selfie_relay_output_compression";
   if (invalidNumber(config.selfieImageApiRelayTimeoutMs, 1000)) return "invalid_selfie_api_relay_timeout";
+  if (!isValidHttpUrl(config.selfieXaiImageApiBaseURL)) return "invalid_selfie_xai_api_base_url";
+  if (!config.selfieXaiImageApiModel) return "missing_selfie_xai_api_model";
+  if (!config.selfieXaiImageApiAspectRatio) return "missing_selfie_xai_api_aspect_ratio";
+  if (!config.selfieXaiImageApiResolution || !["1k", "2k"].includes(config.selfieXaiImageApiResolution)) return "invalid_selfie_xai_api_resolution";
+  if (!config.selfieXaiImageApiQuality || !["low", "medium"].includes(config.selfieXaiImageApiQuality)) return "invalid_selfie_xai_api_quality";
+  if (invalidNumber(config.selfieXaiImageApiTimeoutMs, 1000)) return "invalid_selfie_xai_api_timeout";
   if (invalidNumber(config.selfieMaxBytes, 1024, 50 * 1024 * 1024)) return "invalid_selfie_max_bytes";
   if (!config.onBodyReferenceImage) return "missing_on_body_reference_image";
   if (config.selfie2DinRealEnabled && !config.selfie2DinRealReferenceImage) return "missing_2dinreal_reference_image";
@@ -304,6 +327,13 @@ function photoConfigDefaultsForAdmin(context: AdminRoutesContext): Partial<Photo
     selfieImageApiRelayOutputFormat: photo.selfieImageApiRelayOutputFormat,
     selfieImageApiRelayOutputCompression: photo.selfieImageApiRelayOutputCompression,
     selfieImageApiRelayTimeoutMs: photo.selfieImageApiRelayTimeoutMs,
+    selfieXaiImageApiKey: photo.selfieXaiImageApiKey,
+    selfieXaiImageApiBaseURL: photo.selfieXaiImageApiBaseURL,
+    selfieXaiImageApiModel: photo.selfieXaiImageApiModel,
+    selfieXaiImageApiAspectRatio: photo.selfieXaiImageApiAspectRatio,
+    selfieXaiImageApiResolution: photo.selfieXaiImageApiResolution,
+    selfieXaiImageApiQuality: photo.selfieXaiImageApiQuality,
+    selfieXaiImageApiTimeoutMs: photo.selfieXaiImageApiTimeoutMs,
     selfieMaxBytes: photo.selfieMaxBytes,
     autoGenerateOutfitOnBody: photo.autoGenerateOutfitOnBody,
     onBodyReferenceImage: photo.onBodyReferenceImage,
@@ -364,7 +394,9 @@ function photoNumberFromUnknown(value: unknown): number {
 
 
 function selectedPhotoImageApiKey(config: PhotoPluginConfig): string | undefined {
-  return config.selfieMode === "openaiRelay" ? config.selfieImageApiRelayKey : config.selfieImageApiKey;
+  if (config.selfieMode === "openaiRelay") return config.selfieImageApiRelayKey;
+  if (config.selfieMode === "xai") return config.selfieXaiImageApiKey;
+  return config.selfieImageApiKey;
 }
 
 function isPathUnderAssets(value: string): boolean {

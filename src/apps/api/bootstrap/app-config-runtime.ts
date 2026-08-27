@@ -76,6 +76,13 @@ export type AppConfig = {
     selfieImageApiRelayOutputFormat: string;
     selfieImageApiRelayOutputCompression: number;
     selfieImageApiRelayTimeoutMs: number;
+    selfieXaiImageApiKey?: string;
+    selfieXaiImageApiBaseURL: string;
+    selfieXaiImageApiModel: string;
+    selfieXaiImageApiAspectRatio: string;
+    selfieXaiImageApiResolution: string;
+    selfieXaiImageApiQuality: string;
+    selfieXaiImageApiTimeoutMs: number;
     selfieMaxBytes: number;
     autoGenerateOutfitOnBody: boolean;
     selfie2DinRealEnabled: boolean;
@@ -311,6 +318,13 @@ export function loadConfig(env: Env = process.env): AppConfig {
       selfieImageApiRelayOutputFormat: env.SELFIE_IMAGE_API_RELAY_OUTPUT_FORMAT ?? env.SELFIE_IMAGE_API_OUTPUT_FORMAT ?? "jpeg",
       selfieImageApiRelayOutputCompression: envNumber(env.SELFIE_IMAGE_API_RELAY_OUTPUT_COMPRESSION, envNumber(env.SELFIE_IMAGE_API_OUTPUT_COMPRESSION, 45)),
       selfieImageApiRelayTimeoutMs: envNumber(env.SELFIE_IMAGE_API_RELAY_TIMEOUT_MS, envNumber(env.SELFIE_IMAGE_API_TIMEOUT_MS, 120_000)),
+      selfieXaiImageApiKey: env.SELFIE_XAI_IMAGE_API_KEY,
+      selfieXaiImageApiBaseURL: (env.SELFIE_XAI_IMAGE_API_BASE_URL ?? "https://api.x.ai/v1").replace(/\/+$/, ""),
+      selfieXaiImageApiModel: env.SELFIE_XAI_IMAGE_API_MODEL ?? "grok-imagine-image-2.0",
+      selfieXaiImageApiAspectRatio: env.SELFIE_XAI_IMAGE_API_ASPECT_RATIO ?? "2:3",
+      selfieXaiImageApiResolution: env.SELFIE_XAI_IMAGE_API_RESOLUTION ?? "1k",
+      selfieXaiImageApiQuality: env.SELFIE_XAI_IMAGE_API_QUALITY ?? "low",
+      selfieXaiImageApiTimeoutMs: envNumber(env.SELFIE_XAI_IMAGE_API_TIMEOUT_MS, 120_000),
       selfieMaxBytes: envNumber(env.SELFIE_MAX_BYTES, 10 * 1024 * 1024),
       autoGenerateOutfitOnBody: envBool(env.PHOTO_AUTO_GENERATE_OUTFIT_ON_BODY, false),
       selfie2DinRealEnabled: envBool(env.SELFIE_2DINREAL_ENABLED, false),

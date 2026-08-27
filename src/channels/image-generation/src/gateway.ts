@@ -1,6 +1,7 @@
 import { extensionForOutputFormat, selectedImageApiSettings, type PhotoPluginConfig, type SelfieGenerationMode } from "./config.js";
 import { runAliceSelfieFastSkill } from "./codex-provider.js";
 import { runOpenAIAPISelfie } from "./openai-api-provider.js";
+import { runXaiAPISelfie } from "./xai-api-provider.js";
 
 const crypto = await import("node:crypto");
 const path = await import("node:path");
@@ -20,7 +21,7 @@ export type ImageGenerationProviderInput = {
   timeoutMs: number;
   apiKey?: string;
   apiBaseURL: string;
-  apiEndpoint: "edits" | "relayEdits";
+  apiEndpoint: "edits" | "relayEdits" | "xaiEdits";
   apiModel: string;
   apiSize: string;
   apiQuality: string;
@@ -28,6 +29,8 @@ export type ImageGenerationProviderInput = {
   apiOutputFormat: string;
   apiOutputCompression: number;
   apiTimeoutMs: number;
+  xaiAspectRatio?: string;
+  xaiResolution?: string;
   proxyUrl?: string;
 };
 
@@ -71,7 +74,8 @@ export async function runImageGenerationProvider(input: ImageGenerationProviderI
 }
 
 export function imageGenerationProviderForMode(mode: SelfieGenerationMode): ImageGenerationProvider {
-  return mode === "codex" ? runAliceSelfieFastSkill : runOpenAIAPISelfie;
+  if (mode === "codex") return runAliceSelfieFastSkill;
+  return mode === "xai" ? runXaiAPISelfie : runOpenAIAPISelfie;
 }
 
 export async function runPhotoGateway(input: PhotoGatewayInput): Promise<PhotoGatewayResult> {
@@ -100,6 +104,8 @@ export async function runPhotoGateway(input: PhotoGatewayInput): Promise<PhotoGa
     apiOutputFormat: imageApiSettings.outputFormat,
     apiOutputCompression: imageApiSettings.outputCompression,
     apiTimeoutMs: imageApiSettings.timeoutMs,
+    xaiAspectRatio: imageApiSettings.xaiAspectRatio,
+    xaiResolution: imageApiSettings.xaiResolution,
     proxyUrl: input.proxyUrl
   }, input.executor ?? imageGenerationProviderForMode(provider));
   return { ...(result ?? {}), fileName, timeoutMs };

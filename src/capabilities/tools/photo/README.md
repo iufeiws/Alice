@@ -50,6 +50,7 @@ config/plugin/photo/config.json
 
 - `openai`：直接调用 OpenAI Image API。
 - `openaiRelay`：调用 OpenAI 兼容中转路由，使用独立的 key、base URL 和图像构筑参数。
+- `xai`：调用 xAI Grok Imagine 的 JSON 图片编辑接口，向接口发送三张本地参考图的 data URI。
 - `codex`：启动 ephemeral Codex CLI 会话，使用 `$alice-selfie-fast` 约束新会话立即调用内置 `image_gen`，并由 photo tool 脚本搬运返回的生成图。
 
 `codex` 模式的生图行为、速度约束和图像参数集中定义在 `src/capabilities/skills/external/alice-selfie-fast/SKILL.md`。photo tool 只负责构造任务 prompt、传参考图、启动新会话、解析生成图路径和搬运文件。
@@ -72,6 +73,7 @@ SELFIE_IMAGE_API_TIMEOUT_MS=120000
 
 `openai` 使用 `SELFIE_IMAGE_API_KEY` 或 `OPENAI_API_KEY`，以及 `SELFIE_IMAGE_API_BASE_URL` 或 `OPENAI_BASE_URL`。
 `openaiRelay` 使用 `SELFIE_IMAGE_API_RELAY_KEY`、`SELFIE_IMAGE_API_RELAY_BASE_URL` 和 `SELFIE_IMAGE_API_RELAY_*` 构筑参数。
+`xai` 使用 `SELFIE_XAI_IMAGE_API_KEY`，默认 base URL 是 `https://api.x.ai/v1`；支持模型、宽高比、分辨率、质量和超时配置。
 
 认证优先使用 `SELFIE_IMAGE_API_KEY`，缺失时回退到 `OPENAI_API_KEY`。
 
@@ -80,6 +82,12 @@ SELFIE_IMAGE_API_TIMEOUT_MS=120000
 ```text
 SELFIE_IMAGE_API_BASE_URL=https://api.openai.com/v1
 SELFIE_IMAGE_API_RELAY_BASE_URL=https://relay.example/v1
+SELFIE_XAI_IMAGE_API_BASE_URL=https://api.x.ai/v1
+SELFIE_XAI_IMAGE_API_MODEL=grok-imagine-image-2.0
+SELFIE_XAI_IMAGE_API_ASPECT_RATIO=2:3
+SELFIE_XAI_IMAGE_API_RESOLUTION=1k
+SELFIE_XAI_IMAGE_API_QUALITY=low
+SELFIE_XAI_IMAGE_API_TIMEOUT_MS=120000
 ```
 
 如果 `SELFIE_IMAGE_API_BASE_URL` 未配置，会先使用 `OPENAI_BASE_URL`，再回退到 OpenAI 默认 `/v1` base URL。

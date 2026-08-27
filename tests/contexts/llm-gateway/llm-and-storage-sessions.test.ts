@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createLLMRequestsRuntime } from "../../../src/contexts/llm-gateway/src/llm-requests-runtime.js";
 import { createLLMLogRuntime } from "../../../src/contexts/llm-gateway/src/llm-log-runtime.js";
 import { runLLMToolLoop } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
+import { createTokenUsageRuntime } from "../../../src/contexts/llm-gateway/src/token-usage-runtime.js";
 import { createApiSessionRuntime } from "../../../src/contexts/llm-session/src/index.js";
 import type { SessionClearRequest } from "../../../src/contexts/llm-session/src/application/session-clear-coordinator.js";
 import { createLLMSessionStore } from "../../../src/contexts/llm-session/src/adapters/sqlite-llm-session-store.js";
@@ -62,9 +63,7 @@ test("LLM log runtime binds responses to the request session instead of current 
       activeSession?.requestIds.push(entry.id);
     },
     noteResponse() {},
-    appendUsageLog() {},
     resolveModel: () => "model",
-    recordTokenUsage() {}
   });
 
   const requestMessages = [{ role: "user" as const, content: "hello" }];
@@ -223,9 +222,7 @@ test("gateway sanitization does not replace the authoritative session transcript
     getActiveSession: () => sessionRuntime.getCurrentLLMSessionSnapshot() as any,
     noteRequest: (entry, agentId, transcript) => sessionRuntime.noteLLMRequest(entry, agentId, transcript),
     noteResponse: (entry) => sessionRuntime.noteLLMResponse(entry),
-    appendUsageLog() {},
     resolveModel: () => "chat-model",
-    recordTokenUsage() {}
   });
   let requestCount = 0;
   const client: LLMClient = {
@@ -285,6 +282,7 @@ test("gateway sanitization does not replace the authoritative session transcript
 test("LLM requests runtime records deferred chat and talk responses after tool-loop formatting", async () => {
   const responseRequestIds: Array<number | undefined> = [];
   const responseResults: unknown[] = [];
+  const usageEvents: any[] = [];
   const client: LLMClient = {
     async chat() {
       return {
@@ -312,7 +310,9 @@ test("LLM requests runtime records deferred chat and talk responses after tool-l
         responseResults.push(result);
       },
       appendLLMUsageLog() {},
-      recordTokenUsageEvent() {},
+      recordTokenUsageEvent(event) {
+        usageEvents.push(event);
+      },
       time: fixedTime("2026-06-14T01:00:00.000Z"),
       resolvePromptApiPreset: () => ({ model: "fallback" }),
       appendLog() {}
@@ -329,7 +329,8 @@ test("LLM requests runtime records deferred chat and talk responses after tool-l
           toolNames: []
         };
       },
-      sendRequest: runtime.send,
+      // 模拟 agent-run indicator 包装器: 它会复制 request 并追加流式处理器。
+      sendRequest: async (request) => await runtime.send({ ...request, streamHandlers: {} }),
       flushResponseTranscript: runtime.flushResponseTranscript,
       transformAssistantMessage({ message }) {
         return { ...message, content: String(message.content).toUpperCase() };
@@ -351,6 +352,58 @@ test("LLM requests runtime records deferred chat and talk responses after tool-l
     finishReason: "stop",
     usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 }
   }]);
+  assert.deepEqual(usageEvents.map((event) => ({
+    agentId: event.agentId,
+    requestId: event.requestId,
+    totalTokens: event.result.usage?.totalTokens
+  })), [
+    { agentId: "chat", requestId: 10, totalTokens: 12 },
+    { agentId: "talk", requestId: 10, totalTokens: 12 }
+  ]);
+});
+
+test("token usage is stored before an asynchronous price lookup fails", async () => {
+  const inserted: any[] = [];
+  const warnings: string[] = [];
+  const store = {
+    insert(event: any) {
+      inserted.push(event);
+      return { id: 37 };
+    },
+    assignProviderId() {},
+    catalogNeedsRefresh() {
+      return false;
+    },
+    findModelPrice() {
+      throw new Error("price_lookup_failed");
+    }
+  };
+  const runtime = createTokenUsageRuntime({
+    getStore: () => store as any,
+    resolveModel: () => "chat-model",
+    resolvePreset: () => ({ baseURL: "https://api.example.test/v1", model: "chat-model" }),
+    now: () => new Date("2026-06-14T01:00:00.000Z"),
+    appendLog(_level, message) {
+      warnings.push(message);
+    }
+  });
+
+  runtime.recordTokenUsageEvent({
+    createdAt: "2026-06-14T09:00:00.000",
+    createdAtUtc: "2026-06-14T01:00:00.000Z",
+    agentId: "chat",
+    model: "chat-model",
+    result: {
+      message: { role: "assistant", content: "done" },
+      finishReason: "stop",
+      usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 }
+    }
+  });
+
+  assert.equal(inserted.length, 1);
+  assert.equal(inserted[0].totalTokens, 12);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(warnings, ["token usage price lookup failed: price_lookup_failed"]);
 });
 
 test("main LLM requests suspend inactivity until successful settlement", async () => {

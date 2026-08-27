@@ -44,7 +44,7 @@ export function createLLMRequestsRuntime(input: {
   const requestLogEntries = new WeakMap<object, LLMRequestLogEntry>();
   const subagentRequestSessions = new WeakMap<object, { append(entry: unknown): void }>();
   // 延迟递交的 response 结果: deferResponseTranscript 时暂存, 由 flushResponseTranscript 递交最终版本。
-  const deferredResponses = new WeakMap<object, LLMChatResult>();
+  const deferredResponses = new Map<string, { result: LLMChatResult; request?: LLMRequestLogEntry }>();
   // SubAgent 库连接: 惰性打开一次, 打开失败后续调用可重试(不缓存失败状态)。
   let subagentStore: LLMSessionStore | undefined;
 
@@ -62,13 +62,26 @@ export function createLLMRequestsRuntime(input: {
     },
     onResponseReceived(requestInput, request, result) {
       if (requestInput.agentId === "chat" || requestInput.agentId === "talk") {
+        const requestEntry = requestLogEntries.get(requestInput);
+        const receivedAt = input.time.now();
+        input.recordTokenUsageEvent({
+          createdAt: receivedAt.iso,
+          createdAtUtc: receivedAt.date.toISOString(),
+          agentId: requestInput.agentId,
+          model: result.model ?? request.model,
+          sessionId: requestEntry?.sessionId,
+          requestId: requestEntry?.id,
+          result
+        });
+        input.appendLLMUsageLog(result, result.model ?? request.model);
         if (requestInput.deferResponseTranscript) {
           // 延迟递交: response 消息由调用方在格式化(transform)完成后通过
           // flushResponseTranscript 递交最终版本, 保证与提交的 transcript 一致。
-          deferredResponses.set(requestInput, result);
+          if (!requestInput.correlationId) throw new Error("llm_deferred_response_missing_correlation_id");
+          deferredResponses.set(requestInput.correlationId, { result, request: requestEntry });
           return;
         }
-        input.appendLLMResponseLog(result, requestInput.agentId, requestLogEntries.get(requestInput));
+        input.appendLLMResponseLog(result, requestInput.agentId, requestEntry);
         return;
       }
       subagentRequestSessions.get(requestInput)?.append({ type: "response", round: requestInput.round, response: result });
@@ -107,11 +120,13 @@ export function createLLMRequestsRuntime(input: {
    * 与后续 onMessagesChanged 提交的 transcript 完全一致。
    */
   function flushResponseTranscript(flushInput: { round: number; result: LLMChatResult; request: LLMToolLoopRoundRequest }): void {
-    const result = deferredResponses.get(flushInput.request);
-    if (!result) return;
-    deferredResponses.delete(flushInput.request);
+    const correlationId = flushInput.request.correlationId;
+    if (!correlationId) throw new Error("llm_deferred_response_missing_correlation_id");
+    const deferred = deferredResponses.get(correlationId);
+    if (!deferred) throw new Error(`llm_deferred_response_not_found:${correlationId}`);
+    deferredResponses.delete(correlationId);
     if (isMainAgent(flushInput.request.agentId)) {
-      input.appendLLMResponseLog({ ...result, message: flushInput.result.message }, flushInput.request.agentId, requestLogEntries.get(flushInput.request));
+      input.appendLLMResponseLog({ ...deferred.result, message: flushInput.result.message }, flushInput.request.agentId, deferred.request);
     }
   }
 

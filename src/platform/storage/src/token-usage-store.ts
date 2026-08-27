@@ -22,6 +22,7 @@ export type TokenUsageEventInput = {
   cacheMissTokens?: number;
   finishReason?: string;
   rawUsageJson?: string;
+  providerId?: string;
 };
 
 export type StoredTokenUsageEvent = Required<Pick<TokenUsageEventInput, "createdAt" | "agentId">> & {
@@ -39,6 +40,7 @@ export type StoredTokenUsageEvent = Required<Pick<TokenUsageEventInput, "created
   cacheHitRate?: number;
   finishReason?: string;
   rawUsageJson?: string;
+  providerId?: string;
 };
 
 export type TokenUsageQuery = {
@@ -56,6 +58,7 @@ export type TokenUsageAggregate = {
   totalTokens: number;
   cacheHitTokens: number;
   cacheMissTokens: number;
+  costUsd: number;
   cacheHitRate?: number;
 };
 
@@ -81,8 +84,17 @@ export type TokenUsageReport = {
 
 export type TokenUsageStore = {
   insert(input: TokenUsageEventInput): StoredTokenUsageEvent;
+  assignProviderId(eventId: number, providerId?: string): void;
   report(query?: TokenUsageQuery): TokenUsageReport;
+  catalogNeedsRefresh(nowUtc: string, maxAgeMs: number): boolean;
+  providerNeedsRefresh(input: { baseURL: string; nowUtc: string; maxAgeMs: number }): boolean;
+  modelPriceNeedsRefresh(input: { baseURL: string; model: string; nowUtc: string; maxAgeMs: number }): boolean;
+  replaceModelCatalog(rows: Array<{ providerId: string; apiURL: string; modelId: string; price: Record<string, number> }>, updatedAtUtc: string): void;
+  refreshModelPrice(input: { baseURL: string; model: string; updatedAtUtc: string }): StoredModelPrice | undefined;
+  findModelPrice(input: { baseURL: string; model: string; updatedAtUtc: string; maxAgeMs: number }): StoredModelPrice | undefined;
 };
+
+export type StoredModelPrice = { id: number; providerId: string; modelId: string; price: Record<string, number> };
 
 export function createTokenUsageStore(dbPath: string, options: { time?: CurrentTimeProvider } = {}): TokenUsageStore {
   const time = options.time ?? createCurrentTimeProvider("UTC");
@@ -106,14 +118,58 @@ export function createTokenUsageStore(dbPath: string, options: { time?: CurrentT
       cache_miss_tokens INTEGER,
       cache_hit_rate REAL,
       finish_reason TEXT,
-      raw_usage_json TEXT
+      raw_usage_json TEXT,
+      provider_id TEXT
     );
 
     CREATE INDEX IF NOT EXISTS token_usage_created_at_idx ON token_usage_events(created_at);
     CREATE INDEX IF NOT EXISTS token_usage_agent_model_idx ON token_usage_events(agent_id, model, created_at);
     CREATE INDEX IF NOT EXISTS token_usage_created_at_utc_idx ON token_usage_events(created_at_utc);
-    PRAGMA user_version = 1;
+    CREATE TABLE IF NOT EXISTS llm_model_catalog_sync (
+      source TEXT PRIMARY KEY,
+      updated_at_utc TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS llm_model_providers (
+      provider_id TEXT PRIMARY KEY,
+      api_url TEXT NOT NULL,
+      updated_at_utc TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS llm_model_prices (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider_id TEXT NOT NULL,
+      model_id TEXT NOT NULL,
+      price_json TEXT NOT NULL,
+      input_per_mtok REAL NOT NULL,
+      output_per_mtok REAL NOT NULL,
+      cache_read_per_mtok REAL,
+      cache_write_per_mtok REAL,
+      first_seen_at_utc TEXT NOT NULL,
+      last_seen_at_utc TEXT NOT NULL,
+      UNIQUE(provider_id, model_id, price_json)
+    );
+    CREATE INDEX IF NOT EXISTS llm_model_prices_lookup_idx ON llm_model_prices(provider_id, model_id, last_seen_at_utc DESC);
+    CREATE TABLE IF NOT EXISTS llm_active_model_prices (
+      provider_id TEXT NOT NULL,
+      model_id TEXT NOT NULL,
+      price_id INTEGER NOT NULL,
+      updated_at_utc TEXT NOT NULL,
+      PRIMARY KEY(provider_id, model_id)
+    );
+    CREATE TABLE IF NOT EXISTS llm_model_price_timeline (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider_id TEXT NOT NULL,
+      model_id TEXT NOT NULL,
+      price_json TEXT NOT NULL,
+      input_per_mtok REAL NOT NULL,
+      output_per_mtok REAL NOT NULL,
+      cache_read_per_mtok REAL,
+      cache_write_per_mtok REAL,
+      first_seen_at_utc TEXT NOT NULL,
+      last_seen_at_utc TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS llm_model_price_timeline_lookup_idx ON llm_model_price_timeline(provider_id, model_id, last_seen_at_utc);
   `);
+  ensureColumn(db, "token_usage_events", "provider_id", "TEXT");
 
   return {
     insert(input) {
@@ -124,8 +180,8 @@ export function createTokenUsageStore(dbPath: string, options: { time?: CurrentT
         INSERT INTO token_usage_events(
           created_at, created_at_utc, agent_id, model, session_id, request_id, response_id,
           input_tokens, output_tokens, total_tokens, cache_hit_tokens,
-          cache_miss_tokens, cache_hit_rate, finish_reason, raw_usage_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          cache_miss_tokens, cache_hit_rate, finish_reason, raw_usage_json, provider_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         createdAt,
         createdAtUtc,
@@ -141,46 +197,112 @@ export function createTokenUsageStore(dbPath: string, options: { time?: CurrentT
         finiteNumberOrNull(input.cacheMissTokens),
         cacheHitRate ?? null,
         input.finishReason ?? null,
-        input.rawUsageJson ?? null
+        input.rawUsageJson ?? null,
+        input.providerId ?? null
       );
-      return rowToEvent(db.prepare(tokenUsageSelect("WHERE id = ?")).get(Number(result.lastInsertRowid)));
+      return rowToEvent(db.prepare(tokenUsageSelect("WHERE event.id = ?")).get(Number(result.lastInsertRowid)));
+    },
+    assignProviderId(eventId, providerId) {
+      db.prepare("UPDATE token_usage_events SET provider_id = ? WHERE id = ?").run(providerId ?? null, eventId);
     },
     report(query = {}) {
       const filter = buildFilter(query);
       const bucketExpr = query.bucket === "day"
-        ? "substr(created_at, 1, 10)"
-        : "substr(created_at, 1, 13) || ':00'";
+        ? "substr(event.created_at, 1, 10)"
+        : "substr(event.created_at, 1, 13) || ':00'";
       const summary = aggregateRows(db.prepare(`
         SELECT ${aggregateSelect()}
-        FROM token_usage_events
+        FROM ${tokenUsageFrom()}
         ${filter.where}
       `).get(...filter.values));
       const buckets = db.prepare(`
         SELECT ${bucketExpr} AS bucket, ${aggregateSelect()}
-        FROM token_usage_events
+        FROM ${tokenUsageFrom()}
         ${filter.where}
         GROUP BY bucket
         ORDER BY bucket ASC
       `).all(...filter.values).map((row: any) => ({ bucket: row.bucket, ...aggregateRows(row) }));
       const byModel = db.prepare(`
-        SELECT COALESCE(model, 'unknown') AS model, ${aggregateSelect()}
-        FROM token_usage_events
+        SELECT COALESCE(event.model, 'unknown') AS model, ${aggregateSelect()}
+        FROM ${tokenUsageFrom()}
         ${filter.where}
-        GROUP BY COALESCE(model, 'unknown')
+        GROUP BY COALESCE(event.model, 'unknown')
         ORDER BY totalTokens DESC, requests DESC, model ASC
       `).all(...filter.values).map((row: any) => ({ model: row.model, ...aggregateRows(row) }));
       const byModelBucket = db.prepare(`
-        SELECT COALESCE(model, 'unknown') AS model, ${bucketExpr} AS bucket, ${aggregateSelect()}
-        FROM token_usage_events
+        SELECT COALESCE(event.model, 'unknown') AS model, ${bucketExpr} AS bucket, ${aggregateSelect()}
+        FROM ${tokenUsageFrom()}
         ${filter.where}
-        GROUP BY COALESCE(model, 'unknown'), bucket
+        GROUP BY COALESCE(event.model, 'unknown'), bucket
         ORDER BY model ASC, bucket ASC
       `).all(...filter.values).map((row: any) => ({ model: row.model, bucket: row.bucket, ...aggregateRows(row) }));
       const latestLimit = Math.max(1, Math.min(200, Math.trunc(query.latestLimit ?? 50)));
-      const latest = db.prepare(tokenUsageSelect(`${filter.where} ORDER BY id DESC LIMIT ?`))
+      const latest = db.prepare(tokenUsageSelect(`${filter.where} ORDER BY event.id DESC LIMIT ?`))
         .all(...filter.values, latestLimit)
         .map(rowToEvent);
       return { summary, buckets, byModel, byModelBucket, latest };
+    },
+    catalogNeedsRefresh(nowUtc, maxAgeMs) {
+      const row = db.prepare("SELECT updated_at_utc AS updatedAtUtc FROM llm_model_catalog_sync WHERE source = 'models.dev'").get();
+      const updatedAt = typeof row?.updatedAtUtc === "string" ? Date.parse(row.updatedAtUtc) : Number.NaN;
+      return !Number.isFinite(updatedAt) || Date.parse(nowUtc) - updatedAt >= maxAgeMs;
+    },
+    providerNeedsRefresh(input) {
+      const providerURL = normalizeProviderURL(input.baseURL);
+      const row = db.prepare("SELECT updated_at_utc AS updatedAtUtc FROM llm_model_providers WHERE api_url = ?").get(providerURL);
+      const updatedAt = typeof row?.updatedAtUtc === "string" ? Date.parse(row.updatedAtUtc) : Number.NaN;
+      return !Number.isFinite(updatedAt) || Date.parse(input.nowUtc) - updatedAt >= input.maxAgeMs;
+    },
+    modelPriceNeedsRefresh(input) {
+      const providerURL = normalizeProviderURL(input.baseURL);
+      const provider = db.prepare("SELECT provider_id AS providerId FROM llm_model_providers WHERE api_url = ?").get(providerURL);
+      if (!provider) return true;
+      const row = db.prepare("SELECT updated_at_utc AS updatedAtUtc FROM llm_active_model_prices WHERE provider_id = ? AND model_id = ?").get(provider.providerId, input.model);
+      const updatedAt = typeof row?.updatedAtUtc === "string" ? Date.parse(row.updatedAtUtc) : Number.NaN;
+      return !Number.isFinite(updatedAt) || Date.parse(input.nowUtc) - updatedAt >= input.maxAgeMs;
+    },
+    replaceModelCatalog(rows, updatedAtUtc) {
+      transaction(db, () => {
+        for (const row of rows) {
+          db.prepare(`INSERT INTO llm_model_providers(provider_id, api_url, updated_at_utc) VALUES (?, ?, ?)
+            ON CONFLICT(provider_id) DO UPDATE SET api_url = excluded.api_url, updated_at_utc = excluded.updated_at_utc`).run(row.providerId, normalizeProviderURL(row.apiURL), updatedAtUtc);
+          const priceJson = canonicalPriceJson(row.price);
+          db.prepare(`INSERT INTO llm_model_prices(
+            provider_id, model_id, price_json, input_per_mtok, output_per_mtok, cache_read_per_mtok, cache_write_per_mtok, first_seen_at_utc, last_seen_at_utc
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(provider_id, model_id, price_json) DO UPDATE SET last_seen_at_utc = excluded.last_seen_at_utc`).run(
+            row.providerId, row.modelId, priceJson, row.price.input, row.price.output,
+            row.price.cache_read ?? null, row.price.cache_write ?? null, updatedAtUtc, updatedAtUtc
+          );
+        }
+        db.prepare(`INSERT INTO llm_model_catalog_sync(source, updated_at_utc) VALUES ('models.dev', ?)
+          ON CONFLICT(source) DO UPDATE SET updated_at_utc = excluded.updated_at_utc`).run(updatedAtUtc);
+      });
+    },
+    refreshModelPrice(input) {
+      const providerURL = normalizeProviderURL(input.baseURL);
+      const row = db.prepare(`SELECT catalog.provider_id AS providerId, catalog.model_id AS modelId, catalog.price_json AS priceJson,
+        catalog.input_per_mtok AS input, catalog.output_per_mtok AS output, catalog.cache_read_per_mtok AS cacheRead, catalog.cache_write_per_mtok AS cacheWrite
+        FROM llm_model_providers provider JOIN llm_model_prices catalog ON catalog.provider_id = provider.provider_id
+        WHERE provider.api_url = ? AND catalog.model_id = ? ORDER BY catalog.last_seen_at_utc DESC, catalog.id DESC LIMIT 1`).get(providerURL, input.model);
+      if (!row) return undefined;
+      const latest = db.prepare(`SELECT id, price_json AS priceJson FROM llm_model_price_timeline WHERE provider_id = ? AND model_id = ? ORDER BY id DESC LIMIT 1`).get(row.providerId, row.modelId);
+      if (latest?.priceJson === row.priceJson) db.prepare("UPDATE llm_model_price_timeline SET last_seen_at_utc = ? WHERE id = ?").run(input.updatedAtUtc, latest.id);
+      else db.prepare(`INSERT INTO llm_model_price_timeline(provider_id, model_id, price_json, input_per_mtok, output_per_mtok, cache_read_per_mtok, cache_write_per_mtok, first_seen_at_utc, last_seen_at_utc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(row.providerId, row.modelId, row.priceJson, row.input, row.output, row.cacheRead, row.cacheWrite, input.updatedAtUtc, input.updatedAtUtc);
+      return this.findModelPrice({ baseURL: input.baseURL, model: input.model, updatedAtUtc: input.updatedAtUtc, maxAgeMs: 0 });
+    },
+    findModelPrice(input) {
+      const providerURL = normalizeProviderURL(input.baseURL);
+      const row = db.prepare(`SELECT price.id, price.provider_id AS providerId, price.model_id AS modelId, price.price_json AS priceJson
+        FROM llm_model_providers provider
+        JOIN llm_model_price_timeline price ON price.provider_id = provider.provider_id
+        WHERE provider.api_url = ? AND price.model_id = ?
+        ORDER BY price.id DESC LIMIT 1`).get(providerURL, input.model);
+      if (!row) return undefined;
+      db.prepare(`INSERT INTO llm_active_model_prices(provider_id, model_id, price_id, updated_at_utc) VALUES (?, ?, ?, ?)
+        ON CONFLICT(provider_id, model_id) DO UPDATE SET price_id = excluded.price_id, updated_at_utc = excluded.updated_at_utc`).run(row.providerId, row.modelId, Number(row.id), input.updatedAtUtc);
+      return { id: Number(row.id), providerId: row.providerId, modelId: row.modelId, price: JSON.parse(row.priceJson) as Record<string, number> };
     }
   };
 }
@@ -189,15 +311,15 @@ function buildFilter(query: TokenUsageQuery): { where: string; values: unknown[]
   const clauses: string[] = [];
   const values: unknown[] = [];
   if (query.since) {
-    clauses.push("created_at >= ?");
+      clauses.push("event.created_at >= ?");
     values.push(query.since);
   }
   if (query.agentId && query.agentId !== "all") {
-    clauses.push("agent_id = ?");
+      clauses.push("event.agent_id = ?");
     values.push(query.agentId);
   }
   if (query.model && query.model !== "all") {
-    clauses.push("COALESCE(model, 'unknown') = ?");
+      clauses.push("COALESCE(event.model, 'unknown') = ?");
     values.push(query.model);
   }
   return {
@@ -213,7 +335,10 @@ function aggregateSelect(): string {
     COALESCE(SUM(output_tokens), 0) AS outputTokens,
     COALESCE(SUM(total_tokens), 0) AS totalTokens,
     COALESCE(SUM(cache_hit_tokens), 0) AS cacheHitTokens,
-    COALESCE(SUM(cache_miss_tokens), 0) AS cacheMissTokens
+    COALESCE(SUM(cache_miss_tokens), 0) AS cacheMissTokens,
+    COALESCE(SUM((COALESCE(cache_hit_tokens, 0) * COALESCE(price.cache_read_per_mtok, price.input_per_mtok)
+      + COALESCE(cache_miss_tokens, MAX(0, COALESCE(input_tokens, 0) - COALESCE(cache_hit_tokens, 0))) * price.input_per_mtok
+      + COALESCE(output_tokens, 0) * price.output_per_mtok) / 1000000.0), 0) AS costUsd
   `;
 }
 
@@ -227,6 +352,7 @@ function aggregateRows(row: any): TokenUsageAggregate {
     totalTokens: Number(row?.totalTokens ?? 0),
     cacheHitTokens,
     cacheMissTokens,
+    costUsd: Number(row?.costUsd ?? 0),
     cacheHitRate: calculateCacheHitRate({ cacheHitTokens, cacheMissTokens })
   };
 }
@@ -247,10 +373,37 @@ function finiteNumberOrNull(value: number | undefined): number | null {
   return typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : null;
 }
 
+
+function ensureColumn(db: DatabaseSync, table: string, column: string, type: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>;
+  if (!columns.some((entry) => entry.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+}
+
+function normalizeProviderURL(value: string): string {
+  const url = new URL(value);
+  const path = url.pathname.replace(/\/+$/, "").replace(/\/v1$/i, "");
+  return `${url.origin}${path}`;
+}
+
+function canonicalPriceJson(price: Record<string, number>): string {
+  return JSON.stringify(Object.fromEntries(Object.entries(price).sort(([left], [right]) => left.localeCompare(right))));
+}
+
+function transaction(db: DatabaseSync, fn: () => void): void {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    fn();
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 function tokenUsageSelect(suffix: string): string {
   return `
     SELECT
-      id,
+      event.id AS id,
       created_at AS createdAt,
       created_at_utc AS createdAtUtc,
       agent_id AS agentId,
@@ -265,10 +418,19 @@ function tokenUsageSelect(suffix: string): string {
       cache_miss_tokens AS cacheMissTokens,
       cache_hit_rate AS cacheHitRate,
       finish_reason AS finishReason,
-      raw_usage_json AS rawUsageJson
-    FROM token_usage_events
+      raw_usage_json AS rawUsageJson,
+      event.provider_id AS providerId
+    FROM ${tokenUsageFrom()}
     ${suffix}
   `;
+}
+
+function tokenUsageFrom(): string {
+  return `token_usage_events event
+    LEFT JOIN llm_model_price_timeline price ON price.id = COALESCE(
+      (SELECT future.id FROM llm_model_price_timeline future WHERE future.provider_id = event.provider_id AND future.model_id = event.model AND future.last_seen_at_utc >= event.created_at_utc ORDER BY future.last_seen_at_utc ASC, future.id ASC LIMIT 1),
+      (SELECT latest.id FROM llm_model_price_timeline latest WHERE latest.provider_id = event.provider_id AND latest.model_id = event.model ORDER BY latest.last_seen_at_utc DESC, latest.id DESC LIMIT 1)
+    )`;
 }
 
 function rowToEvent(row: any): StoredTokenUsageEvent {
@@ -288,7 +450,8 @@ function rowToEvent(row: any): StoredTokenUsageEvent {
     cacheMissTokens: optionalNumber(row.cacheMissTokens),
     cacheHitRate: optionalNumber(row.cacheHitRate),
     finishReason: optionalString(row.finishReason),
-    rawUsageJson: optionalString(row.rawUsageJson)
+    rawUsageJson: optionalString(row.rawUsageJson),
+    providerId: optionalString(row.providerId)
   };
 }
 

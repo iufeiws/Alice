@@ -1,6 +1,8 @@
 import type { BashSandboxConfig } from "./config.js";
+import { resolveSandboxHostPath } from "./paths.js";
 
-const childProcess = await import("node:child_process");
+const fs = await import("node:fs");
+const path = await import("node:path");
 
 export type SandboxNotesEntry = {
   name: string;
@@ -9,44 +11,31 @@ export type SandboxNotesEntry = {
 };
 
 /**
- * 同步读取沙箱容器内笔记目录的索引（每条笔记的 name / description / path）。
- * 供 prompt 变量在 skill 加载时直接构建列表，不需要 LLM 再执行命令。
- * 命令为固定字符串（目录来自配置），文件名 glob 在容器内展开，无宿主侧注入面。
+ * 同步读取映射到沙箱容器内笔记目录的索引（每条笔记的 name / description / path）。
+ * 笔记目录是宿主挂载目录，无须启动容器即可读取；返回路径仍是容器路径，供 Agent 使用。
  */
 export function readSandboxNotesIndex(config: BashSandboxConfig, notesContainerDir: string): SandboxNotesEntry[] {
-  const script = [
-    `cd '${notesContainerDir}' 2>/dev/null || exit 0`,
-    "for f in *.md; do",
-    '  [ -f "$f" ] || continue',
-    "  printf '@@%s\\n' \"$f\"",
-    "  sed -n '1,/^---$/p' \"$f\"",
-    "done"
-  ].join("\n");
-  const stdout = childProcess.execFileSync("docker", ["exec", config.containerName, "sh", "-c", script], {
-    encoding: "utf8",
-    maxBuffer: 1024 * 1024,
-    stdio: ["ignore", "pipe", "pipe"]
-  });
-  return parseSandboxNotesOutput(stdout, notesContainerDir);
-}
-
-export function parseSandboxNotesOutput(output: string, notesContainerDir: string): SandboxNotesEntry[] {
-  const blocks: { file: string; lines: string[] }[] = [];
-  let current: { file: string; lines: string[] } | undefined;
-  for (const line of output.split(/\r?\n/)) {
-    if (line.startsWith("@@")) {
-      current = { file: line.slice(2), lines: [] };
-      blocks.push(current);
-    } else if (current) {
-      current.lines.push(line);
-    }
-  }
-  return blocks.map(({ file, lines }) => {
-    const frontmatter = frontmatterBlock(lines);
+  const notesHostDir = resolveSandboxHostPath(config, notesContainerDir);
+  if (!notesHostDir) throw new Error(`sandbox notes directory is not mounted: ${notesContainerDir}`);
+  const files = readMarkdownFiles(notesHostDir);
+  return files.map((file) => {
+    const frontmatter = frontmatterBlock(fs.readFileSync(path.join(notesHostDir, file), "utf8").split(/\r?\n/));
     const name = frontmatterValue(frontmatter, "name") || file.replace(/\.md$/i, "");
     const description = frontmatterValue(frontmatter, "description") || "";
     return { name, description, path: `${notesContainerDir}/${file}` };
   });
+}
+
+function readMarkdownFiles(directory: string): string[] {
+  try {
+    return fs.readdirSync(directory)
+      .filter((file) => file.endsWith(".md"))
+      .filter((file) => fs.statSync(path.join(directory, file)).isFile())
+      .sort();
+  } catch (error: any) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  }
 }
 
 function frontmatterBlock(lines: string[]): string[] {

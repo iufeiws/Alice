@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createAliceStore } from "../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import { createTokenUsageStore } from "../../../src/platform/storage/src/token-usage-store.js";
+import { createModelPriceSync } from "../../../src/contexts/llm-gateway/src/model-price-sync.js";
 import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.js";
 import * as sqlite from "../../../src/platform/storage/src/sqlite-compat.js";
 import { path, makeTempDir } from "./llm-and-storage-helpers.js";
@@ -96,6 +97,50 @@ test("token usage store keeps unknown usage rows", () => {
   assert.equal(report.summary.outputTokens, 3);
   assert.equal(report.summary.cacheHitRate, undefined);
   assert.equal(report.latest[0].model, "unknown-usage");
+});
+
+test("token usage store merges identical price bundles and ignores terminal v1 when finding a provider", () => {
+  const dir = makeTempDir("token-usage-price-catalog");
+  const store = createTokenUsageStore(path.join(dir, "token-usage.sqlite"));
+  const price = { input: 2, output: 8, cache_read: 0.2, cache_write: 2.5 };
+  store.replaceModelCatalog([
+    { providerId: "openai", apiURL: "https://api.openai.com/v1", modelId: "gpt-test", price }
+  ], "2026-05-30T10:00:00.000Z");
+  store.replaceModelCatalog([
+    { providerId: "openai", apiURL: "https://api.openai.com/v1", modelId: "gpt-test", price }
+  ], "2026-05-30T10:30:00.000Z");
+
+  const matched = store.refreshModelPrice({ baseURL: "https://api.openai.com/v1/", model: "gpt-test", updatedAtUtc: "2026-05-30T10:30:00.000Z" });
+  assert.equal(matched?.providerId, "openai");
+  assert.deepEqual(matched?.price, price);
+  assert.equal(store.catalogNeedsRefresh("2026-05-30T10:59:59.999Z", 60 * 60 * 1000), false);
+  assert.equal(store.catalogNeedsRefresh("2026-05-30T11:30:00.000Z", 60 * 60 * 1000), true);
+});
+
+test("model price sync fetches the provider catalog at most once per hour", async () => {
+  const dir = makeTempDir("token-usage-price-sync");
+  const store = createTokenUsageStore(path.join(dir, "token-usage.sqlite"));
+  let now = new Date("2026-05-30T10:00:00.000Z");
+  let fetches = 0;
+  const sync = createModelPriceSync({
+    store,
+    now: () => now,
+    fetch: async () => {
+      fetches += 1;
+      return new Response(JSON.stringify({
+        neon: { api: "${NEON_AI_GATEWAY_BASE_URL}/v1", models: { ignored: { cost: { input: 1, output: 1 } } } },
+        openai: { api: "https://api.openai.com/v1", models: { "gpt-test": { cost: { input: 2, output: 8, cache_read: 0.2 } } } }
+      }));
+    }
+  });
+  const preset = { baseURL: "https://api.openai.com", model: "gpt-test" };
+
+  assert.equal((await sync.resolvePrice(preset))?.price.output, 8);
+  now = new Date("2026-05-30T10:30:00.000Z");
+  await sync.resolvePrice(preset);
+  now = new Date("2026-05-30T11:00:00.000Z");
+  await sync.resolvePrice(preset);
+  assert.equal(fetches, 2);
 });
 
 test("sqlite store preserves existing message logs after schema initialization", () => {

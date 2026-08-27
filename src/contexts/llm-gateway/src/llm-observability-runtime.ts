@@ -7,12 +7,18 @@ export function createLLMObservabilityRuntime(input: {
   requestLogs: any[];
   responseLogs: any[];
   resolvePromptApiPreset(agentId: "chat" | "talk" | "memorize"): any;
+  resolveLLMApiPreset(name: string): any;
+  piPresetName?: string;
   agentLoopRuntime: any;
   appendLog(level: "info" | "warn" | "error", message: string): void;
 }) {
   const tokenUsageRuntime = createTokenUsageRuntime({
     getStore: () => input.tokenUsageStore,
     resolveModel: (agentId) => agentId === "talk" ? input.resolvePromptApiPreset("talk")?.model : agentId === "chat" ? input.resolvePromptApiPreset("chat")?.model : undefined,
+    resolvePreset: (agentId) => agentId === "chat" || agentId === "talk" || agentId === "memorize"
+      ? input.resolvePromptApiPreset(agentId)
+      : agentId === "pi" && input.piPresetName ? input.resolveLLMApiPreset(input.piPresetName) : undefined,
+    now: () => input.time.now().date,
     appendLog: input.appendLog
   });
 
@@ -24,9 +30,7 @@ export function createLLMObservabilityRuntime(input: {
     getActiveSession: () => input.agentLoopRuntime.getActiveMainLLMSession(),
     noteRequest: (entry, agentId, transcriptMessages) => input.agentLoopRuntime.noteLLMRequest(entry, agentId, transcriptMessages),
     noteResponse: (entry) => input.agentLoopRuntime.noteLLMResponse(entry),
-    appendUsageLog: tokenUsageRuntime.appendLLMUsageLog,
-    resolveModel: (agentId) => agentId === "talk" ? input.resolvePromptApiPreset("talk")?.model : input.resolvePromptApiPreset("chat")?.model,
-    recordTokenUsage: tokenUsageRuntime.recordTokenUsage
+    resolveModel: (agentId) => agentId === "talk" ? input.resolvePromptApiPreset("talk")?.model : input.resolvePromptApiPreset("chat")?.model
   });
 
   return {

@@ -12,7 +12,7 @@ import {
   buildOutput,
   delay,
   escapeXml,
-  filterParentheticalSendContent,
+  normalizeSendContent,
   isImageFile,
   messageDelayForContent,
   missingVoiceSynthesizer,
@@ -185,7 +185,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     const rawContent = stringValue(call.input.content);
     const senderName = normalizeSenderName(call.input.alice ?? call.input.senderName ?? "shell");
     const content = type === "message" || type === "voice"
-      ? filterParentheticalSendContent(rawContent)
+      ? normalizeSendContent(rawContent)
       : rawContent;
     if (!content.trim()) return toolError(call, messagingToolText.contentRequired);
     const config = resolveMessagingConfig();

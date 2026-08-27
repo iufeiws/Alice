@@ -232,7 +232,7 @@ function createContainerArgs(config: BashSandboxConfig, image: string): string[]
     args.push("-e", `PI_WORKER_TOKEN=${config.piWorker.workerToken ?? ""}`);
     args.push("-e", `PI_MAX_CONCURRENCY=${config.piWorker.maxConcurrency ?? 2}`);
     args.push("-e", `PI_MAX_QUEUE_SIZE=${config.piWorker.maxQueueSize ?? 20}`);
-    args.push("-e", `PI_TASK_TIMEOUT_SECONDS=${config.piWorker.taskTimeoutSeconds ?? 900}`);
+    args.push("-e", `PI_TASK_TIMEOUT_SECONDS=${config.piWorker.taskTimeoutSeconds ?? 21_600}`);
     args.push("-e", `PI_AGENT_TIMEZONE=${config.piWorker.timezone ?? "Asia/Singapore"}`);
     args.push("-e", `PI_SESSION_ROOT=${config.piWorker.containerDir}`);
     args.push("-v", `${path.resolve(config.piWorker.hostDir)}:${config.piWorker.containerDir}:rw`);

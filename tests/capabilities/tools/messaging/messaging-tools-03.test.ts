@@ -379,29 +379,30 @@ async function sendParentheticalFilteredMessage(name: string) {
   return { result, sent, store, tools };
 }
 
-test("send_chat filters parenthetical text before sending", async () => {
+test("send_chat preserves parenthetical text when sending", async () => {
   const { result, sent } = await sendParentheticalFilteredMessage("messaging-send-filter-parentheses-send");
 
   assert.equal(result.ok, true);
-  assert.deepEqual(sent.map((output) => output.content.kind === "text" ? output.content.text : ""), ["one", "two"]);
+  assert.deepEqual(sent.map((output) => output.content.kind === "text" ? output.content.text : ""), ["one(不发送)", "(整行不发送)", "two（也不发送）"]);
 });
 
-test("send_chat filters parenthetical text before storing", async () => {
+test("send_chat preserves parenthetical text before storing", async () => {
   const { store } = await sendParentheticalFilteredMessage("messaging-send-filter-parentheses-store");
   const stored = store.listMessagesForConversation("wechat:dm:wx-user", 10).filter((message) => message.direction === "outbound");
 
-  assert.deepEqual(stored.map((message) => message.contentText), ["one", "two"]);
+  assert.deepEqual(stored.map((message) => message.contentText), ["one(不发送)", "(整行不发送)", "two（也不发送）"]);
 });
 
-test("send_chat rejects content made only of parenthetical text", async () => {
-  const { tools } = createParentheticalFilterTools("messaging-send-filter-parentheses-empty");
+test("send_chat accepts content made only of parenthetical text", async () => {
+  const { sent, tools } = createParentheticalFilterTools("messaging-send-filter-parentheses-empty");
 
   const emptyResult = await tools.execute({
     id: "call_send_filter_parentheses_empty",
     toolName: "Chat", input: { action: "send",  type: "message", content: "(只是一段旁白)" }
   });
 
-  assert.equal(emptyResult.ok, false);
+  assert.equal(emptyResult.ok, true);
+  assert.deepEqual(sent.map((output) => output.content.kind === "text" ? output.content.text : ""), ["(只是一段旁白)"]);
 });
 
 async function sendDsmlFilteredMessage(name: string) {

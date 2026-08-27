@@ -1,4 +1,3 @@
-import { deepSeekPricesCnyPer1M } from "../../../contexts/llm-gateway/src/token-pricing.js";
 import { renderAdminLayout } from "./layout.js";
 import { renderAdminScript } from "./scripts/admin-script.js";
 import { renderAdminStyles } from "./styles.js";
@@ -17,7 +16,7 @@ ${renderAdminStyles()}
   <body>
 ${renderAdminLayout()}
     <script>
-${renderAdminScript(deepSeekPricesCnyPer1M)}
+${renderAdminScript()}
     </script>
   </body>
 </html>`;

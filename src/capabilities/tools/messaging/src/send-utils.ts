@@ -35,15 +35,11 @@ export function splitSendContentParts(content: string): string[] {
     .filter(Boolean);
 }
 
-export function filterParentheticalSendContent(content: string): string {
+export function normalizeSendContent(content: string): string {
   return content
     .split(/\r?\n|\\r\\n|\\n/g)
     .filter((line) => !containsDsmlMarkup(line))
-    .join("\n")
-    .replace(/[ \t]*\([^()\r\n]*\)[ \t]*/g, " ")
-    .replace(/[ \t]*（[^（）\r\n]*）[ \t]*/g, " ")
-    .split(/\r?\n|\\r\\n|\\n/g)
-    .map((line) => line.replace(/[ \t]{2,}/g, " ").trim())
+    .map((line) => line.trim())
     .filter(Boolean)
     .join("\n");
 }

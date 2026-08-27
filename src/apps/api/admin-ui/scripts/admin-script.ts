@@ -18,7 +18,7 @@ import { renderDomScript } from "../shared/dom-script.js";
 import { renderImageUploadScript } from "../shared/image-upload-script.js";
 import { renderPromptLayerScript } from "../shared/prompt-layer-script.js";
 
-export function renderAdminScript(deepSeekPricesCnyPer1M: unknown): string {
+export function renderAdminScript(): string {
   return `      const $ = (id) => document.getElementById(id);
 ${renderDomScript()}
 ${renderPromptLayerScript()}
@@ -29,7 +29,7 @@ ${renderPhotoPluginScript()}
 ${renderTtsPluginScript()}
 ${renderInitiatedBehaviorsScript()}
 ${renderAdminTerminalScript()}
-${renderTokenUsageScript(deepSeekPricesCnyPer1M)}
+${renderTokenUsageScript()}
 ${renderToolPreviewScript()}
 ${renderPluginsScript()}
 ${renderLlmChainScript()}

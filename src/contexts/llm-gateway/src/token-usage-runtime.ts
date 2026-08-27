@@ -1,5 +1,6 @@
 import type { LLMChatResult } from "./index.js";
 import type { TokenUsageQuery, createTokenUsageStore } from "../../../platform/storage/src/token-usage-store.js";
+import { createModelPriceSync, type LLMPricePreset } from "./model-price-sync.js";
 
 type TokenUsageStore = ReturnType<typeof createTokenUsageStore>;
 
@@ -15,8 +16,11 @@ type LLMResponseLogEntry = {
 export function createTokenUsageRuntime(input: {
   getStore(): TokenUsageStore | undefined;
   resolveModel(agentId: string): string | undefined;
+  resolvePreset(agentId: string): LLMPricePreset | undefined;
+  now(): Date;
   appendLog(level: "info" | "warn", message: string): void;
 }) {
+  const priceSyncByStore = new WeakMap<TokenUsageStore, ReturnType<typeof createModelPriceSync>>();
   return {
     recordTokenUsage,
     recordTokenUsageEvent,
@@ -47,9 +51,10 @@ export function createTokenUsageRuntime(input: {
     responseId?: number;
     result: LLMChatResult;
   }): void {
-    const usage = event.result.usage;
+    let stored: ReturnType<TokenUsageStore["insert"]> | undefined;
     try {
-      input.getStore()?.insert({
+      const usage = event.result.usage;
+      stored = input.getStore()?.insert({
         createdAt: event.createdAt,
         createdAtUtc: event.createdAtUtc,
         agentId: event.agentId,
@@ -67,6 +72,34 @@ export function createTokenUsageRuntime(input: {
       });
     } catch (error) {
       input.appendLog("warn", `token usage persist failed: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    if (stored) void resolveProviderId(stored.id, event);
+  }
+
+  async function resolveProviderId(eventId: number, event: {
+    createdAt: string;
+    createdAtUtc?: string;
+    agentId: string;
+    model?: string;
+    sessionId?: number;
+    requestId?: number;
+    responseId?: number;
+    result: LLMChatResult;
+  }): Promise<void> {
+    try {
+      const store = input.getStore();
+      if (!store) return;
+      const preset = input.resolvePreset(event.agentId);
+      let priceSync = priceSyncByStore.get(store);
+      if (!priceSync) {
+        priceSync = createModelPriceSync({ store, now: input.now });
+        priceSyncByStore.set(store, priceSync);
+      }
+      const price = await priceSync.resolvePrice(preset);
+      store.assignProviderId(eventId, price?.providerId);
+    } catch (error) {
+      input.appendLog("warn", `token usage price lookup failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -97,7 +130,8 @@ export function createTokenUsageRuntime(input: {
         outputTokens: 0,
         totalTokens: 0,
         cacheHitTokens: 0,
-        cacheMissTokens: 0
+        cacheMissTokens: 0,
+        costUsd: 0
       },
       buckets: [],
       byModel: [],

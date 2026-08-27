@@ -3,6 +3,7 @@ import type { AgentEvent, ToolCall, ToolDefinition, ToolExecutionContext, ToolEx
 import { normalizePromptProfile, type PromptProfile } from "../../agent-profile/src/application/build-system-prompt.js";
 import { promptMessageToMessage } from "../../agent-profile/src/domain/prompt-layer.js";
 import type { PromptContextRuntime } from "../../prompt-context/src/index.js";
+import { createId } from "../../../shared/uuid/src/index.js";
 
 export type LLMRequestAgentId = "chat" | "memorize" | string;
 
@@ -23,6 +24,8 @@ export type LLMRequestSenderInput = {
   streamHandlers?: LLMStreamHandlers;
   metadata?: Record<string, unknown>;
   signal?: AbortSignal;
+  /** 跨 request wrapper 保持不变的本轮请求关联 ID。 */
+  correlationId?: string;
   /** 延迟递交 response transcript: 消息在 transform(格式化)完成后由 flushResponseTranscript 递交最终版本。 */
   deferResponseTranscript?: boolean;
 };
@@ -258,6 +261,7 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
         ...request,
         round,
         messages: cloneLLMMessages(request.messages ?? messages),
+        correlationId: createId("llm-request"),
         // 有 flushResponseTranscript 时延迟递交 response, 由格式化完成后统一递交。
         deferResponseTranscript: input.flushResponseTranscript !== undefined
       };

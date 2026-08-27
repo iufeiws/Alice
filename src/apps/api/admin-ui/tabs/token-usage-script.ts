@@ -1,12 +1,10 @@
-export function renderTokenUsageScript(deepSeekPricesCnyPer1M: unknown): string {
-  return `      const deepSeekPricesCnyPer1M = ${JSON.stringify(deepSeekPricesCnyPer1M)};
-
-      function renderTokenUsage(payload) {
+export function renderTokenUsageScript(): string {
+  return `      function renderTokenUsage(payload) {
         const summary = payload.summary || {};
         $("tokenUsageMetrics").innerHTML = [
           renderUsageMetric("Cache Hit Rate", formatPercent(summary.cacheHitRate)),
           renderUsageMetric("Total Tokens", formatNumber(summary.totalTokens)),
-          renderUsageMetric("Cost (CNY)", formatCny(actualCnyCost(payload))),
+          renderUsageMetric("Cost (USD)", formatUsd(summary.costUsd)),
           renderUsageMetric("Cache Hit", formatNumber(summary.cacheHitTokens)),
           renderUsageMetric("Cache Miss", formatNumber(summary.cacheMissTokens)),
           renderUsageMetric("Output", formatNumber(summary.outputTokens))
@@ -26,6 +24,7 @@ export function renderTokenUsageScript(deepSeekPricesCnyPer1M: unknown): string 
             <td>\${formatNumber(row.cacheHitTokens)}</td>
             <td>\${formatNumber(row.cacheMissTokens)}</td>
             <td>\${formatPercent(row.cacheHitRate)}</td>
+            <td>\${formatUsd(row.costUsd)}</td>
           </tr>
         \`).join("");
       }
@@ -111,7 +110,7 @@ export function renderTokenUsageScript(deepSeekPricesCnyPer1M: unknown): string 
         return \`
           <h2>By Model</h2>
           <table class="usage-table">
-            <thead><tr><th>Model</th><th>Agent</th><th>Total</th><th>Hit</th><th>Miss</th><th>Hit Rate</th></tr></thead>
+            <thead><tr><th>Model</th><th>Agent</th><th>Total</th><th>Hit</th><th>Miss</th><th>Hit Rate</th><th>Cost (USD)</th></tr></thead>
             <tbody>\${renderTokenUsageMetricRows(rows.map((row) => ({ ...row, agentId: "all" })))}</tbody>
           </table>
         \`;
@@ -122,7 +121,7 @@ export function renderTokenUsageScript(deepSeekPricesCnyPer1M: unknown): string 
         return \`
           <h2>Latest Events</h2>
           <table class="usage-table">
-            <thead><tr><th>Time</th><th>Agent</th><th>Total</th><th>Hit</th><th>Miss</th><th>Hit Rate</th></tr></thead>
+            <thead><tr><th>Time</th><th>Agent</th><th>Total</th><th>Hit</th><th>Miss</th><th>Hit Rate</th><th>Cost (USD)</th></tr></thead>
             <tbody>\${renderTokenUsageMetricRows(rows.map((row) => ({ ...row, model: row.createdAt })))}</tbody>
           </table>
         \`;
@@ -141,26 +140,9 @@ export function renderTokenUsageScript(deepSeekPricesCnyPer1M: unknown): string 
         return Number(value || 0).toLocaleString("en-US");
       }
 
-      function actualCnyCost(payload) {
-        const rows = Array.isArray(payload.byModel) && payload.byModel.length
-          ? payload.byModel
-          : [{ ...(payload.summary || {}), model: payload.model || $("model").value || "deepseek-chat" }];
-        return rows.reduce((sum, row) => {
-          const price = deepSeekPriceForModel(row.model || "");
-          return sum
-            + Number(row.cacheHitTokens || 0) * price.hit / 1_000_000
-            + Number(row.cacheMissTokens || 0) * price.miss / 1_000_000
-            + Number(row.outputTokens || 0) * price.output / 1_000_000;
-        }, 0);
-      }
-
-      function deepSeekPriceForModel(model) {
-        return deepSeekPricesCnyPer1M.find((price) => new RegExp(price.pattern, "i").test(String(model || ""))) || deepSeekPricesCnyPer1M.at(-1);
-      }
-
-      function formatCny(value) {
+      function formatUsd(value) {
         const digits = value > 0 && value < 1 ? 6 : 2;
-        return "¥" + Number(value || 0).toLocaleString("en-US", {
+        return "$" + Number(value || 0).toLocaleString("en-US", {
           minimumFractionDigits: digits,
           maximumFractionDigits: digits
         });

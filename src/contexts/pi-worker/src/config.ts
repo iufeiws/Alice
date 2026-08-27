@@ -14,7 +14,7 @@ export const defaultPiWorkerConfig: PiWorkerConfig = {
   llmPresetName: "",
   maxConcurrency: 2,
   maxQueueSize: 20,
-  taskTimeoutSeconds: 900,
+  taskTimeoutSeconds: 21_600,
   toolTimeoutSeconds: 60_000,
   relayHost: "0.0.0.0",
   relayPort: 3411,

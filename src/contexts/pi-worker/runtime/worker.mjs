@@ -24,7 +24,7 @@ const nicknameMap = createPiAgentNicknameMap({
 const maxBodyBytes = 4 * 1024 * 1024;
 const maxConcurrency = positiveInteger(process.env.PI_MAX_CONCURRENCY, 2);
 const maxQueueSize = positiveInteger(process.env.PI_MAX_QUEUE_SIZE, 20);
-const defaultTaskTimeoutSeconds = positiveInteger(process.env.PI_TASK_TIMEOUT_SECONDS, 900);
+const defaultTaskTimeoutSeconds = positiveInteger(process.env.PI_TASK_TIMEOUT_SECONDS, 21_600);
 const invocationCustomType = "alice_pi_invocation";
 
 // Runtime projections only. The Pi JSONL sessions are the source of truth.

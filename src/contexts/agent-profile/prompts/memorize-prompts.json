@@ -24,7 +24,7 @@
         "enabled": true
       },
       "role": "user",
-      "content": "这是爱丽丝昨天的日记:\n<diary>\n${{memory/yesterdaySummary/content}}\n</diary>\n\n这是今天爱丽丝醒来后与Y的对话:\n爱丽丝醒来时的日期是${{wakeBoundary/date}} ${{wakeBoundary/weekday}}\n<chat-log>\n${{memorize/messages/content}}\n</chat-log>",
+      "content": "这是爱丽丝昨天的日记:\n<diary>\n${{memory/yesterdaySummary/content}}\n</diary>\n\n这是爱丽丝最近的记忆(包含了昨天和今天):\n${{memory/shortMemory/content}}\n\n这是今天爱丽丝醒来后与Y的对话:\n爱丽丝醒来时的日期是${{wakeBoundary/date}} ${{wakeBoundary/weekday}}\n<chat-log>\n${{memorize/messages/content}}\n</chat-log>",
       "name": "Cheshire Cat"
     },
     {

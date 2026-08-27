@@ -14,9 +14,7 @@ export function createLLMLogRuntime(input: {
   getActiveSession(): { id: number | string; requestIds?: number[] } | undefined;
   noteRequest(entry: LLMRequestLogEntry, agentId: AgentId, transcriptMessages: LLMChatInput["messages"]): void;
   noteResponse(entry: LLMResponseLogEntry): void;
-  appendUsageLog(result: LLMChatResult, modelFallback: string | undefined): void;
   resolveModel(agentId: AgentId): string | undefined;
-  recordTokenUsage(entry: LLMResponseLogEntry, result: LLMChatResult, agentId: AgentId): void;
 }) {
   let nextRequestId = 1;
   let nextResponseId = 1;
@@ -62,7 +60,6 @@ export function createLLMLogRuntime(input: {
   }
 
   function appendResponseLog(result: LLMChatResult, agentId: AgentId = "chat", request?: LLMRequestLogEntry): LLMResponseLogEntry {
-    input.appendUsageLog(result, result.model ?? input.resolveModel(agentId));
     const now = input.time.now();
     const activeSession = request ? undefined : input.getActiveSession();
     const activeSessionId = typeof activeSession?.id === "number" ? activeSession.id : undefined;
@@ -80,7 +77,6 @@ export function createLLMLogRuntime(input: {
     } satisfies LLMResponseLogEntry;
     input.responseLogs.push(entry);
     input.noteResponse(entry);
-    input.recordTokenUsage(entry, result, agentId);
     nextResponseId += 1;
     if (input.responseLogs.length > 50) {
       input.responseLogs.splice(0, input.responseLogs.length - 50);

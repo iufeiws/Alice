@@ -33,8 +33,6 @@ export function createApiLLMRuntime(input: {
     requestLogs: input.apiRuntimeState.llmRequestLogs,
     responseLogs: input.apiRuntimeState.llmResponseLogs,
     resolvePromptApiPreset: input.resolvePromptApiPreset,
-    resolveLLMApiPreset: (name) => input.readLLMApiPresets().find((preset) => preset.name === name),
-    piPresetName: input.config.piWorkerConfig.llmPresetName,
     agentLoopRuntime: input.agentLoopRuntime,
     appendLog: input.appendLog
   });

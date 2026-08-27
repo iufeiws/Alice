@@ -2,6 +2,7 @@ import { timingSafeEqual, createHash } from "node:crypto";
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 import type { LLMChatResult } from "./index.js";
 import type { PiPresetSnapshot } from "./pi-preset-adapter.js";
+import type { LLMPricePreset } from "./model-price-sync.js";
 import { createOpenAIUpstreamRequester, type OpenAIUpstreamRequest } from "./llm-upstream-requester.js";
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
@@ -21,6 +22,7 @@ export type PiRelayUsageRecorder = (input: {
   createdAtUtc?: string;
   agentId: "pi";
   model: string;
+  pricePreset: LLMPricePreset;
   result: LLMChatResult;
 }) => void;
 
@@ -413,6 +415,7 @@ function recordUsage(raw: Record<string, unknown>, preset: PiPresetSnapshot, inp
     createdAtUtc: time.date.toISOString(),
     agentId: "pi",
     model: preset.model,
+    pricePreset: { baseURL: preset.baseURL, model: typeof raw.model === "string" ? raw.model : preset.model },
     result: {
       id: typeof raw.id === "string" ? raw.id : undefined,
       model: typeof raw.model === "string" ? raw.model : preset.model,

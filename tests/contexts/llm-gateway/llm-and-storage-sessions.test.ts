@@ -362,6 +362,40 @@ test("LLM requests runtime records deferred chat and talk responses after tool-l
   ]);
 });
 
+test("LLM gateway records price context from the request preset regardless of agent id", async () => {
+  const usageEvents: any[] = [];
+  const runtime = createLLMRequestsRuntime({
+    getTool: () => undefined,
+    appendLLMRequestLog: () => undefined,
+    appendLLMResponseLog() {},
+    appendLLMUsageLog() {},
+    recordTokenUsageEvent(event) {
+      usageEvents.push(event);
+    },
+    resolveLLMApiPreset(name) {
+      return name === "vision" ? { baseURL: "https://api.example.test/v1", model: "mimo-v2.5" } : undefined;
+    },
+    time: fixedTime("2026-06-14T01:00:00.000Z"),
+    resolvePromptApiPreset: () => undefined,
+    appendLog() {}
+  });
+
+  await runtime.send({
+    agentId: "image_recognition",
+    client: {
+      async chat() {
+        return { model: "mimo-v2.5", message: { role: "assistant", content: "done" }, usage: { totalTokens: 12 } };
+      }
+    },
+    presetName: "vision",
+    messages: [{ role: "user", content: "image" }],
+    toolNames: [],
+    round: 0
+  });
+
+  assert.deepEqual(usageEvents[0].pricePreset, { baseURL: "https://api.example.test/v1", model: "mimo-v2.5" });
+});
+
 test("token usage is stored before an asynchronous price lookup fails", async () => {
   const inserted: any[] = [];
   const warnings: string[] = [];
@@ -374,14 +408,13 @@ test("token usage is stored before an asynchronous price lookup fails", async ()
     catalogNeedsRefresh() {
       return false;
     },
-    findModelPrice() {
+    recordModelPrice() {
       throw new Error("price_lookup_failed");
     }
   };
   const runtime = createTokenUsageRuntime({
     getStore: () => store as any,
     resolveModel: () => "chat-model",
-    resolvePreset: () => ({ baseURL: "https://api.example.test/v1", model: "chat-model" }),
     now: () => new Date("2026-06-14T01:00:00.000Z"),
     appendLog(_level, message) {
       warnings.push(message);
@@ -393,6 +426,7 @@ test("token usage is stored before an asynchronous price lookup fails", async ()
     createdAtUtc: "2026-06-14T01:00:00.000Z",
     agentId: "chat",
     model: "chat-model",
+    pricePreset: { baseURL: "https://api.example.test/v1", model: "chat-model" },
     result: {
       message: { role: "assistant", content: "done" },
       finishReason: "stop",
@@ -402,6 +436,7 @@ test("token usage is stored before an asynchronous price lookup fails", async ()
 
   assert.equal(inserted.length, 1);
   assert.equal(inserted[0].totalTokens, 12);
+  assert.equal("price" in inserted[0], false);
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(warnings, ["token usage price lookup failed: price_lookup_failed"]);
 });

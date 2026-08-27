@@ -41,6 +41,7 @@ export type StoredTokenUsageEvent = Required<Pick<TokenUsageEventInput, "created
   finishReason?: string;
   rawUsageJson?: string;
   providerId?: string;
+  costUsd?: number;
 };
 
 export type TokenUsageQuery = {
@@ -82,19 +83,30 @@ export type TokenUsageReport = {
   latest: StoredTokenUsageEvent[];
 };
 
+export type ModelCatalog = {
+  providers: Array<{ providerId: string; apiURL?: string }>;
+  models: Array<{ providerId: string; modelId: string; price?: Record<string, number> }>;
+};
+
+export type ModelCatalogStats = { providers: number; models: number; pricedModels: number };
+
 export type TokenUsageStore = {
   insert(input: TokenUsageEventInput): StoredTokenUsageEvent;
   assignProviderId(eventId: number, providerId?: string): void;
   report(query?: TokenUsageQuery): TokenUsageReport;
   catalogNeedsRefresh(nowUtc: string, maxAgeMs: number): boolean;
-  providerNeedsRefresh(input: { baseURL: string; nowUtc: string; maxAgeMs: number }): boolean;
-  modelPriceNeedsRefresh(input: { baseURL: string; model: string; nowUtc: string; maxAgeMs: number }): boolean;
-  replaceModelCatalog(rows: Array<{ providerId: string; apiURL: string; modelId: string; price: Record<string, number> }>, updatedAtUtc: string): void;
-  refreshModelPrice(input: { baseURL: string; model: string; updatedAtUtc: string }): StoredModelPrice | undefined;
-  findModelPrice(input: { baseURL: string; model: string; updatedAtUtc: string; maxAgeMs: number }): StoredModelPrice | undefined;
+  replaceModelCatalog(catalog: ModelCatalog, updatedAtUtc: string): ModelCatalogStats;
+  getModelCatalogStats(): ModelCatalogStats;
+  recordModelPrice(input: { baseURL: string; model: string; observedAtUtc: string }): StoredModelPrice | undefined;
 };
 
-export type StoredModelPrice = { id: number; providerId: string; modelId: string; price: Record<string, number> };
+export type StoredModelPrice = {
+  id: number;
+  providerId: string;
+  modelId: string;
+  price: Record<string, number>;
+  ambiguousProviderIds?: string[];
+};
 
 export function createTokenUsageStore(dbPath: string, options: { time?: CurrentTimeProvider } = {}): TokenUsageStore {
   const time = options.time ?? createCurrentTimeProvider("UTC");
@@ -129,29 +141,22 @@ export function createTokenUsageStore(dbPath: string, options: { time?: CurrentT
       source TEXT PRIMARY KEY,
       updated_at_utc TEXT NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS llm_model_providers (
+    CREATE TABLE IF NOT EXISTS llm_latest_model_providers (
       provider_id TEXT PRIMARY KEY,
-      api_url TEXT NOT NULL,
+      api_url TEXT,
+      normalized_api_url TEXT,
+      catalog_order INTEGER NOT NULL,
       updated_at_utc TEXT NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS llm_model_prices (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+    CREATE INDEX IF NOT EXISTS llm_latest_model_providers_api_idx ON llm_latest_model_providers(normalized_api_url);
+    CREATE TABLE IF NOT EXISTS llm_latest_model_prices (
       provider_id TEXT NOT NULL,
       model_id TEXT NOT NULL,
-      price_json TEXT NOT NULL,
-      input_per_mtok REAL NOT NULL,
-      output_per_mtok REAL NOT NULL,
+      price_json TEXT,
+      input_per_mtok REAL,
+      output_per_mtok REAL,
       cache_read_per_mtok REAL,
       cache_write_per_mtok REAL,
-      first_seen_at_utc TEXT NOT NULL,
-      last_seen_at_utc TEXT NOT NULL,
-      UNIQUE(provider_id, model_id, price_json)
-    );
-    CREATE INDEX IF NOT EXISTS llm_model_prices_lookup_idx ON llm_model_prices(provider_id, model_id, last_seen_at_utc DESC);
-    CREATE TABLE IF NOT EXISTS llm_active_model_prices (
-      provider_id TEXT NOT NULL,
-      model_id TEXT NOT NULL,
-      price_id INTEGER NOT NULL,
       updated_at_utc TEXT NOT NULL,
       PRIMARY KEY(provider_id, model_id)
     );
@@ -170,6 +175,8 @@ export function createTokenUsageStore(dbPath: string, options: { time?: CurrentT
     CREATE INDEX IF NOT EXISTS llm_model_price_timeline_lookup_idx ON llm_model_price_timeline(provider_id, model_id, last_seen_at_utc);
   `);
   ensureColumn(db, "token_usage_events", "provider_id", "TEXT");
+  const latestCatalogCount = Number(db.prepare("SELECT COUNT(*) AS count FROM llm_latest_model_prices").get()?.count ?? 0);
+  if (latestCatalogCount === 0) db.prepare("DELETE FROM llm_model_catalog_sync WHERE source = 'models.dev'").run();
 
   return {
     insert(input) {
@@ -247,62 +254,69 @@ export function createTokenUsageStore(dbPath: string, options: { time?: CurrentT
       const updatedAt = typeof row?.updatedAtUtc === "string" ? Date.parse(row.updatedAtUtc) : Number.NaN;
       return !Number.isFinite(updatedAt) || Date.parse(nowUtc) - updatedAt >= maxAgeMs;
     },
-    providerNeedsRefresh(input) {
-      const providerURL = normalizeProviderURL(input.baseURL);
-      const row = db.prepare("SELECT updated_at_utc AS updatedAtUtc FROM llm_model_providers WHERE api_url = ?").get(providerURL);
-      const updatedAt = typeof row?.updatedAtUtc === "string" ? Date.parse(row.updatedAtUtc) : Number.NaN;
-      return !Number.isFinite(updatedAt) || Date.parse(input.nowUtc) - updatedAt >= input.maxAgeMs;
-    },
-    modelPriceNeedsRefresh(input) {
-      const providerURL = normalizeProviderURL(input.baseURL);
-      const provider = db.prepare("SELECT provider_id AS providerId FROM llm_model_providers WHERE api_url = ?").get(providerURL);
-      if (!provider) return true;
-      const row = db.prepare("SELECT updated_at_utc AS updatedAtUtc FROM llm_active_model_prices WHERE provider_id = ? AND model_id = ?").get(provider.providerId, input.model);
-      const updatedAt = typeof row?.updatedAtUtc === "string" ? Date.parse(row.updatedAtUtc) : Number.NaN;
-      return !Number.isFinite(updatedAt) || Date.parse(input.nowUtc) - updatedAt >= input.maxAgeMs;
-    },
-    replaceModelCatalog(rows, updatedAtUtc) {
+    replaceModelCatalog(catalog, updatedAtUtc) {
       transaction(db, () => {
-        for (const row of rows) {
-          db.prepare(`INSERT INTO llm_model_providers(provider_id, api_url, updated_at_utc) VALUES (?, ?, ?)
-            ON CONFLICT(provider_id) DO UPDATE SET api_url = excluded.api_url, updated_at_utc = excluded.updated_at_utc`).run(row.providerId, normalizeProviderURL(row.apiURL), updatedAtUtc);
-          const priceJson = canonicalPriceJson(row.price);
-          db.prepare(`INSERT INTO llm_model_prices(
-            provider_id, model_id, price_json, input_per_mtok, output_per_mtok, cache_read_per_mtok, cache_write_per_mtok, first_seen_at_utc, last_seen_at_utc
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(provider_id, model_id, price_json) DO UPDATE SET last_seen_at_utc = excluded.last_seen_at_utc`).run(
-            row.providerId, row.modelId, priceJson, row.price.input, row.price.output,
-            row.price.cache_read ?? null, row.price.cache_write ?? null, updatedAtUtc, updatedAtUtc
+        db.prepare("DELETE FROM llm_latest_model_prices").run();
+        db.prepare("DELETE FROM llm_latest_model_providers").run();
+        const insertProvider = db.prepare(`INSERT INTO llm_latest_model_providers(
+          provider_id, api_url, normalized_api_url, catalog_order, updated_at_utc
+        ) VALUES (?, ?, ?, ?, ?)`);
+        for (const [index, provider] of catalog.providers.entries()) {
+          insertProvider.run(provider.providerId, provider.apiURL ?? null, normalizeProviderURL(provider.apiURL), index, updatedAtUtc);
+        }
+        const insertModel = db.prepare(`INSERT INTO llm_latest_model_prices(
+          provider_id, model_id, price_json, input_per_mtok, output_per_mtok,
+          cache_read_per_mtok, cache_write_per_mtok, updated_at_utc
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+        for (const model of catalog.models) {
+          insertModel.run(
+            model.providerId,
+            model.modelId,
+            model.price ? canonicalPriceJson(model.price) : null,
+            model.price?.input ?? null,
+            model.price?.output ?? null,
+            model.price?.cache_read ?? null,
+            model.price?.cache_write ?? null,
+            updatedAtUtc
           );
         }
         db.prepare(`INSERT INTO llm_model_catalog_sync(source, updated_at_utc) VALUES ('models.dev', ?)
           ON CONFLICT(source) DO UPDATE SET updated_at_utc = excluded.updated_at_utc`).run(updatedAtUtc);
       });
+      return this.getModelCatalogStats();
     },
-    refreshModelPrice(input) {
+    getModelCatalogStats() {
+      const row = db.prepare(`SELECT
+        (SELECT COUNT(*) FROM llm_latest_model_providers) AS providers,
+        COUNT(*) AS models,
+        COUNT(price_json) AS pricedModels
+        FROM llm_latest_model_prices`).get();
+      return { providers: Number(row.providers), models: Number(row.models), pricedModels: Number(row.pricedModels) };
+    },
+    recordModelPrice(input) {
       const providerURL = normalizeProviderURL(input.baseURL);
-      const row = db.prepare(`SELECT catalog.provider_id AS providerId, catalog.model_id AS modelId, catalog.price_json AS priceJson,
-        catalog.input_per_mtok AS input, catalog.output_per_mtok AS output, catalog.cache_read_per_mtok AS cacheRead, catalog.cache_write_per_mtok AS cacheWrite
-        FROM llm_model_providers provider JOIN llm_model_prices catalog ON catalog.provider_id = provider.provider_id
-        WHERE provider.api_url = ? AND catalog.model_id = ? ORDER BY catalog.last_seen_at_utc DESC, catalog.id DESC LIMIT 1`).get(providerURL, input.model);
-      if (!row) return undefined;
+      if (!providerURL) return undefined;
+      const rows = db.prepare(`SELECT catalog.provider_id AS providerId, catalog.model_id AS modelId, catalog.price_json AS priceJson,
+        catalog.input_per_mtok AS input, catalog.output_per_mtok AS output,
+        catalog.cache_read_per_mtok AS cacheRead, catalog.cache_write_per_mtok AS cacheWrite
+        FROM llm_latest_model_providers provider
+        JOIN llm_latest_model_prices catalog ON catalog.provider_id = provider.provider_id
+        WHERE provider.normalized_api_url = ? AND catalog.model_id = ? AND catalog.price_json IS NOT NULL
+        ORDER BY provider.catalog_order ASC LIMIT 2`).all(providerURL, input.model);
+      if (rows.length === 0) return undefined;
+      const row = rows[0];
       const latest = db.prepare(`SELECT id, price_json AS priceJson FROM llm_model_price_timeline WHERE provider_id = ? AND model_id = ? ORDER BY id DESC LIMIT 1`).get(row.providerId, row.modelId);
-      if (latest?.priceJson === row.priceJson) db.prepare("UPDATE llm_model_price_timeline SET last_seen_at_utc = ? WHERE id = ?").run(input.updatedAtUtc, latest.id);
+      if (latest?.priceJson === row.priceJson) db.prepare("UPDATE llm_model_price_timeline SET last_seen_at_utc = ? WHERE id = ?").run(input.observedAtUtc, latest.id);
       else db.prepare(`INSERT INTO llm_model_price_timeline(provider_id, model_id, price_json, input_per_mtok, output_per_mtok, cache_read_per_mtok, cache_write_per_mtok, first_seen_at_utc, last_seen_at_utc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(row.providerId, row.modelId, row.priceJson, row.input, row.output, row.cacheRead, row.cacheWrite, input.updatedAtUtc, input.updatedAtUtc);
-      return this.findModelPrice({ baseURL: input.baseURL, model: input.model, updatedAtUtc: input.updatedAtUtc, maxAgeMs: 0 });
-    },
-    findModelPrice(input) {
-      const providerURL = normalizeProviderURL(input.baseURL);
-      const row = db.prepare(`SELECT price.id, price.provider_id AS providerId, price.model_id AS modelId, price.price_json AS priceJson
-        FROM llm_model_providers provider
-        JOIN llm_model_price_timeline price ON price.provider_id = provider.provider_id
-        WHERE provider.api_url = ? AND price.model_id = ?
-        ORDER BY price.id DESC LIMIT 1`).get(providerURL, input.model);
-      if (!row) return undefined;
-      db.prepare(`INSERT INTO llm_active_model_prices(provider_id, model_id, price_id, updated_at_utc) VALUES (?, ?, ?, ?)
-        ON CONFLICT(provider_id, model_id) DO UPDATE SET price_id = excluded.price_id, updated_at_utc = excluded.updated_at_utc`).run(row.providerId, row.modelId, Number(row.id), input.updatedAtUtc);
-      return { id: Number(row.id), providerId: row.providerId, modelId: row.modelId, price: JSON.parse(row.priceJson) as Record<string, number> };
+        .run(row.providerId, row.modelId, row.priceJson, row.input, row.output, row.cacheRead, row.cacheWrite, input.observedAtUtc, input.observedAtUtc);
+      const stored = db.prepare("SELECT id FROM llm_model_price_timeline WHERE provider_id = ? AND model_id = ? ORDER BY id DESC LIMIT 1").get(row.providerId, row.modelId);
+      return {
+        id: Number(stored.id),
+        providerId: row.providerId,
+        modelId: row.modelId,
+        price: JSON.parse(row.priceJson) as Record<string, number>,
+        ambiguousProviderIds: rows.length > 1 ? rows.map((candidate: any) => String(candidate.providerId)) : undefined
+      };
     }
   };
 }
@@ -379,10 +393,16 @@ function ensureColumn(db: DatabaseSync, table: string, column: string, type: str
   if (!columns.some((entry) => entry.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
 }
 
-function normalizeProviderURL(value: string): string {
-  const url = new URL(value);
-  const path = url.pathname.replace(/\/+$/, "").replace(/\/v1$/i, "");
-  return `${url.origin}${path}`;
+function normalizeProviderURL(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+    const path = url.pathname.replace(/\/+$/, "").replace(/\/v1$/i, "");
+    return `${url.origin}${path}`;
+  } catch {
+    return undefined;
+  }
 }
 
 function canonicalPriceJson(price: Record<string, number>): string {
@@ -419,17 +439,29 @@ function tokenUsageSelect(suffix: string): string {
       cache_hit_rate AS cacheHitRate,
       finish_reason AS finishReason,
       raw_usage_json AS rawUsageJson,
-      event.provider_id AS providerId
+      event.provider_id AS providerId,
+      ${eventCostExpression()} AS costUsd
     FROM ${tokenUsageFrom()}
     ${suffix}
   `;
 }
 
+function eventCostExpression(): string {
+  return `(COALESCE(event.cache_hit_tokens, 0) * COALESCE(price.cache_read_per_mtok, price.input_per_mtok)
+    + COALESCE(event.cache_miss_tokens, MAX(0, COALESCE(event.input_tokens, 0) - COALESCE(event.cache_hit_tokens, 0))) * price.input_per_mtok
+    + COALESCE(event.output_tokens, 0) * price.output_per_mtok) / 1000000.0`;
+}
+
 function tokenUsageFrom(): string {
   return `token_usage_events event
-    LEFT JOIN llm_model_price_timeline price ON price.id = COALESCE(
-      (SELECT future.id FROM llm_model_price_timeline future WHERE future.provider_id = event.provider_id AND future.model_id = event.model AND future.last_seen_at_utc >= event.created_at_utc ORDER BY future.last_seen_at_utc ASC, future.id ASC LIMIT 1),
-      (SELECT latest.id FROM llm_model_price_timeline latest WHERE latest.provider_id = event.provider_id AND latest.model_id = event.model ORDER BY latest.last_seen_at_utc DESC, latest.id DESC LIMIT 1)
+    LEFT JOIN llm_model_price_timeline price ON price.id = (
+      SELECT observed.id
+      FROM llm_model_price_timeline observed
+      WHERE observed.provider_id = event.provider_id
+        AND observed.model_id = event.model
+        AND observed.first_seen_at_utc <= event.created_at_utc
+      ORDER BY observed.first_seen_at_utc DESC, observed.id DESC
+      LIMIT 1
     )`;
 }
 
@@ -451,7 +483,8 @@ function rowToEvent(row: any): StoredTokenUsageEvent {
     cacheHitRate: optionalNumber(row.cacheHitRate),
     finishReason: optionalString(row.finishReason),
     rawUsageJson: optionalString(row.rawUsageJson),
-    providerId: optionalString(row.providerId)
+    providerId: optionalString(row.providerId),
+    costUsd: optionalNumber(row.costUsd)
   };
 }
 

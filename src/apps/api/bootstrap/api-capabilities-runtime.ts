@@ -44,6 +44,7 @@ export function createApiCapabilitiesRuntime(input: {
     appendLLMResponseLog: (result, agentId = "chat", request) => input.llmLogRuntime.appendResponseLog(result, agentId, request),
     appendLLMUsageLog: input.appendLLMUsageLog,
     recordTokenUsageEvent: input.recordTokenUsageEvent,
+    resolveLLMApiPreset: (name) => input.readLLMApiPresets().find((entry: { name?: string }) => entry.name === name),
     time: input.time,
     resolvePromptApiPreset: input.resolvePromptApiPreset,
     appendLog: input.appendLog,

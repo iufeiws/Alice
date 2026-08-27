@@ -134,6 +134,9 @@ ${renderPromptsScript()}
       $("tokenUsageBucket").addEventListener("change", refreshTokenUsage);
       $("tokenUsageModel").addEventListener("change", refreshTokenUsage);
       $("tokenUsageAgent").addEventListener("change", refreshTokenUsage);
+      $("tokenUsageCurrency").addEventListener("change", () => {
+        if (tokenUsagePayload) renderTokenUsage(tokenUsagePayload);
+      });
       $("tokenUsageRefresh").addEventListener("click", refreshTokenUsage);
       $("pluginBack").addEventListener("click", closePluginConfig);
       $("pluginSearch").addEventListener("input", refreshPlugins);

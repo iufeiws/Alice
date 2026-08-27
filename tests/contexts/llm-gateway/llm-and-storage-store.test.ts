@@ -103,21 +103,21 @@ test("token usage store merges identical price bundles and ignores terminal v1 w
   const dir = makeTempDir("token-usage-price-catalog");
   const store = createTokenUsageStore(path.join(dir, "token-usage.sqlite"));
   const price = { input: 2, output: 8, cache_read: 0.2, cache_write: 2.5 };
-  store.replaceModelCatalog([
-    { providerId: "openai", apiURL: "https://api.openai.com/v1", modelId: "gpt-test", price }
-  ], "2026-05-30T10:00:00.000Z");
-  store.replaceModelCatalog([
-    { providerId: "openai", apiURL: "https://api.openai.com/v1", modelId: "gpt-test", price }
-  ], "2026-05-30T10:30:00.000Z");
+  const catalog = {
+    providers: [{ providerId: "openai", apiURL: "https://api.openai.com/v1" }],
+    models: [{ providerId: "openai", modelId: "gpt-test", price }]
+  };
+  store.replaceModelCatalog(catalog, "2026-05-30T10:00:00.000Z");
+  store.replaceModelCatalog(catalog, "2026-05-30T10:30:00.000Z");
 
-  const matched = store.refreshModelPrice({ baseURL: "https://api.openai.com/v1/", model: "gpt-test", updatedAtUtc: "2026-05-30T10:30:00.000Z" });
+  const matched = store.recordModelPrice({ baseURL: "https://api.openai.com/v1/", model: "gpt-test", observedAtUtc: "2026-05-30T10:30:00.000Z" });
   assert.equal(matched?.providerId, "openai");
   assert.deepEqual(matched?.price, price);
   assert.equal(store.catalogNeedsRefresh("2026-05-30T10:59:59.999Z", 60 * 60 * 1000), false);
   assert.equal(store.catalogNeedsRefresh("2026-05-30T11:30:00.000Z", 60 * 60 * 1000), true);
 });
 
-test("model price sync fetches the provider catalog at most once per hour", async () => {
+test("model price sync persists the complete catalog and fetches it at most once per hour", async () => {
   const dir = makeTempDir("token-usage-price-sync");
   const store = createTokenUsageStore(path.join(dir, "token-usage.sqlite"));
   let now = new Date("2026-05-30T10:00:00.000Z");
@@ -129,18 +129,216 @@ test("model price sync fetches the provider catalog at most once per hour", asyn
       fetches += 1;
       return new Response(JSON.stringify({
         neon: { api: "${NEON_AI_GATEWAY_BASE_URL}/v1", models: { ignored: { cost: { input: 1, output: 1 } } } },
-        openai: { api: "https://api.openai.com/v1", models: { "gpt-test": { cost: { input: 2, output: 8, cache_read: 0.2 } } } }
+        local: { models: { "unpriced-model": {} } },
+        openai: { api: "https://api.openai.com/v1", models: {
+          "gpt-test": { cost: { input: 2, output: 8, cache_read: 0.2 } },
+          "mimo-v2.5": { cost: { input: 0.14, output: 0.28, cache_read: 0.0028 } }
+        } },
+        anthropic: { api: "https://api.anthropic.com/v1", models: {
+          "claude-test": { cost: { input: 3, output: 15 } }
+        } }
       }));
     }
   });
   const preset = { baseURL: "https://api.openai.com", model: "gpt-test" };
 
   assert.equal((await sync.resolvePrice(preset))?.price.output, 8);
+  assert.deepEqual(store.getModelCatalogStats(), { providers: 4, models: 5, pricedModels: 4 });
+  assert.equal((await sync.resolvePrice({ ...preset, model: "mimo-v2.5" }))?.price.output, 0.28);
+  assert.equal((await sync.resolvePrice({ baseURL: "https://api.anthropic.com/v1", model: "claude-test" }))?.price.output, 15);
+  assert.equal(fetches, 1);
   now = new Date("2026-05-30T10:30:00.000Z");
   await sync.resolvePrice(preset);
   now = new Date("2026-05-30T11:00:00.000Z");
   await sync.resolvePrice(preset);
   assert.equal(fetches, 2);
+});
+
+test("model price sync warns and selects the first upstream provider when URL and model are duplicated", async () => {
+  const dir = makeTempDir("token-usage-duplicate-provider");
+  const store = createTokenUsageStore(path.join(dir, "token-usage.sqlite"));
+  store.replaceModelCatalog({
+    providers: [
+      { providerId: "first", apiURL: "https://api.example.test/v1" },
+      { providerId: "second", apiURL: "https://api.example.test/v1" }
+    ],
+    models: [
+      { providerId: "first", modelId: "shared", price: { input: 1, output: 2 } },
+      { providerId: "second", modelId: "shared", price: { input: 3, output: 6 } }
+    ]
+  }, "2026-05-30T10:00:00.000Z");
+  const warnings: string[] = [];
+  const sync = createModelPriceSync({
+    store,
+    now: () => new Date("2026-05-30T10:30:00.000Z"),
+    appendLog: (_level, message) => warnings.push(message)
+  });
+
+  const price = await sync.resolvePrice({ baseURL: "https://api.example.test/v1", model: "shared" });
+
+  assert.equal(price?.providerId, "first");
+  assert.deepEqual(price?.price, { input: 1, output: 2 });
+  assert.deepEqual(warnings, [
+    "model price provider match is ambiguous: base_url=https://api.example.test model=shared providers=first,second selected=first"
+  ]);
+});
+
+test("model catalog expiry is checked for every usage even when that event has no price match context", async () => {
+  const dir = makeTempDir("token-usage-catalog-without-price-context");
+  const store = createTokenUsageStore(path.join(dir, "token-usage.sqlite"));
+  let fetches = 0;
+  const sync = createModelPriceSync({
+    store,
+    now: () => new Date("2026-05-30T10:00:00.000Z"),
+    fetch: async () => {
+      fetches += 1;
+      return new Response(JSON.stringify({ local: { models: { unpriced: {} } } }));
+    }
+  });
+
+  assert.equal(await sync.resolvePrice(undefined), undefined);
+  assert.equal(fetches, 1);
+  assert.deepEqual(store.getModelCatalogStats(), { providers: 1, models: 1, pricedModels: 0 });
+});
+
+test("token usage report calculates each latest event from its historical price snapshot", () => {
+  const dir = makeTempDir("token-usage-latest-price");
+  const store = createTokenUsageStore(path.join(dir, "token-usage.sqlite"));
+  store.replaceModelCatalog({
+    providers: [{ providerId: "openai", apiURL: "https://api.openai.com/v1" }],
+    models: [{ providerId: "openai", modelId: "gpt-test", price: { input: 2, output: 8, cache_read: 0.2 } }]
+  }, "2026-05-30T10:00:00.000Z");
+  const price = store.recordModelPrice({ baseURL: "https://api.openai.com/v1", model: "gpt-test", observedAtUtc: "2026-05-30T10:00:00.000Z" });
+  store.insert({
+    createdAt: "2026-05-30T10:05:00.000",
+    createdAtUtc: "2026-05-30T10:05:00.000Z",
+    agentId: "image_recognition",
+    model: "gpt-test",
+    providerId: price?.providerId,
+    inputTokens: 100,
+    outputTokens: 10,
+    cacheHitTokens: 20,
+    cacheMissTokens: 80
+  });
+
+  const report = store.report();
+  assert.equal(report.latest[0].costUsd, 0.000244);
+  assert.equal(report.summary.costUsd, 0.000244);
+});
+
+test("token usage report matches each call to the price trajectory already observed for that provider and model", () => {
+  const dir = makeTempDir("token-usage-price-trajectory");
+  const store = createTokenUsageStore(path.join(dir, "token-usage.sqlite"));
+  const provider = [{ providerId: "openai", apiURL: "https://api.openai.com/v1" }];
+  store.replaceModelCatalog({
+    providers: provider,
+    models: [{ providerId: "openai", modelId: "gpt-test", price: { input: 1, output: 2 } }]
+  }, "2026-05-30T10:00:00.000Z");
+  store.recordModelPrice({ baseURL: "https://api.openai.com/v1", model: "gpt-test", observedAtUtc: "2026-05-30T10:00:00.000Z" });
+  store.insert({
+    createdAt: "2026-05-30T10:05:00.000",
+    createdAtUtc: "2026-05-30T10:05:00.000Z",
+    agentId: "chat",
+    providerId: "openai",
+    model: "gpt-test",
+    inputTokens: 1_000_000,
+    outputTokens: 1_000_000
+  });
+
+  store.replaceModelCatalog({
+    providers: provider,
+    models: [{ providerId: "openai", modelId: "gpt-test", price: { input: 3, output: 6 } }]
+  }, "2026-05-30T11:00:00.000Z");
+  store.recordModelPrice({ baseURL: "https://api.openai.com/v1", model: "gpt-test", observedAtUtc: "2026-05-30T11:00:00.000Z" });
+  store.insert({
+    createdAt: "2026-05-30T11:05:00.000",
+    createdAtUtc: "2026-05-30T11:05:00.000Z",
+    agentId: "chat",
+    providerId: "openai",
+    model: "gpt-test",
+    inputTokens: 1_000_000,
+    outputTokens: 1_000_000
+  });
+
+  const latest = store.report().latest;
+  assert.deepEqual(latest.map((event) => event.costUsd), [9, 3]);
+});
+
+test("catalog replacement does not create price history for models that were never called", () => {
+  const dir = makeTempDir("token-usage-on-demand-price-history");
+  const store = createTokenUsageStore(path.join(dir, "token-usage.sqlite"));
+  store.replaceModelCatalog({
+    providers: [{ providerId: "provider", apiURL: "https://api.example.test/v1" }],
+    models: [
+      { providerId: "provider", modelId: "called", price: { input: 1, output: 2 } },
+      { providerId: "provider", modelId: "never-called", price: { input: 10, output: 20 } }
+    ]
+  }, "2026-05-30T10:00:00.000Z");
+  store.recordModelPrice({ baseURL: "https://api.example.test/v1", model: "called", observedAtUtc: "2026-05-30T10:00:00.000Z" });
+  store.insert({
+    createdAt: "2026-05-30T10:01:00.000",
+    createdAtUtc: "2026-05-30T10:01:00.000Z",
+    agentId: "chat",
+    providerId: "provider",
+    model: "never-called",
+    inputTokens: 1_000_000,
+    outputTokens: 1_000_000
+  });
+
+  assert.equal(store.report().latest[0].costUsd, undefined);
+});
+
+test("complete catalog replacement removes models missing from the next upstream table", () => {
+  const dir = makeTempDir("token-usage-catalog-replacement");
+  const store = createTokenUsageStore(path.join(dir, "token-usage.sqlite"));
+  store.replaceModelCatalog({
+    providers: [
+      { providerId: "first", apiURL: "https://first.example.test/v1" },
+      { providerId: "removed", apiURL: "https://removed.example.test/v1" }
+    ],
+    models: [
+      { providerId: "first", modelId: "kept", price: { input: 1, output: 2 } },
+      { providerId: "removed", modelId: "gone", price: { input: 3, output: 6 } }
+    ]
+  }, "2026-05-30T10:00:00.000Z");
+
+  const stats = store.replaceModelCatalog({
+    providers: [{ providerId: "first", apiURL: "https://first.example.test/v1" }],
+    models: [{ providerId: "first", modelId: "kept", price: { input: 1, output: 2 } }]
+  }, "2026-05-30T11:00:00.000Z");
+
+  assert.deepEqual(stats, { providers: 1, models: 1, pricedModels: 1 });
+  assert.equal(store.recordModelPrice({ baseURL: "https://removed.example.test/v1", model: "gone", observedAtUtc: "2026-05-30T11:01:00.000Z" }), undefined);
+});
+
+test("opening the legacy price schema expires its incomplete catalog without losing usage price history", () => {
+  const dir = makeTempDir("token-usage-price-schema-migration");
+  const dbPath = path.join(dir, "token-usage.sqlite");
+  const legacy: any = new sqlite.DatabaseSync(dbPath);
+  legacy.exec(`
+    CREATE TABLE token_usage_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, created_at_utc TEXT,
+      agent_id TEXT NOT NULL, model TEXT, session_id INTEGER, request_id INTEGER, response_id INTEGER,
+      input_tokens INTEGER, output_tokens INTEGER, total_tokens INTEGER, cache_hit_tokens INTEGER,
+      cache_miss_tokens INTEGER, cache_hit_rate REAL, finish_reason TEXT, raw_usage_json TEXT, provider_id TEXT
+    );
+    CREATE TABLE llm_model_catalog_sync (source TEXT PRIMARY KEY, updated_at_utc TEXT NOT NULL);
+    CREATE TABLE llm_model_price_timeline (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, provider_id TEXT NOT NULL, model_id TEXT NOT NULL,
+      price_json TEXT NOT NULL, input_per_mtok REAL NOT NULL, output_per_mtok REAL NOT NULL,
+      cache_read_per_mtok REAL, cache_write_per_mtok REAL, first_seen_at_utc TEXT NOT NULL, last_seen_at_utc TEXT NOT NULL
+    );
+    INSERT INTO llm_model_catalog_sync VALUES ('models.dev', '2026-05-30T10:30:00.000Z');
+    INSERT INTO llm_model_price_timeline VALUES (1, 'provider', 'model', '{"input":1,"output":2}', 1, 2, NULL, NULL, '2026-05-30T10:00:00.000Z', '2026-05-30T10:00:00.000Z');
+    INSERT INTO token_usage_events(created_at, created_at_utc, agent_id, provider_id, model, input_tokens, output_tokens)
+      VALUES ('2026-05-30T10:05:00.000', '2026-05-30T10:05:00.000Z', 'chat', 'provider', 'model', 1000000, 1000000);
+  `);
+  legacy.close();
+
+  const store = createTokenUsageStore(dbPath);
+
+  assert.equal(store.catalogNeedsRefresh("2026-05-30T10:31:00.000Z", 60 * 60 * 1000), true);
+  assert.equal(store.report().latest[0].costUsd, 3);
 });
 
 test("sqlite store preserves existing message logs after schema initialization", () => {

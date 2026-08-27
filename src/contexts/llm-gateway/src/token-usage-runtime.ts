@@ -16,7 +16,6 @@ type LLMResponseLogEntry = {
 export function createTokenUsageRuntime(input: {
   getStore(): TokenUsageStore | undefined;
   resolveModel(agentId: string): string | undefined;
-  resolvePreset(agentId: string): LLMPricePreset | undefined;
   now(): Date;
   appendLog(level: "info" | "warn", message: string): void;
 }) {
@@ -49,6 +48,7 @@ export function createTokenUsageRuntime(input: {
     sessionId?: number;
     requestId?: number;
     responseId?: number;
+    pricePreset?: LLMPricePreset;
     result: LLMChatResult;
   }): void {
     let stored: ReturnType<TokenUsageStore["insert"]> | undefined;
@@ -74,29 +74,20 @@ export function createTokenUsageRuntime(input: {
       input.appendLog("warn", `token usage persist failed: ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
-    if (stored) void resolveProviderId(stored.id, event);
+    if (stored) void resolveProviderId(stored.id, event.createdAtUtc, event.pricePreset, event.model ?? event.result.model);
   }
 
-  async function resolveProviderId(eventId: number, event: {
-    createdAt: string;
-    createdAtUtc?: string;
-    agentId: string;
-    model?: string;
-    sessionId?: number;
-    requestId?: number;
-    responseId?: number;
-    result: LLMChatResult;
-  }): Promise<void> {
+  async function resolveProviderId(eventId: number, observedAtUtc: string | undefined, preset: LLMPricePreset | undefined, responseModel: string | undefined): Promise<void> {
     try {
       const store = input.getStore();
       if (!store) return;
-      const preset = input.resolvePreset(event.agentId);
+      const pricePreset = preset && { ...preset, model: responseModel ?? preset.model };
       let priceSync = priceSyncByStore.get(store);
       if (!priceSync) {
-        priceSync = createModelPriceSync({ store, now: input.now });
+        priceSync = createModelPriceSync({ store, now: input.now, appendLog: input.appendLog });
         priceSyncByStore.set(store, priceSync);
       }
-      const price = await priceSync.resolvePrice(preset);
+      const price = await priceSync.resolvePrice(pricePreset, observedAtUtc);
       store.assignProviderId(eventId, price?.providerId);
     } catch (error) {
       input.appendLog("warn", `token usage price lookup failed: ${error instanceof Error ? error.message : String(error)}`);

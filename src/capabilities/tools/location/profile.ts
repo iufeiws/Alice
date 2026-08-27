@@ -5,7 +5,7 @@ export const panoramaToolName = "Panorama";
 export const panoramaTool: ToolDefinition = {
   name: panoramaToolName,
   passRenderText: true,
-  description: "街景与世界漫游控制。action=current 查看当前现实位置与街景内容；action=teleport 按经纬度传送到最近 pano、重置轨迹并清除导航目标；action=navigation 将 World Wanderer 的导航目标设为指定经纬度。",
+  description: "控制alice的当前位置, selfie时会是当前所在位置的场景。action=current 查看当前所在历史影像的形象；action=teleport 按经纬度传送到最近 pano、重置轨迹并清除导航目标；action=navigation 将 World Wanderer 的导航目标设为指定经纬度。",
   inputSchema: {
     type: "object",
     properties: {

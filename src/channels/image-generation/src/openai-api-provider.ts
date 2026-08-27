@@ -53,13 +53,15 @@ export async function runOpenAIAPISelfie(input: ImageGenerationProviderInput): P
     } catch {
       throw new Error(`Image API ${input.apiEndpoint} returned non-JSON after ${elapsedMs}ms url=${requestUrl}: ${excerpt(body, 4000)}`);
     }
-    const imageB64 = extractImageB64(payload);
-    if (!imageB64) {
+    const imageB64s = extractImageB64s(payload);
+    if (imageB64s.length === 0) {
       throw new Error(`Image API ${input.apiEndpoint} returned no image after ${elapsedMs}ms url=${requestUrl}: ${excerpt(JSON.stringify(payload), 4000)}`);
     }
-    fs.writeFileSync(path.join(input.workDir, input.fileName), Buffer.from(imageB64, "base64"));
+    for (const [index, imageB64] of imageB64s.entries()) {
+      fs.writeFileSync(path.join(input.workDir, outputFileName(input.fileName, index)), Buffer.from(imageB64, "base64"));
+    }
     return {
-      stdout: `Image API completed in ${elapsedMs}ms; file=${input.fileName}`,
+      stdout: `Image API completed in ${elapsedMs}ms; files=${imageB64s.map((_, index) => outputFileName(input.fileName, index)).join(",")}`,
       stderr: "",
       lastMessage: `Image API completed in ${elapsedMs}ms`
     };
@@ -87,11 +89,20 @@ function contentType(filePath: string): string {
   return "image/png";
 }
 
-function extractImageB64(payload: unknown): string | undefined {
+function extractImageB64s(payload: unknown): string[] {
   const record = payload && typeof payload === "object" ? payload as { data?: unknown } : undefined;
   const data = Array.isArray(record?.data) ? record.data : [];
-  const first = data[0] && typeof data[0] === "object" ? data[0] as { b64_json?: unknown } : undefined;
-  return typeof first?.b64_json === "string" ? first.b64_json : undefined;
+  return data
+    .filter((item): item is { b64_json?: unknown } => Boolean(item && typeof item === "object"))
+    .map((item) => item.b64_json)
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+}
+
+function outputFileName(fileName: string, index: number): string {
+  if (index === 0) return fileName;
+  const extension = path.extname(fileName);
+  const stem = path.basename(fileName, extension);
+  return `${stem}_${index + 1}${extension}`;
 }
 
 function describeErrorWithCause(error: Error): string {

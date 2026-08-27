@@ -21,6 +21,7 @@ export type {
 } from "./gateway.js";
 export {
   detectImageMime,
+  listGeneratedImageFiles,
   listDirForLog,
   normalizeGeneratedSelfieJpeg,
   validateGeneratedImage

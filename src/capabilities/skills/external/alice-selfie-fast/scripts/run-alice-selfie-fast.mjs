@@ -17,7 +17,6 @@ const extraPrompt = stringValue(input.extraPrompt);
 const referenceImages = requireStringArray(input.referenceImages, "referenceImages");
 const codexCommand = stringValue(input.codexCommand) || process.env.SELFIE_CODEX_COMMAND || "codex";
 const timeoutMs = positiveNumber(input.timeoutMs, 60_000);
-const outputPath = path.join(workDir, fileName);
 const codexReferenceImages = copyReferenceImagesToCodexWorkDir(referenceImages, codexWorkDir);
 const imageArgs = codexReferenceImages.map((image) => `--image=${image}`);
 const beforeImages = snapshotGeneratedImages();
@@ -53,8 +52,8 @@ let result = { stdout: "", stderr: "", code: undefined, signal: undefined, elaps
 try {
   result = await execFile(codexCommand, codexArgs, timeoutMs, sanitizedEnv());
   assertCodexTurnCompleted(result.stdout);
-  const generatedPath = findNewGeneratedImage(beforeImages, started);
-  if (!generatedPath) {
+  const generatedPaths = findNewGeneratedImages(beforeImages, started);
+  if (generatedPaths.length === 0) {
     throw new Error("codex selfie generation did not create a new generated image");
   }
   writeCodexLogs(result, {
@@ -66,8 +65,10 @@ try {
     started,
     completed: Date.now()
   });
-  copyGeneratedImage(generatedPath, outputPath);
-  console.error(`alice-selfie-fast completed in ${Date.now() - started}ms; source=${generatedPath}; file=${fileName}`);
+  for (const [index, generatedPath] of generatedPaths.entries()) {
+    copyGeneratedImage(generatedPath, outputFilePath(fileName, index));
+  }
+  console.error(`alice-selfie-fast completed in ${Date.now() - started}ms; sources=${generatedPaths.join(",")}; files=${generatedPaths.map((_, index) => outputFileName(fileName, index)).join(",")}`);
   if (result.stdout.trim()) process.stdout.write(result.stdout);
 } catch (error) {
   result = codexOutputFromError(error) || result;
@@ -183,6 +184,17 @@ function copyGeneratedImage(sourcePath, targetPath) {
   fs.copyFileSync(sourcePath, targetPath);
 }
 
+function outputFilePath(fileName, index) {
+  return path.join(workDir, outputFileName(fileName, index));
+}
+
+function outputFileName(fileName, index) {
+  if (index === 0) return fileName;
+  const extension = path.extname(fileName);
+  const stem = path.basename(fileName, extension);
+  return `${stem}_${index + 1}${extension}`;
+}
+
 function copyReferenceImagesToCodexWorkDir(images, targetDir) {
   fs.mkdirSync(targetDir, { recursive: true });
   return images.map((image, index) => {
@@ -196,15 +208,17 @@ function copyReferenceImagesToCodexWorkDir(images, targetDir) {
   });
 }
 
-function findNewGeneratedImage(beforeImages, startedAtMs) {
-  let newest;
+function findNewGeneratedImages(beforeImages, startedAtMs) {
+  const generated = [];
   for (const image of listGeneratedImages()) {
     const previousMtime = beforeImages.get(image.filePath);
     if (previousMtime !== undefined && previousMtime === image.mtimeMs) continue;
     if (image.mtimeMs < startedAtMs - 5_000) continue;
-    if (!newest || image.mtimeMs > newest.mtimeMs) newest = image;
+    generated.push(image);
   }
-  return newest?.filePath;
+  return generated
+    .sort((left, right) => left.mtimeMs - right.mtimeMs || left.filePath.localeCompare(right.filePath))
+    .map((image) => image.filePath);
 }
 
 function snapshotGeneratedImages() {

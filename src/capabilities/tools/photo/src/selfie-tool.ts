@@ -3,7 +3,7 @@ import type { ToolCall, ToolExecutionContext, ToolResult } from "../../../../con
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import type { PromptContextRuntime } from "../../../../contexts/prompt-context/src/index.js";
 import { normalizePhotoPluginConfig, readPhotoPluginConfig, type PhotoPluginConfig } from "./config.js";
-import { detectImageMime, listDirForLog, normalizeGeneratedSelfieJpeg, runPhotoGateway, validateGeneratedImage, type ImageGenerationProvider, type ImageGenerationProviderInput, type ImageGenerationProviderResult } from "../../../../channels/image-generation/src/index.js";
+import { detectImageMime, listDirForLog, listGeneratedImageFiles, normalizeGeneratedSelfieJpeg, runPhotoGateway, validateGeneratedImage, type ImageGenerationProvider, type ImageGenerationProviderInput, type ImageGenerationProviderResult } from "../../../../channels/image-generation/src/index.js";
 import { extractSentMessageId, sendImage, type PhotoSendDeps } from "./send-output.js";
 import { photoToolText, selfieTool } from "../profile.js";
 
@@ -99,11 +99,6 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
       fs.mkdirSync(codexWorkDir, { recursive: true });
 
       const fileBaseName = `selfie_${formatFileDateTime(time.now().iso)}`;
-      let fileName = "";
-      let tempFilePath = "";
-      let finalFilePath = "";
-      let assetId = "";
-
       const references = await resolveReferenceImages(context);
       const prompt = buildSelfiePrompt(pose);
       deps.appendLog?.("info", [
@@ -129,10 +124,6 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
         proxyUrl,
         executor: deps.selfieExecutor
       });
-      fileName = executorResult.fileName;
-      tempFilePath = path.resolve(tempDir, fileName);
-      finalFilePath = path.resolve(fullOutputDir, fileName);
-      assetId = path.join(relativeDir, fileName);
       codexResult = executorResult;
       deps.appendLog?.("info", [
         "selfie generator finished:",
@@ -144,42 +135,52 @@ export function createSelfieExecutor(deps: PhotoToolsDeps, time: CurrentTimeProv
         `files=${listDirForLog(tempDir)}`
       ].join(" "));
 
-      validateGeneratedImage(tempFilePath, tempDir, photoConfig.selfieMaxBytes);
-      const normalizedImage = await normalizeGeneratedSelfieJpeg({
-        tempFilePath,
-        fileName,
-        tempDir,
-        maxBytes: photoConfig.selfieMaxBytes,
-        timeoutMs: executorResult.timeoutMs
-      });
-      fileName = normalizedImage.fileName;
-      tempFilePath = normalizedImage.tempFilePath;
-      finalFilePath = path.resolve(fullOutputDir, fileName);
-      assetId = path.join(relativeDir, fileName);
-      fs.renameSync(tempFilePath, finalFilePath);
-      validateGeneratedImage(finalFilePath, fullOutputDir, photoConfig.selfieMaxBytes);
-      const finalImageMime = detectImageMime(fs.readFileSync(finalFilePath));
-      if (finalImageMime !== "image/jpeg") throw new Error(photoToolText.finalFileNotJpeg);
+      const generatedFiles = listGeneratedImageFiles(tempDir);
+      if (generatedFiles.length === 0) {
+        throw new Error(photoToolText.generatedFileNotFound(executorResult.fileName, listDirForLog(tempDir)));
+      }
+      const sentFileNames: string[] = [];
+      const followupAttachments: NonNullable<ToolResult["llmFollowupAttachments"]> = [];
+      for (const tempFilePath of generatedFiles) {
+        let fileName = path.basename(tempFilePath);
+        validateGeneratedImage(tempFilePath, tempDir, photoConfig.selfieMaxBytes);
+        const normalizedImage = await normalizeGeneratedSelfieJpeg({
+          tempFilePath,
+          fileName,
+          tempDir,
+          maxBytes: photoConfig.selfieMaxBytes,
+          timeoutMs: executorResult.timeoutMs
+        });
+        fileName = normalizedImage.fileName;
+        const finalFilePath = path.resolve(fullOutputDir, fileName);
+        const assetId = path.join(relativeDir, fileName);
+        fs.renameSync(normalizedImage.tempFilePath, finalFilePath);
+        validateGeneratedImage(finalFilePath, fullOutputDir, photoConfig.selfieMaxBytes);
+        const finalImageMime = detectImageMime(fs.readFileSync(finalFilePath));
+        if (finalImageMime !== "image/jpeg") throw new Error(photoToolText.finalFileNotJpeg);
 
-      const sent = await sendImage(deps, time, target, assetId);
-      deps.mountGeneratedSelfieInSandbox?.({
-        hostPath: finalFilePath,
-        containerPath: path.posix.join("/assets/generated/selfies", path.basename(fileName))
-      });
-      deps.appendLog?.("info", `selfie generation sent: assetId=${assetId} messageId=${extractSentMessageId(sent) ?? ""}`);
-      return {
-        callId: call.id,
-        ok: true,
-        output: photoToolText.sent(path.basename(fileName)),
-        llmFollowupAttachments: executionContext?.llmCapabilities?.supportsImage
-          ? [{
+        const sent = await sendImage(deps, time, target, assetId);
+        sentFileNames.push(fileName);
+        deps.mountGeneratedSelfieInSandbox?.({
+          hostPath: finalFilePath,
+          containerPath: path.posix.join("/assets/generated/selfies", path.basename(fileName))
+        });
+        deps.appendLog?.("info", `selfie generation sent: assetId=${assetId} messageId=${extractSentMessageId(sent) ?? ""}`);
+        if (executionContext?.llmCapabilities?.supportsImage) {
+          followupAttachments.push({
             kind: "image",
             path: finalFilePath,
             assetId,
             mime: finalImageMime,
             followupText: photoToolText.followupImageText
-          }]
-          : undefined
+          });
+        }
+      }
+      return {
+        callId: call.id,
+        ok: true,
+        output: sentFileNames.map((fileName) => photoToolText.sent(fileName)).join("\n"),
+        llmFollowupAttachments: executionContext?.llmCapabilities?.supportsImage ? followupAttachments : undefined
       };
     } catch (error) {
       const reason = [

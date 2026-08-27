@@ -35,6 +35,14 @@ export function validateGeneratedImage(filePath: string, outputDir: string, maxB
   if (stat.size > maxBytes) throw new Error(imageGenerationText.generatedFileTooLarge);
 }
 
+export function listGeneratedImageFiles(dirPath: string): string[] {
+  return fs.readdirSync(dirPath)
+    .filter((fileName) => allowedExtensions.has(path.extname(fileName).toLowerCase()))
+    .sort((left, right) => left < right ? -1 : left > right ? 1 : 0)
+    .map((fileName) => path.resolve(dirPath, fileName))
+    .filter((filePath) => fs.statSync(filePath).isFile());
+}
+
 export async function normalizeGeneratedSelfieJpeg(input: {
   tempFilePath: string;
   fileName: string;

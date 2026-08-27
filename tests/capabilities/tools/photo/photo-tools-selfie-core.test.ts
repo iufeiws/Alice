@@ -38,7 +38,7 @@ test("photo_promptAssets_useCurrentVariableSyntax", () => {
   }
 });
 
-function makeSuccessfulSelfieFixture(name: string) {
+function makeSuccessfulSelfieFixture(name: string, generatedImageCount = 1) {
   const outputRoot = makeAssetTempDir(name);
   const referenceRoot = makeTempDir(`${name}-ref`);
   const outfitImage = path.join(makeTempDir(`${name}-outfit`), "dress.jpg");
@@ -57,7 +57,12 @@ function makeSuccessfulSelfieFixture(name: string) {
     selfieAssetRoot: assetRootFromOutputDir(outputRoot),
     selfieExecutor: async (input) => {
       executorInputs.push(input);
-      fs.writeFileSync(path.join(input.workDir, input.fileName), fakeJpegBytes);
+      for (let index = 0; index < generatedImageCount; index += 1) {
+        const extension = path.extname(input.fileName);
+        const stem = path.basename(input.fileName, extension);
+        const fileName = index === 0 ? input.fileName : `${stem}_${index + 1}${extension}`;
+        fs.writeFileSync(path.join(input.workDir, fileName), fakeJpegBytes);
+      }
       return { stdout: "ok", stderr: "", lastMessage: "saved target file" };
     },
     outputRouter: {
@@ -122,6 +127,25 @@ test("selfie_validContext_sendsImageAndFollowupAttachment", async () => {
     assert.equal(imageContent?.kind, "image");
     assert.equal(result.llmFollowupAttachments?.[0]?.kind, "image");
     assert.equal(result.llmFollowupAttachments?.[0]?.mime, "image/jpeg");
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("selfie_validContext_sendsAllGeneratedImagesAndFollowupAttachments", async () => {
+  const fixture = makeSuccessfulSelfieFixture("selfie-success-multiple", 3);
+  try {
+    const result = await fixture.tools.execute({
+      id: "call_selfie_multiple",
+      toolName: "Selfie",
+      input: { pose: "连续生成多张自拍" }
+    }, { llmCapabilities: { supportsImage: true } });
+
+    assert.equal(result.ok, true);
+    assert.equal(fixture.sent.length, 3);
+    assert.equal(result.llmFollowupAttachments?.length, 3);
+    assert.equal(fixture.store.listMessagesForConversation("session-1", 10).length, 3);
+    assert.equal(fixture.sandboxMounts.length, 3);
   } finally {
     fixture.cleanup();
   }

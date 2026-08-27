@@ -30,7 +30,7 @@ export function createApiCapabilitiesRuntime(input: {
   appendMessageLog(input: any): unknown;
   llmLogRuntime: any;
   appendLLMUsageLog(result: any, modelFallback?: string): void;
-  recordTokenUsageEvent(event: any): void;
+  recordTokenUsageEvent(event: any): { id: number } | undefined;
   resolvePromptApiPreset(agentId: "chat" | "talk" | "memorize"): any;
   memoryStore: any;
   randomEventStore: any;
@@ -43,8 +43,6 @@ export function createApiCapabilitiesRuntime(input: {
     appendLLMRequestLog: (request, agentId, transcriptMessages) => input.llmLogRuntime.appendRequestLog(request, agentId, transcriptMessages),
     appendLLMResponseLog: (result, agentId = "chat", request) => input.llmLogRuntime.appendResponseLog(result, agentId, request),
     appendLLMUsageLog: input.appendLLMUsageLog,
-    recordTokenUsageEvent: input.recordTokenUsageEvent,
-    resolveLLMApiPreset: (name) => input.readLLMApiPresets().find((entry: { name?: string }) => entry.name === name),
     time: input.time,
     resolvePromptApiPreset: input.resolvePromptApiPreset,
     appendLog: input.appendLog,

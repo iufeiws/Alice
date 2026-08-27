@@ -232,7 +232,6 @@ test("memorize LLM calls do not write duplicate sub_agent transcripts", async ()
     appendLLMRequestLog: () => undefined,
     appendLLMResponseLog() {},
     appendLLMUsageLog() {},
-    recordTokenUsageEvent() {},
     time: fixedTime("2026-06-14T01:00:00.000Z"),
     resolvePromptApiPreset: () => ({ model: "fallback" }),
     appendLog() {},

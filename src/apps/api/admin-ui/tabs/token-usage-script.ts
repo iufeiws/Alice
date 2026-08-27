@@ -1,25 +1,21 @@
 export function renderTokenUsageScript(): string {
-  return `      let tokenUsagePayload;
-
-      function renderTokenUsage(payload) {
-        tokenUsagePayload = payload;
-        const currency = tokenUsageCurrency();
+  return `      function renderTokenUsage(payload) {
         const summary = payload.summary || {};
         $("tokenUsageMetrics").innerHTML = [
           renderUsageMetric("Cache Hit Rate", formatPercent(summary.cacheHitRate)),
           renderUsageMetric("Total Tokens", formatNumber(summary.totalTokens)),
-          renderUsageMetric("Cost (" + currency + ")", formatCost(summary.costUsd, currency)),
+          renderUsageMetric("Cost (USD)", formatUsd(summary.costUsd)),
           renderUsageMetric("Cache Hit", formatNumber(summary.cacheHitTokens)),
           renderUsageMetric("Cache Miss", formatNumber(summary.cacheMissTokens)),
           renderUsageMetric("Output", formatNumber(summary.outputTokens))
         ].join("");
         renderTokenUsageModelOptions(payload.byModel || [], payload.model || "all");
         $("tokenUsageChart").innerHTML = renderTokenUsageChart(payload.buckets || []);
-        $("tokenUsageModels").innerHTML = renderTokenUsageModels(payload.byModel || [], currency);
-        $("tokenUsageLatest").innerHTML = renderTokenUsageLatest(payload.latest || [], currency);
+        $("tokenUsageModels").innerHTML = renderTokenUsageModels(payload.byModel || []);
+        $("tokenUsageLatest").innerHTML = renderTokenUsageLatest(payload.latest || []);
       }
 
-      function renderTokenUsageMetricRows(rows, currency) {
+      function renderTokenUsageMetricRows(rows) {
         return rows.map((row) => \`
           <tr>
             <td>\${escapeHtml(row.model || row.createdAt || "")}</td>
@@ -28,7 +24,7 @@ export function renderTokenUsageScript(): string {
             <td>\${formatNumber(row.cacheHitTokens)}</td>
             <td>\${formatNumber(row.cacheMissTokens)}</td>
             <td>\${formatPercent(row.cacheHitRate)}</td>
-            <td>\${formatCost(row.costUsd, currency)}</td>
+            <td>\${formatUsd(row.costUsd)}</td>
           </tr>
         \`).join("");
       }
@@ -109,24 +105,24 @@ export function renderTokenUsageScript(): string {
         \`;
       }
 
-      function renderTokenUsageModels(rows, currency) {
+      function renderTokenUsageModels(rows) {
         if (!rows.length) return "";
         return \`
           <h2>By Model</h2>
           <table class="usage-table">
-            <thead><tr><th>Model</th><th>Agent</th><th>Total</th><th>Hit</th><th>Miss</th><th>Hit Rate</th><th>Cost (\${escapeHtml(currency)})</th></tr></thead>
-            <tbody>\${renderTokenUsageMetricRows(rows.map((row) => ({ ...row, agentId: "all" })), currency)}</tbody>
+            <thead><tr><th>Model</th><th>Agent</th><th>Total</th><th>Hit</th><th>Miss</th><th>Hit Rate</th><th>Cost (USD)</th></tr></thead>
+            <tbody>\${renderTokenUsageMetricRows(rows.map((row) => ({ ...row, agentId: "all" })))}</tbody>
           </table>
         \`;
       }
 
-      function renderTokenUsageLatest(rows, currency) {
+      function renderTokenUsageLatest(rows) {
         if (!rows.length) return "";
         return \`
           <h2>Latest Events</h2>
           <table class="usage-table">
-            <thead><tr><th>Time</th><th>Agent</th><th>Total</th><th>Hit</th><th>Miss</th><th>Hit Rate</th><th>Cost (\${escapeHtml(currency)})</th></tr></thead>
-            <tbody>\${renderTokenUsageMetricRows(rows.map((row) => ({ ...row, model: row.createdAt })), currency)}</tbody>
+            <thead><tr><th>Time</th><th>Agent</th><th>Total</th><th>Hit</th><th>Miss</th><th>Hit Rate</th><th>Cost (USD)</th></tr></thead>
+            <tbody>\${renderTokenUsageMetricRows(rows.map((row) => ({ ...row, model: row.createdAt })))}</tbody>
           </table>
         \`;
       }
@@ -144,16 +140,11 @@ export function renderTokenUsageScript(): string {
         return Number(value || 0).toLocaleString("en-US");
       }
 
-      function tokenUsageCurrency() {
-        return $("tokenUsageCurrency").value === "CNY" ? "CNY" : "USD";
-      }
-
-      function formatCost(value, currency) {
-        if (typeof value !== "number" || !Number.isFinite(value)) return "unknown";
-        const amount = currency === "CNY" ? value * 7 : value;
-        return (currency === "CNY" ? "¥" : "$") + amount.toLocaleString("en-US", {
-          minimumFractionDigits: 4,
-          maximumFractionDigits: 4
+      function formatUsd(value) {
+        const digits = value > 0 && value < 1 ? 6 : 2;
+        return "$" + Number(value || 0).toLocaleString("en-US", {
+          minimumFractionDigits: digits,
+          maximumFractionDigits: digits
         });
       }
 

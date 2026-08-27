@@ -83,9 +83,16 @@ export type TokenUsageReport = {
   latest: StoredTokenUsageEvent[];
 };
 
+export type ModelPrice = Record<string, unknown> & {
+  input: number;
+  output: number;
+  cache_read?: number;
+  cache_write?: number;
+};
+
 export type ModelCatalog = {
   providers: Array<{ providerId: string; apiURL?: string }>;
-  models: Array<{ providerId: string; modelId: string; price?: Record<string, number> }>;
+  models: Array<{ providerId: string; modelId: string; price?: ModelPrice }>;
 };
 
 export type ModelCatalogStats = { providers: number; models: number; pricedModels: number };
@@ -101,10 +108,10 @@ export type TokenUsageStore = {
 };
 
 export type StoredModelPrice = {
-  id: number;
+  id?: number;
   providerId: string;
   modelId: string;
-  price: Record<string, number>;
+  price?: ModelPrice;
   ambiguousProviderIds?: string[];
 };
 
@@ -301,10 +308,12 @@ export function createTokenUsageStore(dbPath: string, options: { time?: CurrentT
         catalog.cache_read_per_mtok AS cacheRead, catalog.cache_write_per_mtok AS cacheWrite
         FROM llm_latest_model_providers provider
         JOIN llm_latest_model_prices catalog ON catalog.provider_id = provider.provider_id
-        WHERE provider.normalized_api_url = ? AND catalog.model_id = ? AND catalog.price_json IS NOT NULL
+        WHERE provider.normalized_api_url = ? AND catalog.model_id = ?
         ORDER BY provider.catalog_order ASC LIMIT 2`).all(providerURL, input.model);
       if (rows.length === 0) return undefined;
       const row = rows[0];
+      const ambiguousProviderIds = rows.length > 1 ? rows.map((candidate: any) => String(candidate.providerId)) : undefined;
+      if (!row.priceJson) return { providerId: row.providerId, modelId: row.modelId, ambiguousProviderIds };
       const latest = db.prepare(`SELECT id, price_json AS priceJson FROM llm_model_price_timeline WHERE provider_id = ? AND model_id = ? ORDER BY id DESC LIMIT 1`).get(row.providerId, row.modelId);
       if (latest?.priceJson === row.priceJson) db.prepare("UPDATE llm_model_price_timeline SET last_seen_at_utc = ? WHERE id = ?").run(input.observedAtUtc, latest.id);
       else db.prepare(`INSERT INTO llm_model_price_timeline(provider_id, model_id, price_json, input_per_mtok, output_per_mtok, cache_read_per_mtok, cache_write_per_mtok, first_seen_at_utc, last_seen_at_utc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -314,8 +323,8 @@ export function createTokenUsageStore(dbPath: string, options: { time?: CurrentT
         id: Number(stored.id),
         providerId: row.providerId,
         modelId: row.modelId,
-        price: JSON.parse(row.priceJson) as Record<string, number>,
-        ambiguousProviderIds: rows.length > 1 ? rows.map((candidate: any) => String(candidate.providerId)) : undefined
+        price: JSON.parse(row.priceJson) as ModelPrice,
+        ambiguousProviderIds
       };
     }
   };
@@ -405,7 +414,7 @@ function normalizeProviderURL(value: string | undefined): string | undefined {
   }
 }
 
-function canonicalPriceJson(price: Record<string, number>): string {
+function canonicalPriceJson(price: Record<string, unknown>): string {
   return JSON.stringify(Object.fromEntries(Object.entries(price).sort(([left], [right]) => left.localeCompare(right))));
 }
 

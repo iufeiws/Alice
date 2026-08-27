@@ -56,8 +56,7 @@ export function createApiRootRuntime() {
     time: foundation.currentTime,
     host: foundation.config.piWorkerConfig.relayHost,
     port: foundation.config.piWorkerConfig.relayPort,
-    maxConcurrency: foundation.config.piWorkerConfig.maxConcurrency,
-    recordTokenUsageEvent: (event) => apiLLMRuntime.recordTokenUsageEvent(event)
+    maxConcurrency: foundation.config.piWorkerConfig.maxConcurrency
   });
   let piCapability: { token: string; capability: PiRelayCapability; presetFingerprint: string } | undefined;
   let relayGrantedAt = 0;

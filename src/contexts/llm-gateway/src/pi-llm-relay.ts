@@ -1,8 +1,6 @@
 import { timingSafeEqual, createHash } from "node:crypto";
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
-import type { LLMChatResult } from "./index.js";
 import type { PiPresetSnapshot } from "./pi-preset-adapter.js";
-import type { LLMPricePreset } from "./model-price-sync.js";
 import { createOpenAIUpstreamRequester, type OpenAIUpstreamRequest } from "./llm-upstream-requester.js";
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
@@ -16,15 +14,6 @@ export type PiRelayCapability = {
   /** Gateway-owned upstream transport (timeout/retry/auth); the relay never re-implements LLM interaction. */
   requester: OpenAIUpstreamRequest;
 };
-
-export type PiRelayUsageRecorder = (input: {
-  createdAt: string;
-  createdAtUtc?: string;
-  agentId: "pi";
-  model: string;
-  pricePreset: LLMPricePreset;
-  result: LLMChatResult;
-}) => void;
 
 export type PiRelayRequest = {
   method?: string;
@@ -43,7 +32,6 @@ export type PiLLMRelay = {
 
 export function createPiLLMRelay(input: {
   time: CurrentTimeProvider;
-  recordTokenUsageEvent: PiRelayUsageRecorder;
   host?: string;
   port?: number;
   fetchImpl?: typeof fetch;
@@ -85,8 +73,7 @@ export function createPiLLMRelay(input: {
         capabilities,
         maxBodyBytes,
         slots,
-        time: input.time,
-        recordTokenUsageEvent: input.recordTokenUsageEvent
+        time: input.time
       });
     },
     async start() {
@@ -115,8 +102,7 @@ export function createPiLLMRelay(input: {
             capabilities,
             maxBodyBytes,
             slots,
-            time: input.time,
-            recordTokenUsageEvent: input.recordTokenUsageEvent
+            time: input.time
           });
           res.statusCode = response.status;
           response.headers.forEach((value, key) => res.setHeader(key, value));
@@ -219,7 +205,6 @@ async function handleRelayRequest(
     maxBodyBytes: number;
     slots: { acquire(): boolean; release(): void };
     time: CurrentTimeProvider;
-    recordTokenUsageEvent: PiRelayUsageRecorder;
   }
 ): Promise<Response> {
   const method = request instanceof Request ? request.method : request.method ?? "GET";
@@ -265,6 +250,7 @@ async function handleRelayRequest(
     // Upstream transport (timeout, retry, auth) belongs to the LLM gateway.
     const attempt = await capability.requester({
       path: "/chat/completions",
+      callContext: { agentId: "pi" },
       init: {
         method: "POST",
         headers: { accept: headers.get("accept") ?? "application/json" },
@@ -286,7 +272,7 @@ async function handleRelayRequest(
 async function forwardResponse(
   response: Response,
   preset: PiPresetSnapshot,
-  input: { time: CurrentTimeProvider; recordTokenUsageEvent: PiRelayUsageRecorder },
+  input: { time: CurrentTimeProvider },
   release: () => void,
   cleanup: () => void,
   abort: () => void
@@ -305,7 +291,6 @@ async function forwardResponse(
     try {
       const bytes = new Uint8Array(await response.arrayBuffer());
       if (response.ok) {
-        recordUsageFromJson(bytes, preset, input);
         if (preset.stream === false) {
           const sseHeaders = new Headers(responseHeaders);
           sseHeaders.set("content-type", "text/event-stream");
@@ -321,10 +306,10 @@ async function forwardResponse(
   }
   const [clientBody, observerBody] = response.body.tee();
   // The concurrency slot tracks the upstream stream lifetime: it is released
-  // when the usage observer finishes (EOF, error, or abort). A client cancel
+  // when the drain finishes (EOF, error, or abort). A client cancel
   // aborts the upstream transport instead, so the slot is not released while
   // an upstream stream is still consuming capacity.
-  void observeSseUsage(observerBody, preset, input)
+  void drainSseBody(observerBody)
     .catch(() => {
       // Upstream aborted (timeout or client cancel); nothing to record.
     })
@@ -358,75 +343,12 @@ function withClientCancel(stream: ReadableStream<Uint8Array>, abort: () => void)
   });
 }
 
-type SseMetadata = { id?: string; model?: string; finish_reason?: string };
-
-async function observeSseUsage(body: ReadableStream<Uint8Array>, preset: PiPresetSnapshot, input: { time: CurrentTimeProvider; recordTokenUsageEvent: PiRelayUsageRecorder }): Promise<void> {
+async function drainSseBody(body: ReadableStream<Uint8Array>): Promise<void> {
   const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let usage: Record<string, unknown> | undefined;
-  let metadata: SseMetadata = {};
-  const consumeFrame = (payload: string) => {
-    if (payload === "[DONE]") return;
-    try {
-      const parsed = JSON.parse(payload) as { usage?: Record<string, unknown> | null; model?: string; id?: string; choices?: Array<{ finish_reason?: string }> };
-      if (parsed.usage) usage = parsed.usage;
-      metadata = {
-        id: parsed.id ?? metadata.id,
-        model: parsed.model ?? metadata.model,
-        finish_reason: parsed.choices?.[0]?.finish_reason ?? metadata.finish_reason
-      };
-    } catch {
-      // A partial or provider-specific SSE frame is not a usage event.
-    }
-  };
   while (true) {
     const next = await reader.read();
     if (next.done) break;
-    buffer += decoder.decode(next.value, { stream: true });
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      if (line.startsWith("data:")) consumeFrame(line.slice(5).trim());
-    }
   }
-  if (buffer.startsWith("data:")) consumeFrame(buffer.slice(5).trim());
-  if (usage) recordUsage({ ...metadata, usage }, preset, input);
-}
-
-function recordUsageFromJson(bytes: Uint8Array, preset: PiPresetSnapshot, input: { time: CurrentTimeProvider; recordTokenUsageEvent: PiRelayUsageRecorder }): void {
-  try {
-    recordUsage(JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>, preset, input);
-  } catch {
-    // Provider errors and non-JSON bodies have no usage to record.
-  }
-}
-
-function recordUsage(raw: Record<string, unknown>, preset: PiPresetSnapshot, input: { time: CurrentTimeProvider; recordTokenUsageEvent: PiRelayUsageRecorder }): void {
-  const usage = raw.usage;
-  if (!usage || typeof usage !== "object" || Array.isArray(usage)) return;
-  const value = usage as Record<string, unknown>;
-  const firstChoice = Array.isArray(raw.choices) && raw.choices[0] && typeof raw.choices[0] === "object"
-    ? raw.choices[0] as Record<string, unknown>
-    : undefined;
-  const time = input.time.now();
-  input.recordTokenUsageEvent({
-    createdAt: time.iso,
-    createdAtUtc: time.date.toISOString(),
-    agentId: "pi",
-    model: preset.model,
-    pricePreset: { baseURL: preset.baseURL, model: typeof raw.model === "string" ? raw.model : preset.model },
-    result: {
-      id: typeof raw.id === "string" ? raw.id : undefined,
-      model: typeof raw.model === "string" ? raw.model : preset.model,
-      finishReason: typeof raw.finish_reason === "string"
-        ? raw.finish_reason
-        : typeof firstChoice?.finish_reason === "string" ? firstChoice.finish_reason : undefined,
-      message: { role: "assistant", content: "" },
-      usage: normalizeUsage(value),
-      raw
-    }
-  });
 }
 
 function nonStreamingJsonToSse(bytes: Uint8Array, time: CurrentTimeProvider): string {
@@ -478,27 +400,6 @@ function nonStreamingJsonToSse(bytes: Uint8Array, time: CurrentTimeProvider): st
     ...(raw.usage && typeof raw.usage === "object" && !Array.isArray(raw.usage) ? { usage: raw.usage } : {})
   };
   return `data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`;
-}
-
-function normalizeUsage(value: Record<string, unknown>) {
-  const cached = number(value.prompt_cache_hit_tokens) ?? number(value.cache_hit_tokens) ?? nestedNumber(value.prompt_tokens_details, "cached_tokens") ?? nestedNumber(value.input_tokens_details, "cache_read");
-  const input = number(value.prompt_tokens) ?? number(value.input_tokens);
-  const output = number(value.completion_tokens) ?? number(value.output_tokens);
-  return {
-    inputTokens: input,
-    outputTokens: output,
-    totalTokens: number(value.total_tokens),
-    cacheHitTokens: cached,
-    cacheMissTokens: number(value.prompt_cache_miss_tokens) ?? number(value.cache_miss_tokens)
-  };
-}
-
-function nestedNumber(value: unknown, key: string): number | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ? number((value as Record<string, unknown>)[key]) : undefined;
-}
-
-function number(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function readBody(request: Request | PiRelayRequest, maxBodyBytes: number): Promise<Buffer> {

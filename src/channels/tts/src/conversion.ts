@@ -12,6 +12,7 @@ import { defaultBailianTtsEndpoint, defaultMimoTtsBaseURL, defaultMimoTtsModel, 
 import { parseJsonObject, stringValue } from "./internal.js";
 import { writeAscii } from "./audio-utils.js";
 import { recordTtsApiUsage } from "./usage.js";
+import { createOpenAIUpstreamRequester } from "../../../contexts/llm-gateway/src/index.js";
 
 export function createTtsConversionSynthesizer(
   conversion: TtsConversionProvider,
@@ -225,7 +226,6 @@ export function createMimoTtsVoiceSynthesizer(
 ): VoiceSynthesizer {
   const synthesize = (async (request) => {
     const settings = resolveMimoTtsSettings(config, deps);
-    recordTtsApiUsage(deps, { time: request.time, provider: `mimo-${settings.mode}`, model: settings.model, text: request.text });
     const audio = await requestMimoTtsAudio(request.text, settings, deps);
     const stamp = request.time.now().iso.replace(/[^\dA-Za-z.-]+/g, "_");
     const outputDir = deps.outputDir ?? path.join("assets", "generated", "tts");
@@ -240,13 +240,11 @@ export function createMimoTtsVoiceSynthesizer(
 
   synthesize.streamAudio = async function* (request) {
     const settings = resolveMimoTtsSettings(config, deps);
-    recordTtsApiUsage(deps, { time: request.time, provider: `mimo-${settings.mode}`, model: settings.model, text: request.text });
     const audio = await requestMimoTtsAudio(request.text, settings, deps);
     if (audio.byteLength) yield audio;
   };
   synthesize.streamAudioWithText = async function* (request) {
     const settings = resolveMimoTtsSettings(config, deps);
-    recordTtsApiUsage(deps, { time: request.time, provider: `mimo-${settings.mode}`, model: settings.model, text: request.text });
     const audio = await requestMimoTtsAudio(request.text, settings, deps);
     if (!audio.byteLength) return;
     yield {
@@ -298,30 +296,33 @@ async function requestMimoTtsAudio(
   settings: MimoTtsSettings,
   deps: Pick<TtsPluginDeps, "fetch" | "appendLog">
 ): Promise<Uint8Array> {
-  const fetchImpl = deps.fetch ?? fetch;
-  const abort = new AbortController();
-  const timeout = setTimeout(() => abort.abort(), settings.timeoutMs);
+  const requester = createOpenAIUpstreamRequester({
+    baseURL: settings.baseURL,
+    timeoutMs: settings.timeoutMs,
+    fetchImpl: deps.fetch
+  });
   deps.appendLog?.("info", `tts MiMo ${settings.mode} start: chars=${Array.from(text).length}`);
-  try {
-    const response = await fetchImpl(`${settings.baseURL}/chat/completions`, {
+  return requester({
+    path: "/chat/completions",
+    callContext: { agentId: "tts" },
+    init: {
       method: "POST",
-      signal: abort.signal,
       headers: {
         "api-key": settings.apiKey,
         "content-type": "application/json"
       },
       body: JSON.stringify(mimoTtsRequestBody(text, settings))
-    });
-    if (!response.ok) {
-      throw new Error(`MiMo TTS HTTP error ${response.status}: ${await response.text()}`);
+    },
+    async consume(response) {
+      if (!response.ok) {
+        throw new Error(`MiMo TTS HTTP error ${response.status}: ${await response.text()}`);
+      }
+      const data = parseJsonObject(await response.text());
+      const audio = parseMimoAudioData(data);
+      if (!audio) throw new Error("MiMo TTS returned no audio data");
+      return new Uint8Array(Buffer.from(audio, "base64"));
     }
-    const data = parseJsonObject(await response.text());
-    const audio = parseMimoAudioData(data);
-    if (!audio) throw new Error("MiMo TTS returned no audio data");
-    return new Uint8Array(Buffer.from(audio, "base64"));
-  } finally {
-    clearTimeout(timeout);
-  }
+  });
 }
 
 function mimoTtsRequestBody(text: string, settings: MimoTtsSettings): Record<string, unknown> {

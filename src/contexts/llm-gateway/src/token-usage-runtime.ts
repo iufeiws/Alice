@@ -1,44 +1,17 @@
 import type { LLMChatResult } from "./index.js";
 import type { TokenUsageQuery, createTokenUsageStore } from "../../../platform/storage/src/token-usage-store.js";
-import { createModelPriceSync, type LLMPricePreset } from "./model-price-sync.js";
 
 type TokenUsageStore = ReturnType<typeof createTokenUsageStore>;
 
-type LLMResponseLogEntry = {
-  id: number;
-  agentId?: string;
-  sessionId?: number;
-  requestId?: number;
-  time: string;
-  timeUtc?: string;
-};
-
 export function createTokenUsageRuntime(input: {
   getStore(): TokenUsageStore | undefined;
-  resolveModel(agentId: string): string | undefined;
-  now(): Date;
   appendLog(level: "info" | "warn", message: string): void;
 }) {
-  const priceSyncByStore = new WeakMap<TokenUsageStore, ReturnType<typeof createModelPriceSync>>();
   return {
-    recordTokenUsage,
     recordTokenUsageEvent,
     appendLLMUsageLog,
     getTokenUsageReport
   };
-
-  function recordTokenUsage(entry: LLMResponseLogEntry, result: LLMChatResult, agentId = "chat"): void {
-    recordTokenUsageEvent({
-      createdAt: entry.time,
-      createdAtUtc: entry.timeUtc,
-      agentId,
-      model: result.model ?? input.resolveModel(agentId),
-      sessionId: entry.sessionId,
-      requestId: entry.requestId,
-      responseId: entry.id,
-      result
-    });
-  }
 
   function recordTokenUsageEvent(event: {
     createdAt: string;
@@ -48,13 +21,13 @@ export function createTokenUsageRuntime(input: {
     sessionId?: number;
     requestId?: number;
     responseId?: number;
-    pricePreset?: LLMPricePreset;
     result: LLMChatResult;
-  }): void {
-    let stored: ReturnType<TokenUsageStore["insert"]> | undefined;
+  }): ReturnType<TokenUsageStore["insert"]> | undefined {
     try {
       const usage = event.result.usage;
-      stored = input.getStore()?.insert({
+      const store = input.getStore();
+      if (!store) return undefined;
+      return store.insert({
         createdAt: event.createdAt,
         createdAtUtc: event.createdAtUtc,
         agentId: event.agentId,
@@ -71,50 +44,38 @@ export function createTokenUsageRuntime(input: {
         rawUsageJson: extractRawUsageJson(event.result.raw)
       });
     } catch (error) {
-      input.appendLog("warn", `token usage persist failed: ${error instanceof Error ? error.message : String(error)}`);
-      return;
-    }
-    if (stored) void resolveProviderId(stored.id, event.createdAtUtc, event.pricePreset, event.model ?? event.result.model);
-  }
-
-  async function resolveProviderId(eventId: number, observedAtUtc: string | undefined, preset: LLMPricePreset | undefined, responseModel: string | undefined): Promise<void> {
-    try {
-      const store = input.getStore();
-      if (!store) return;
-      const pricePreset = preset && { ...preset, model: responseModel ?? preset.model };
-      let priceSync = priceSyncByStore.get(store);
-      if (!priceSync) {
-        priceSync = createModelPriceSync({ store, now: input.now, appendLog: input.appendLog });
-        priceSyncByStore.set(store, priceSync);
-      }
-      const price = await priceSync.resolvePrice(pricePreset, observedAtUtc);
-      store.assignProviderId(eventId, price?.providerId);
-    } catch (error) {
-      input.appendLog("warn", `token usage price lookup failed: ${error instanceof Error ? error.message : String(error)}`);
+      try {
+        input.appendLog("warn", `token usage persist failed: ${error instanceof Error ? error.message : String(error)}`);
+      } catch {}
+      return undefined;
     }
   }
 
   function appendLLMUsageLog(result: LLMChatResult, modelFallback: string | undefined): void {
-    const rawUsage = extractRawUsage(result.raw);
-    const usage = result.usage;
-    if (!usage) {
-      input.appendLog("info", `llm token usage: input=? output=? total=? cache_hit=? cache_miss=? model=${modelFallback} raw_usage=${rawUsage}`);
+    try {
+      const rawUsage = extractRawUsage(result.raw);
+      const usage = result.usage;
+      if (!usage) {
+        input.appendLog("info", `llm token usage: input=? output=? total=? cache_hit=? cache_miss=? model=${modelFallback} raw_usage=${rawUsage}`);
+        return;
+      }
+      input.appendLog("info", [
+        "llm token usage:",
+        `input=${formatTokenCount(usage.inputTokens)}`,
+        `output=${formatTokenCount(usage.outputTokens)}`,
+        `total=${formatTokenCount(usage.totalTokens)}`,
+        `cache_hit=${formatTokenCount(usage.cacheHitTokens)}`,
+        `cache_miss=${formatTokenCount(usage.cacheMissTokens)}`,
+        `model=${modelFallback}`,
+        `raw_usage=${rawUsage}`
+      ].join(" "));
+    } catch {
       return;
     }
-    input.appendLog("info", [
-      "llm token usage:",
-      `input=${formatTokenCount(usage.inputTokens)}`,
-      `output=${formatTokenCount(usage.outputTokens)}`,
-      `total=${formatTokenCount(usage.totalTokens)}`,
-      `cache_hit=${formatTokenCount(usage.cacheHitTokens)}`,
-      `cache_miss=${formatTokenCount(usage.cacheMissTokens)}`,
-      `model=${modelFallback}`,
-      `raw_usage=${rawUsage}`
-    ].join(" "));
   }
 
   function getTokenUsageReport(query: TokenUsageQuery) {
-    return input.getStore()?.report(query) ?? {
+    const emptyReport = {
       summary: {
         requests: 0,
         inputTokens: 0,
@@ -129,6 +90,11 @@ export function createTokenUsageRuntime(input: {
       byModelBucket: [],
       latest: []
     };
+    try {
+      return input.getStore()?.report(query) ?? emptyReport;
+    } catch {
+      return emptyReport;
+    }
   }
 }
 

@@ -85,7 +85,6 @@ test("real Pi worker: start/send/fork/auth/persistent sessions", { skip: Number(
   let requestCount = 0;
   const relay = createPiLLMRelay({
     time,
-    recordTokenUsageEvent() {},
     fetchImpl: async (_url, init) => {
       requestCount += 1;
       const text = `hello-${requestCount}`;
@@ -240,7 +239,6 @@ test("real Pi worker: reasoning relay uses the system role", { skip: Number(proc
   let requestBody: Record<string, unknown> | undefined;
   const relay = createPiLLMRelay({
     time,
-    recordTokenUsageEvent() {},
     fetchImpl: async (_url, init) => {
       requestBody = JSON.parse(String(init?.body) ?? "{}") as Record<string, unknown>;
       return new Response(ssePayload("ok"), { status: 200, headers: { "content-type": "text/event-stream" } });

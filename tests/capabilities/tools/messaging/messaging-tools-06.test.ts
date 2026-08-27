@@ -7,6 +7,7 @@ import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfigure
 import { createAliceStore } from "../../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentOutput } from "../../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import { testPromptRuntime } from "../../../helpers/prompt-runtime.js";
+import { setOpenAICallObserver } from "../../../../src/contexts/llm-gateway/src/llm-upstream-requester.js";
 
 const fs = await import("node:fs");
 const fsp = await import("node:fs/promises");
@@ -115,6 +116,8 @@ test("mimo tts voiceclone sends chat completions audio voice data url", async ()
   const outputDir = path.join(makeTempDir("mimo-tts-output"), "assets", "generated", "tts");
   const requests: Array<{ url: string; headers: Headers; body: any }> = [];
   const audio = Buffer.from("wav-bytes");
+  const callEvents: any[] = [];
+  setOpenAICallObserver((event) => callEvents.push(event));
   const synthesize = createMimoTtsVoiceSynthesizer({
     enabled: true,
     translationEnabled: false,
@@ -139,6 +142,8 @@ test("mimo tts voiceclone sends chat completions audio voice data url", async ()
         body: JSON.parse(String(init?.body))
       });
       return new Response(JSON.stringify({
+        model: "mimo-v2.5-tts-voiceclone",
+        usage: { prompt_tokens: 5, completion_tokens: 7, total_tokens: 12 },
         choices: [{
           message: {
             audio: { data: audio.toString("base64") }
@@ -151,12 +156,11 @@ test("mimo tts voiceclone sends chat completions audio voice data url", async ()
     }
   });
 
-  const result = await synthesize({
-    text: "保存音频。",
-    time: createCurrentTimeProvider("UTC", () => new Date("2026-06-11T02:10:51.609Z"))
-  });
-
   try {
+    const result = await synthesize({
+      text: "保存音频。",
+      time: createCurrentTimeProvider("UTC", () => new Date("2026-06-11T02:10:51.609Z"))
+    });
     assert.equal(requests[0].url, "https://api.xiaomimimo.com/v1/chat/completions");
     assert.equal(requests[0].headers.get("api-key"), "mimo-key");
     assert.deepEqual(requests[0].body, {
@@ -169,8 +173,19 @@ test("mimo tts voiceclone sends chat completions audio voice data url", async ()
     });
     assert.equal(result.assetId, "generated/tts/2026-06-11T02_10_51.609-mimo.wav");
     assert.deepEqual(fs.readFileSync(result.filePath), audio);
-  } finally {
+    assert.equal(callEvents.length, 1);
+    assert.equal(callEvents[0].agentId, "tts");
+    assert.equal(callEvents[0].requestedModel, "mimo-v2.5-tts-voiceclone");
+    assert.deepEqual(callEvents[0].usage, {
+      inputTokens: 5,
+      outputTokens: 7,
+      totalTokens: 12,
+      cacheHitTokens: undefined,
+      cacheMissTokens: undefined
+    });
     fs.rmSync(result.filePath, { force: true });
+  } finally {
+    setOpenAICallObserver(undefined);
   }
 });
 

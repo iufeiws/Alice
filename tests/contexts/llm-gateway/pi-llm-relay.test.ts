@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createPiLLMRelay } from "../../../src/contexts/llm-gateway/src/pi-llm-relay.js";
 import type { PiPresetSnapshot } from "../../../src/contexts/llm-gateway/src/pi-preset-adapter.js";
+import { setOpenAICallObserver } from "../../../src/contexts/llm-gateway/src/llm-upstream-requester.js";
 
 const time = {
   timeZone: "Asia/Tokyo",
@@ -20,12 +21,13 @@ const preset: PiPresetSnapshot = {
   extraParams: {}
 };
 
-test("relay forwards Pi tools while keeping preset-owned request parameters", async () => {
+test("relay forwards Pi tools and relies on the shared upstream completion seam", async (t) => {
   const requests: RequestInit[] = [];
-  const usage: any[] = [];
+  const calls: any[] = [];
+  setOpenAICallObserver((event) => calls.push(event));
+  t.after(() => setOpenAICallObserver(undefined));
   const relay = createPiLLMRelay({
     time,
-    recordTokenUsageEvent: (event) => usage.push(event),
     fetchImpl: async (url, init) => {
       assert.equal(url, "https://upstream.example/v1/chat/completions");
       requests.push(init!);
@@ -38,7 +40,7 @@ test("relay forwards Pi tools while keeping preset-owned request parameters", as
         tools: [{ type: "function", function: { name: "read", parameters: { type: "object" } } }],
         tool_choice: "auto"
       });
-      return new Response(JSON.stringify({ id: "r1", model: "model-a", choices: [], usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 } }), { status: 200, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({ id: "r1", model: "resolved-model", choices: [], usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 } }), { status: 200, headers: { "content-type": "application/json" } });
     }
   });
   const capability = relay.createCapability({ sandboxId: "sandbox-a", token: "token-a", preset });
@@ -61,14 +63,21 @@ test("relay forwards Pi tools while keeping preset-owned request parameters", as
   }));
   assert.equal(response.status, 200);
   assert.equal(requests.length, 1);
-  assert.equal(usage.length, 1);
-  assert.equal(usage[0].agentId, "pi");
-  assert.deepEqual(usage[0].result.usage, { inputTokens: 3, outputTokens: 4, totalTokens: 7, cacheHitTokens: undefined, cacheMissTokens: undefined });
+  assert.deepEqual(calls, [{
+    baseURL: "https://upstream.example/v1",
+    agentId: "pi",
+    requestedModel: "model-a",
+    responseModel: "resolved-model",
+    responseId: "r1",
+    finishReason: undefined,
+    usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7, cacheHitTokens: undefined, cacheMissTokens: undefined },
+    rawUsage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 }
+  }]);
 });
 
 test("relay rejects invalid capability but ignores Pi model", async () => {
   let calls = 0;
-  const relay = createPiLLMRelay({ time, recordTokenUsageEvent() {}, fetchImpl: async () => { calls += 1; return new Response(); } });
+  const relay = createPiLLMRelay({ time, fetchImpl: async () => { calls += 1; return new Response(); } });
   const capability = relay.createCapability({ sandboxId: "sandbox-a", token: "token-a", preset });
   const invalid = await relay.handle(new Request("http://relay/v1/chat/completions", { method: "POST", headers: { authorization: "Bearer wrong" }, body: "{}" }));
   assert.equal(invalid.status, 403);
@@ -81,7 +90,6 @@ test("relay applies the immutable preset sampling values", async () => {
   let body: Record<string, unknown> | undefined;
   const relay = createPiLLMRelay({
     time,
-    recordTokenUsageEvent() {},
     fetchImpl: async (_url, init) => {
       body = JSON.parse(String(init?.body));
       return new Response(JSON.stringify({ choices: [] }), { status: 200, headers: { "content-type": "application/json" } });
@@ -97,11 +105,13 @@ test("relay applies the immutable preset sampling values", async () => {
   assert.deepEqual(body, { model: "model-a", top_p: 0.8, stream: true, temperature: 0.7, messages: [], tools: [] });
 });
 
-test("relay omits upstream authorization when the project preset has no api key", async () => {
+test("relay records a successful call centrally even when upstream omits token counts", async (t) => {
   let authorization: string | null | undefined;
+  const calls: any[] = [];
+  setOpenAICallObserver((event) => calls.push(event));
+  t.after(() => setOpenAICallObserver(undefined));
   const relay = createPiLLMRelay({
     time,
-    recordTokenUsageEvent() {},
     fetchImpl: async (_url, init) => {
       authorization = new Headers(init?.headers).get("authorization");
       return new Response(JSON.stringify({ choices: [] }), { status: 200, headers: { "content-type": "application/json" } });
@@ -116,29 +126,31 @@ test("relay omits upstream authorization when the project preset has no api key"
 
   assert.equal(response.status, 200);
   assert.equal(authorization, null);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].agentId, "pi");
+  assert.equal(calls[0].usage, undefined);
 });
 
-test("relay preserves SSE and records only the usage-bearing chunk", async () => {
-  const usage: any[] = [];
+test("relay preserves SSE while the shared upstream seam observes its completion", async (t) => {
+  const calls: any[] = [];
+  setOpenAICallObserver((event) => calls.push(event));
+  t.after(() => setOpenAICallObserver(undefined));
   const relay = createPiLLMRelay({
     time,
-    recordTokenUsageEvent: (event) => usage.push(event),
     fetchImpl: async () => new Response("data: {\"id\":\"r2\",\"model\":\"model-a\",\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: {\"id\":\"r2\",\"model\":\"model-a\",\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":6,\"total_tokens\":11},\"choices\":[{\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", { status: 200, headers: { "content-type": "text/event-stream" } })
   });
   relay.createCapability({ sandboxId: "sandbox-a", token: "token-a", preset });
   const response = await relay.handle(new Request("http://relay/v1/chat/completions", { method: "POST", headers: { authorization: "Bearer token-a" }, body: JSON.stringify({ model: "model-a", messages: [], stream: true }) }));
   assert.equal(await response.text(), "data: {\"id\":\"r2\",\"model\":\"model-a\",\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: {\"id\":\"r2\",\"model\":\"model-a\",\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":6,\"total_tokens\":11},\"choices\":[{\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n");
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(usage.length, 1);
-  assert.equal(usage[0].result.usage.totalTokens, 11);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].usage.totalTokens, 11);
 });
 
 test("relay converts a non-stream preset JSON response into SSE for Pi", async () => {
-  const usage: any[] = [];
   let upstreamBody: Record<string, unknown> | undefined;
   const relay = createPiLLMRelay({
     time,
-    recordTokenUsageEvent: (event) => usage.push(event),
     fetchImpl: async (_url, init) => {
       upstreamBody = JSON.parse(String(init?.body));
       return new Response(JSON.stringify({
@@ -168,9 +180,6 @@ test("relay converts a non-stream preset JSON response into SSE for Pi", async (
   assert.match(body, /"content":"json answer"/);
   assert.match(body, /"finish_reason":"stop"/);
   assert.match(body, /data: \[DONE\]/);
-  assert.equal(usage.length, 1);
-  assert.equal(usage[0].result.usage.totalTokens, 11);
-  assert.equal(usage[0].result.finishReason, "stop");
 });
 
 test("relay enforces maxConcurrency before establishing upstream requests", async () => {
@@ -181,7 +190,6 @@ test("relay enforces maxConcurrency before establishing upstream requests", asyn
   const relay = createPiLLMRelay({
     time,
     maxConcurrency: 1,
-    recordTokenUsageEvent() {},
     fetchImpl: async () => {
       if (!firstCreated) {
         firstCreated = true;
@@ -211,7 +219,6 @@ test("relay http server returns 502 for gateway upstream failures instead of han
     time,
     host: "127.0.0.1",
     port: 0,
-    recordTokenUsageEvent() {},
     fetchImpl: async () => {
       throw new Error("upstream network failure");
     }
@@ -237,7 +244,6 @@ test("relay upstream timeout stays armed for the whole SSE stream and releases t
   const relay = createPiLLMRelay({
     time,
     maxConcurrency: 1,
-    recordTokenUsageEvent() {},
     fetchImpl: async (_url, init) => {
       const body = new ReadableStream<Uint8Array>({
         start(controller) {
@@ -278,7 +284,6 @@ test("client cancelling an SSE response aborts the upstream and releases the slo
   const relay = createPiLLMRelay({
     time,
     maxConcurrency: 1,
-    recordTokenUsageEvent() {},
     fetchImpl: async (_url, init) => {
       upstreamStarted = true;
       const body = new ReadableStream<Uint8Array>({

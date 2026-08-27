@@ -12,7 +12,32 @@ type OpenAIUpstreamRequestInput = {
   path: string;
   init: RequestInit;
   signal?: AbortSignal;
+  callContext?: { agentId: string };
 };
+
+export type OpenAICallEvent = {
+  baseURL: string;
+  agentId: string;
+  requestedModel?: string;
+  responseModel?: string;
+  responseId?: string;
+  finishReason?: string;
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+    cacheHitTokens?: number;
+    cacheMissTokens?: number;
+  };
+  rawUsage?: Record<string, unknown>;
+};
+
+type OpenAICallObserver = (event: OpenAICallEvent) => void | Promise<void>;
+let openAICallObserver: OpenAICallObserver | undefined;
+
+export function setOpenAICallObserver(observer: OpenAICallObserver | undefined): void {
+  openAICallObserver = observer;
+}
 
 export type OpenAIUpstreamAttempt = {
   response: Response;
@@ -81,6 +106,16 @@ export function createOpenAIUpstreamRequester(config: {
         continue;
       }
 
+      if (openAICallObserver && response.ok && input.path === "/chat/completions") {
+        try {
+          response = observeOpenAICallResponse(response, {
+            baseURL,
+            agentId: input.callContext?.agentId ?? "llm",
+            requestedModel: requestModel(input.init.body)
+          });
+        } catch {}
+      }
+
       if (!input.consume) {
         return { response, cleanup, abort: () => controller.abort() };
       }
@@ -99,6 +134,152 @@ export function createOpenAIUpstreamRequester(config: {
     }
     throw new Error("unreachable OpenAI fetch retry state");
   } as OpenAIUpstreamRequest;
+}
+
+function observeOpenAICallResponse(response: Response, call: Pick<OpenAICallEvent, "baseURL" | "agentId" | "requestedModel">): Response {
+  if (!response.body) {
+    return new Response(new ReadableStream<Uint8Array>({
+      async start(controller) {
+        try {
+          await emitOpenAICall(call);
+          controller.close();
+        } catch (error) {
+          controller.error(error);
+        }
+      }
+    }), { status: response.status, statusText: response.statusText, headers: response.headers });
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  const sse = response.headers.get("content-type")?.toLowerCase().includes("text/event-stream") === true;
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const next = await reader.read();
+        if (next.done) {
+          try {
+            await observeCall(chunks, call, sse);
+          } catch {}
+          controller.close();
+          return;
+        }
+        chunks.push(next.value.slice());
+        controller.enqueue(next.value);
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    }
+  });
+  return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+}
+
+async function observeCall(chunks: Uint8Array[], call: Pick<OpenAICallEvent, "baseURL" | "agentId" | "requestedModel">, sse: boolean): Promise<void> {
+  const bytes = concatenateChunks(chunks);
+  const text = new TextDecoder().decode(bytes);
+  let raw: Record<string, unknown>;
+  try {
+    raw = sse ? observedSseResult(text) : JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    await emitOpenAICall(call);
+    return;
+  }
+  const rawUsage = objectValue(raw.usage);
+  const firstChoice = Array.isArray(raw.choices) ? objectValue(raw.choices[0]) : undefined;
+  await emitOpenAICall({
+    ...call,
+    responseModel: stringValue(raw.model),
+    responseId: stringValue(raw.id),
+    finishReason: stringValue(firstChoice?.finish_reason),
+    usage: normalizeOpenAIUsage(rawUsage),
+    rawUsage
+  });
+}
+
+async function emitOpenAICall(event: OpenAICallEvent): Promise<void> {
+  try {
+    await openAICallObserver?.(event);
+  } catch {}
+}
+
+function observedSseResult(text: string): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.startsWith("data:")) continue;
+    const data = line.slice(5).trim();
+    if (!data || data === "[DONE]") continue;
+    let chunk: Record<string, unknown>;
+    try {
+      chunk = JSON.parse(data) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (typeof chunk.id === "string") result.id = chunk.id;
+    if (typeof chunk.model === "string") result.model = chunk.model;
+    const usage = objectValue(chunk.usage);
+    if (usage) result.usage = usage;
+    const firstChoice = Array.isArray(chunk.choices) ? objectValue(chunk.choices[0]) : undefined;
+    if (typeof firstChoice?.finish_reason === "string") result.choices = [{ finish_reason: firstChoice.finish_reason }];
+  }
+  return result;
+}
+
+function requestModel(body: BodyInit | null | undefined): string | undefined {
+  if (typeof body !== "string") return undefined;
+  try {
+    const raw = JSON.parse(body) as Record<string, unknown>;
+    return stringValue(raw.model);
+  } catch {
+    return undefined;
+  }
+}
+
+export function normalizeOpenAIUsage(value: unknown): OpenAICallEvent["usage"] {
+  const raw = objectValue(value);
+  if (!raw) return undefined;
+  const promptDetails = objectValue(raw.prompt_tokens_details);
+  const inputDetails = objectValue(raw.input_tokens_details);
+  const cacheHitTokens = numberValue(raw.prompt_cache_hit_tokens)
+    ?? numberValue(raw.cache_hit_tokens)
+    ?? numberValue(promptDetails?.cached_tokens)
+    ?? numberValue(inputDetails?.cached_tokens)
+    ?? numberValue(inputDetails?.cache_read);
+  const inputTokens = numberValue(raw.input_tokens) ?? numberValue(raw.prompt_tokens);
+  const outputTokens = numberValue(raw.output_tokens) ?? numberValue(raw.completion_tokens);
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens: numberValue(raw.total_tokens)
+      ?? (inputTokens !== undefined && outputTokens !== undefined ? inputTokens + outputTokens : undefined),
+    cacheHitTokens,
+    cacheMissTokens: numberValue(raw.prompt_cache_miss_tokens)
+      ?? numberValue(raw.cache_miss_tokens)
+      ?? (inputTokens !== undefined && cacheHitTokens !== undefined ? Math.max(0, inputTokens - cacheHitTokens) : undefined)
+  };
+}
+
+function concatenateChunks(chunks: Uint8Array[]): Uint8Array {
+  const result = new Uint8Array(chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
+}
+
+function objectValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function newDirectDispatcher(): unknown {

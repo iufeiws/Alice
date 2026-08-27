@@ -5,7 +5,7 @@ import {
   sanitizeLLMResponseMessage,
   type LLMMessageSanitizationOptions
 } from "./llm-message-sanitization.js";
-import { createOpenAIUpstreamRequester } from "./llm-upstream-requester.js";
+import { createOpenAIUpstreamRequester, normalizeOpenAIUsage } from "./llm-upstream-requester.js";
 
 export type LLMRole = "system" | "user" | "assistant" | "tool";
 
@@ -72,6 +72,7 @@ export type LLMChatInput = {
   maxTokens?: number;
   extraParams?: Record<string, unknown>;
   presetName?: string;
+  callContext?: { agentId: string };
   signal?: AbortSignal;
 };
 
@@ -201,8 +202,8 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
     useProxy: config.useProxy
   });
 
-  async function request<T>(path: string, init: RequestInit, signal?: AbortSignal): Promise<T> {
-    const { response, cleanup } = await requestUpstream({ path, init, signal });
+  async function request<T>(path: string, init: RequestInit, signal?: AbortSignal, callContext?: { agentId: string }): Promise<T> {
+    const { response, cleanup } = await requestUpstream({ path, init, signal, callContext });
     try {
       if (!response.ok) {
         const body = await response.text();
@@ -219,7 +220,8 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
     path: string,
     body: Record<string, unknown>,
     handlers: LLMStreamHandlers | undefined,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    callContext?: { agentId: string }
   ): Promise<LLMChatResult> {
     return requestUpstream({
       path,
@@ -228,6 +230,7 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
         body: JSON.stringify({ ...body, stream: true })
       },
       signal,
+      callContext,
       async consume(response) {
         let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
         let completed = false;
@@ -261,7 +264,7 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
             id = chunk.id ?? id;
             model = chunk.model ?? model;
             rawUsage = chunk.usage ?? rawUsage;
-            usage = normalizeUsage(chunk.usage) ?? usage;
+            usage = normalizeOpenAIUsage(chunk.usage) ?? usage;
             const choice = chunk.choices?.[0];
             finishReason = choice?.finish_reason ?? finishReason;
             const deltaContent = choice?.delta?.content;
@@ -352,7 +355,7 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
       const json = await request<OpenAIChatCompletionResponse>("/chat/completions", {
         method: "POST",
         body: JSON.stringify(body)
-      }, input.signal);
+      }, input.signal, input.callContext);
 
       const choice = json.choices?.[0];
       return {
@@ -365,7 +368,7 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
           toolCalls: normalizeToolCalls(choice?.message?.tool_calls)
         }),
         finishReason: choice?.finish_reason,
-        usage: normalizeUsage(json.usage),
+        usage: normalizeOpenAIUsage(json.usage),
         raw: json
       };
     },
@@ -378,7 +381,7 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
       };
       if (input.tools !== undefined) body.tools = input.tools;
       if (input.maxTokens !== undefined) body.max_tokens = input.maxTokens;
-      return requestStream("/chat/completions", body, handlers, input.signal);
+      return requestStream("/chat/completions", body, handlers, input.signal, input.callContext);
     },
     async listModels() {
       const json = await request<{ data?: Array<{ id: string; owned_by?: string }> }>("/models", {
@@ -448,27 +451,6 @@ function normalizeToolCalls(raw: OpenAIToolCall[] | undefined): LLMToolCall[] | 
     })
     .filter((call): call is LLMToolCall => Boolean(call));
   return calls.length > 0 ? calls : undefined;
-}
-
-function normalizeUsage(usage: OpenAIUsage | null | undefined): LLMUsage | undefined {
-  if (!usage) return undefined;
-  const cacheHitTokens = usage.prompt_cache_hit_tokens
-    ?? usage.cache_hit_tokens
-    ?? usage.prompt_tokens_details?.cached_tokens
-    ?? usage.input_tokens_details?.cached_tokens
-    ?? usage.input_tokens_details?.cache_read;
-  const cacheMissTokens = usage.prompt_cache_miss_tokens
-    ?? usage.cache_miss_tokens
-    ?? (typeof usage.prompt_tokens === "number" && typeof cacheHitTokens === "number"
-      ? Math.max(0, usage.prompt_tokens - cacheHitTokens)
-      : undefined);
-  return {
-    inputTokens: usage.prompt_tokens,
-    outputTokens: usage.completion_tokens,
-    totalTokens: usage.total_tokens,
-    cacheHitTokens,
-    cacheMissTokens
-  };
 }
 
 export function createMutableLLMClient(initialClient: LLMClient): MutableLLMClient {

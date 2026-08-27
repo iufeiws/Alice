@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import { createAliceStore } from "../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import { createTokenUsageStore } from "../../../src/platform/storage/src/token-usage-store.js";
 import { createModelPriceSync } from "../../../src/contexts/llm-gateway/src/model-price-sync.js";
+import { createLLMObservabilityRuntime } from "../../../src/contexts/llm-gateway/src/llm-observability-runtime.js";
+import { createOpenAIUpstreamRequester, setOpenAICallObserver } from "../../../src/contexts/llm-gateway/src/llm-upstream-requester.js";
 import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.js";
 import * as sqlite from "../../../src/platform/storage/src/sqlite-compat.js";
-import { path, makeTempDir } from "./llm-and-storage-helpers.js";
+import { path, fixedTime, makeTempDir } from "./llm-and-storage-helpers.js";
 
 test("token usage store aggregates cache hit rate by hour", () => {
   const dir = makeTempDir("token-usage");
@@ -131,7 +133,7 @@ test("model price sync persists the complete catalog and fetches it at most once
         neon: { api: "${NEON_AI_GATEWAY_BASE_URL}/v1", models: { ignored: { cost: { input: 1, output: 1 } } } },
         local: { models: { "unpriced-model": {} } },
         openai: { api: "https://api.openai.com/v1", models: {
-          "gpt-test": { cost: { input: 2, output: 8, cache_read: 0.2 } },
+          "gpt-test": { cost: { input: 2, output: 8, cache_read: 0.2, reasoning: 12, tiers: { large: { input: 4, output: 16 } } } },
           "mimo-v2.5": { cost: { input: 0.14, output: 0.28, cache_read: 0.0028 } }
         } },
         anthropic: { api: "https://api.anthropic.com/v1", models: {
@@ -142,15 +144,18 @@ test("model price sync persists the complete catalog and fetches it at most once
   });
   const preset = { baseURL: "https://api.openai.com", model: "gpt-test" };
 
-  assert.equal((await sync.resolvePrice(preset))?.price.output, 8);
+  const gptPrice = await sync.recordModelPrice(preset);
+  assert.equal(gptPrice?.price?.output, 8);
+  assert.equal(gptPrice?.price?.reasoning, 12);
+  assert.deepEqual(gptPrice?.price?.tiers, { large: { input: 4, output: 16 } });
   assert.deepEqual(store.getModelCatalogStats(), { providers: 4, models: 5, pricedModels: 4 });
-  assert.equal((await sync.resolvePrice({ ...preset, model: "mimo-v2.5" }))?.price.output, 0.28);
-  assert.equal((await sync.resolvePrice({ baseURL: "https://api.anthropic.com/v1", model: "claude-test" }))?.price.output, 15);
+  assert.equal((await sync.recordModelPrice({ ...preset, model: "mimo-v2.5" }))?.price?.output, 0.28);
+  assert.equal((await sync.recordModelPrice({ baseURL: "https://api.anthropic.com/v1", model: "claude-test" }))?.price?.output, 15);
   assert.equal(fetches, 1);
   now = new Date("2026-05-30T10:30:00.000Z");
-  await sync.resolvePrice(preset);
+  await sync.recordModelPrice(preset);
   now = new Date("2026-05-30T11:00:00.000Z");
-  await sync.resolvePrice(preset);
+  await sync.recordModelPrice(preset);
   assert.equal(fetches, 2);
 });
 
@@ -163,7 +168,7 @@ test("model price sync warns and selects the first upstream provider when URL an
       { providerId: "second", apiURL: "https://api.example.test/v1" }
     ],
     models: [
-      { providerId: "first", modelId: "shared", price: { input: 1, output: 2 } },
+      { providerId: "first", modelId: "shared" },
       { providerId: "second", modelId: "shared", price: { input: 3, output: 6 } }
     ]
   }, "2026-05-30T10:00:00.000Z");
@@ -174,10 +179,10 @@ test("model price sync warns and selects the first upstream provider when URL an
     appendLog: (_level, message) => warnings.push(message)
   });
 
-  const price = await sync.resolvePrice({ baseURL: "https://api.example.test/v1", model: "shared" });
+  const price = await sync.recordModelPrice({ baseURL: "https://api.example.test/v1", model: "shared" });
 
   assert.equal(price?.providerId, "first");
-  assert.deepEqual(price?.price, { input: 1, output: 2 });
+  assert.equal(price?.price, undefined);
   assert.deepEqual(warnings, [
     "model price provider match is ambiguous: base_url=https://api.example.test model=shared providers=first,second selected=first"
   ]);
@@ -196,9 +201,220 @@ test("model catalog expiry is checked for every usage even when that event has n
     }
   });
 
-  assert.equal(await sync.resolvePrice(undefined), undefined);
+  await sync.refreshCatalogIfExpired();
   assert.equal(fetches, 1);
   assert.deepEqual(store.getModelCatalogStats(), { providers: 1, models: 1, pricedModels: 0 });
+});
+
+test("recording usage triggers catalog lazy refresh without adding price context to usage", async () => {
+  const dir = makeTempDir("token-usage-observability-refresh");
+  const store = createTokenUsageStore(path.join(dir, "token-usage.sqlite"));
+  let fetches = 0;
+  const runtime = createLLMObservabilityRuntime({
+    time: fixedTime("2026-05-30T10:00:00.000Z"),
+    tokenUsageStore: store,
+    requestLogs: [],
+    responseLogs: [],
+    resolvePromptApiPreset: () => undefined,
+    agentLoopRuntime: {
+      ensureCurrentLLMSession() {},
+      getActiveMainLLMSession() {},
+      noteLLMRequest() {},
+      noteLLMResponse() {}
+    },
+    appendLog() {},
+    modelCatalogFetch: async () => {
+      fetches += 1;
+      return new Response(JSON.stringify({ local: { models: { unpriced: {} } } }));
+    }
+  });
+
+  runtime.recordTokenUsageEvent({
+    createdAt: "2026-05-30T10:00:00.000",
+    createdAtUtc: "2026-05-30T10:00:00.000Z",
+    agentId: "tts",
+    result: { message: { role: "assistant", content: "" }, usage: { totalTokens: 1 } }
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(fetches, 1);
+  assert.deepEqual(store.getModelCatalogStats(), { providers: 1, models: 1, pricedModels: 0 });
+  assert.equal(store.report().latest[0]?.providerId, "unknown");
+});
+
+test("the upstream completion seam assigns unknown once when catalog refresh fails", async () => {
+  const dir = makeTempDir("token-usage-upstream-completion");
+  const store = createTokenUsageStore(path.join(dir, "token-usage.sqlite"));
+  const warnings: string[] = [];
+  createLLMObservabilityRuntime({
+    time: fixedTime("2026-05-30T10:00:00.000Z"),
+    tokenUsageStore: store,
+    requestLogs: [],
+    responseLogs: [],
+    resolvePromptApiPreset: () => undefined,
+    agentLoopRuntime: {
+      ensureCurrentLLMSession() {},
+      getActiveMainLLMSession() {},
+      noteLLMRequest() {},
+      noteLLMResponse() {}
+    },
+    appendLog(_level, message) { warnings.push(message); },
+    modelCatalogFetch: async () => new Response("unavailable", { status: 503 })
+  });
+  try {
+    const requester = createOpenAIUpstreamRequester({
+      baseURL: "https://api.example.test/v1",
+      fetchImpl: async () => new Response(JSON.stringify({
+        id: "call-1",
+        model: "called-model",
+        choices: [{ finish_reason: "stop" }]
+      }), { status: 200, headers: { "content-type": "application/json" } })
+    });
+    const attempt = await requester({
+      path: "/chat/completions",
+      init: { method: "POST", body: JSON.stringify({ model: "requested-model" }) },
+      callContext: { agentId: "chat" }
+    });
+
+    assert.match(await attempt.response.text(), /call-1/);
+    attempt.cleanup();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    const latest = store.report().latest[0];
+    assert.equal(latest?.agentId, "chat");
+    assert.equal(latest?.model, "called-model");
+    assert.equal(latest?.totalTokens, undefined);
+    assert.equal(latest?.providerId, "unknown");
+    assert.deepEqual(warnings, ["model price lookup failed: models_dev_catalog_failed:503"]);
+  } finally {
+    setOpenAICallObserver(undefined);
+  }
+});
+
+test("the upstream completion seam keeps the LLM response when usage storage throws", async () => {
+  const warnings: string[] = [];
+  createLLMObservabilityRuntime({
+    time: fixedTime("2026-05-30T10:00:00.000Z"),
+    tokenUsageStore: {
+      insert() { throw new Error("sqlite unavailable"); }
+    },
+    requestLogs: [],
+    responseLogs: [],
+    resolvePromptApiPreset: () => undefined,
+    agentLoopRuntime: {
+      ensureCurrentLLMSession() {},
+      getActiveMainLLMSession() {},
+      noteLLMRequest() {},
+      noteLLMResponse() {}
+    },
+    appendLog(_level, message) { warnings.push(message); }
+  });
+  try {
+    const requester = createOpenAIUpstreamRequester({
+      baseURL: "https://api.example.test/v1",
+      fetchImpl: async () => new Response(JSON.stringify({ model: "called-model", choices: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      })
+    });
+
+    const result = await requester({
+      path: "/chat/completions",
+      init: { method: "POST", body: JSON.stringify({ model: "called-model" }) },
+      consume: (response) => response.text()
+    });
+
+    assert.match(result, /called-model/);
+    assert.deepEqual(warnings, ["token usage persist failed: sqlite unavailable"]);
+  } finally {
+    setOpenAICallObserver(undefined);
+  }
+});
+
+test("the upstream completion seam records a matched model price immediately", async () => {
+  const dir = makeTempDir("token-usage-upstream-price-match");
+  const store = createTokenUsageStore(path.join(dir, "token-usage.sqlite"));
+  createLLMObservabilityRuntime({
+    time: fixedTime("2026-05-30T10:00:00.000Z"),
+    tokenUsageStore: store,
+    requestLogs: [],
+    responseLogs: [],
+    resolvePromptApiPreset: () => undefined,
+    agentLoopRuntime: {
+      ensureCurrentLLMSession() {},
+      getActiveMainLLMSession() {},
+      noteLLMRequest() {},
+      noteLLMResponse() {}
+    },
+    appendLog() {},
+    modelCatalogFetch: async () => new Response(JSON.stringify({
+      provider: { api: "https://api.example.test/v1", models: { "called-model": { cost: { input: 2, output: 8 } } } }
+    }))
+  });
+  try {
+    const requester = createOpenAIUpstreamRequester({
+      baseURL: "https://api.example.test/v1",
+      fetchImpl: async () => new Response(JSON.stringify({
+        model: "called-model",
+        choices: [{ finish_reason: "stop" }],
+        usage: { prompt_tokens: 1_000_000, completion_tokens: 1_000_000, total_tokens: 2_000_000 }
+      }), { status: 200, headers: { "content-type": "application/json" } })
+    });
+
+    await requester({
+      path: "/chat/completions",
+      init: { method: "POST", body: JSON.stringify({ model: "called-model" }) },
+      callContext: { agentId: "chat" },
+      consume: (response) => response.text()
+    });
+
+    assert.equal(store.report().latest[0]?.providerId, "provider");
+    assert.equal(store.report().summary.costUsd, 10);
+  } finally {
+    setOpenAICallObserver(undefined);
+  }
+});
+
+test("invalid complete-catalog responses preserve the last successful table and remain expired", async () => {
+  for (const body of [
+    {},
+    { broken: "not-a-provider" },
+    { provider: { api: 123, models: { model: {} } } },
+    { provider: { api: "https://api.example.test/v1", models: { model: { cost: { input: "bad", output: 2 } } } } },
+    { provider: { api: "https://api.example.test/v1", models: { model: { cost: { input: 1, output: 2, cache_read: "bad" } } } } }
+  ]) {
+    const dir = makeTempDir("token-usage-invalid-catalog");
+    const store = createTokenUsageStore(path.join(dir, "token-usage.sqlite"));
+    store.replaceModelCatalog({
+      providers: [{ providerId: "openai", apiURL: "https://api.openai.com/v1" }],
+      models: [{ providerId: "openai", modelId: "gpt-test", price: { input: 2, output: 8 } }]
+    }, "2026-05-30T08:00:00.000Z");
+    const sync = createModelPriceSync({
+      store,
+      now: () => new Date("2026-05-30T10:00:00.000Z"),
+      fetch: async () => new Response(JSON.stringify(body))
+    });
+
+    await assert.rejects(sync.refreshCatalogIfExpired(), /models_dev_catalog_invalid/);
+    assert.deepEqual(store.getModelCatalogStats(), { providers: 1, models: 1, pricedModels: 1 });
+    assert.equal(store.catalogNeedsRefresh("2026-05-30T10:00:00.000Z", 60 * 60 * 1000), true);
+  }
+});
+
+test("model catalog preserves finite negative prices from upstream", async () => {
+  const dir = makeTempDir("token-usage-negative-catalog-price");
+  const store = createTokenUsageStore(path.join(dir, "token-usage.sqlite"));
+  const sync = createModelPriceSync({
+    store,
+    now: () => new Date("2026-05-30T10:00:00.000Z"),
+    fetch: async () => new Response(JSON.stringify({
+      provider: { api: "https://api.example.test/v1", models: { model: { cost: { input: -1, output: -2 } } } }
+    }))
+  });
+
+  const matched = await sync.recordModelPrice({ baseURL: "https://api.example.test/v1", model: "model" });
+
+  assert.deepEqual(matched?.price, { input: -1, output: -2 });
 });
 
 test("token usage report calculates each latest event from its historical price snapshot", () => {

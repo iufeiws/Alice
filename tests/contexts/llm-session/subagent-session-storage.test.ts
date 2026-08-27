@@ -66,7 +66,6 @@ async function runSubagentRequest(options: {
       throw new Error("subagent must not use the main response log");
     },
     appendLLMUsageLog() {},
-    recordTokenUsageEvent() {},
     time: fixedTime("2026-06-14T01:00:00.000Z"),
     resolvePromptApiPreset: () => ({ model: "fallback" }),
     appendLog(level: "info" | "warn" | "error", message: string) {

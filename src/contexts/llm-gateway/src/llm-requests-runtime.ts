@@ -5,7 +5,6 @@ import { createLLMSessionStore, type LLMSessionStore } from "../../../contexts/l
 import { createId } from "../../../shared/uuid/src/index.js";
 import type { LLMChatInput, LLMChatResult, LLMMessage } from "./index.js";
 import type { LLMToolLoopRoundRequest } from "./llm-tool-loop.js";
-import type { LLMPricePreset } from "./model-price-sync.js";
 
 /**
  * SubAgent 会话转录的 SQLite 独立库存储。
@@ -29,8 +28,6 @@ export function createLLMRequestsRuntime(input: {
   appendLLMRequestLog(request: any, agentId: "chat" | "talk", transcriptMessages: LLMMessage[]): LLMRequestLogEntry | undefined;
   appendLLMResponseLog(result: any, agentId?: "chat" | "talk", request?: LLMRequestLogEntry): void;
   appendLLMUsageLog(result: any, model?: string): void;
-  recordTokenUsageEvent(event: any): void;
-  resolveLLMApiPreset?(name: string): LLMPricePreset | undefined;
   time: any;
   resolvePromptApiPreset(agentId: "chat" | "talk" | "memorize"): any;
   appendLog(level: "info" | "warn" | "error", message: string): void;
@@ -65,17 +62,6 @@ export function createLLMRequestsRuntime(input: {
     onResponseReceived(requestInput, request, result) {
       if (requestInput.agentId === "chat" || requestInput.agentId === "talk") {
         const requestEntry = requestLogEntries.get(requestInput);
-        const receivedAt = input.time.now();
-        input.recordTokenUsageEvent({
-          createdAt: receivedAt.iso,
-          createdAtUtc: receivedAt.date.toISOString(),
-          agentId: requestInput.agentId,
-          model: result.model ?? request.model,
-          sessionId: requestEntry?.sessionId,
-          requestId: requestEntry?.id,
-          pricePreset: pricePresetFor(requestInput),
-          result
-        });
         input.appendLLMUsageLog(result, result.model ?? request.model);
         if (requestInput.deferResponseTranscript) {
           // 延迟递交: response 消息由调用方在格式化(transform)完成后通过
@@ -90,15 +76,6 @@ export function createLLMRequestsRuntime(input: {
       subagentRequestSessions.get(requestInput)?.append({ type: "response", round: requestInput.round, response: result });
       clearSubagentSession(requestInput);
       input.appendLLMUsageLog(result, result.model ?? request.model);
-      const createdTime = input.time.now();
-      input.recordTokenUsageEvent({
-        createdAt: createdTime.iso,
-        createdAtUtc: createdTime.date.toISOString(),
-        agentId: requestInput.agentId,
-        model: result.model ?? request.model,
-        pricePreset: pricePresetFor(requestInput),
-        result
-      });
     },
     onRequestSettled(requestInput) {
       if (isMainAgent(requestInput.agentId)) input.agentState?.restartInactivityTimer();
@@ -138,10 +115,6 @@ export function createLLMRequestsRuntime(input: {
 
   function isMainAgent(agentId: string): agentId is "chat" | "talk" {
     return agentId === "chat" || agentId === "talk";
-  }
-
-  function pricePresetFor(requestInput: { presetName?: string }): LLMPricePreset | undefined {
-    return requestInput.presetName ? input.resolveLLMApiPreset?.(requestInput.presetName) : undefined;
   }
 
   function createSubagentSession(requestInput: object, agentId: string, metadata: Record<string, unknown> | undefined): { append(entry: unknown): void } | undefined {

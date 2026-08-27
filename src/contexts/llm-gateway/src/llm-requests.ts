@@ -85,6 +85,7 @@ export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {
       maxTokens: input.maxTokens,
       extraParams: withStreamUsageOptions(input.extraParams, useStream),
       presetName: input.presetName,
+      callContext: { agentId: input.agentId },
       tools: buildToolsFromDefinitions(input.toolNames, input.toolVariables, input.inlineTools),
       signal: requestController.signal
     };

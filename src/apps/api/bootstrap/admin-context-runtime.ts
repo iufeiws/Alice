@@ -26,6 +26,7 @@ export function createAdminRequestHandlerRuntime(input: {
   getLLMSession(id: string): unknown;
   store: any;
   getLLMRequestPreview(): unknown | Promise<unknown>;
+  getLatestActualLLMRequestPreview(): unknown | Promise<unknown>;
   getLLMRequestProfilePreview(apiPreset?: LLMApiPreset): unknown | Promise<unknown>;
   getTalkLLMRequestProfilePreview(apiPreset?: LLMApiPreset): unknown | Promise<unknown>;
   getPromptRenderer(): PromptContextRuntime;
@@ -110,6 +111,7 @@ export function createAdminRequestHandlerRuntime(input: {
     getLLMSession: input.getLLMSession,
     store: input.store,
     getLLMRequestPreview: input.getLLMRequestPreview,
+    getLatestActualLLMRequestPreview: input.getLatestActualLLMRequestPreview,
     getLLMRequestProfilePreview: input.getLLMRequestProfilePreview,
     getTalkLLMRequestProfilePreview: input.getTalkLLMRequestProfilePreview,
     getPromptRenderer: input.getPromptRenderer,

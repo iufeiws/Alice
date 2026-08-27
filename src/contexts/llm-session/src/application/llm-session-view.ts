@@ -2,9 +2,7 @@ import type { LLMChatInput } from "../../../llm-gateway/src/index.js";
 import { cloneLLMMessages } from "../adapters/jsonl-llm-session-log.js";
 import type {
   LLMSessionRecord,
-  LLMRequestLogEntry,
   LLMResponseLogEntry,
-  LLMSessionRequestInfo,
   LLMSessionResponseInfo,
   LLMSessionTurn
 } from "../domain/llm-session.js";
@@ -19,8 +17,8 @@ export function summarizeLLMSession(session: LLMSessionRecord): unknown {
     updatedAt: session.updatedAt,
     requestIds: session.requestIds,
     responseIds: session.responseIds,
-    requestCount: session.requests?.length ?? session.requestIds.length,
-    responseCount: session.responses?.length ?? session.responseIds.length,
+    requestCount: session.requestIds.length,
+    responseCount: session.responseIds.length,
     roundCount,
     messageCount: session.messages.length,
     agentLoopRunSeq: session.agentLoopRunSeq,
@@ -49,40 +47,11 @@ export function summarizeLLMSession(session: LLMSessionRecord): unknown {
 }
 
 export function buildLLMSessionTurns(session: LLMSessionRecord): LLMSessionTurn[] {
-  const requests = [...(session.requests ?? [])].sort(compareLLMLogEntries);
-  const responses = [...(session.responses ?? [])].sort(compareLLMLogEntries);
-  if (requests.length === 0 && responses.length === 0) {
-    return buildLLMSessionTurnsFromTranscript(session);
-  }
-  const count = Math.max(llmSessionRoundCount(session), 1);
-  const turns: LLMSessionTurn[] = [];
-  for (let index = 0; index < count; index += 1) {
-    const request = requests[index];
-    const response = responses.find((entry) => entry.requestId === request?.id) ?? responses[index];
-    const latestRequest = session.latestRequestInfo?.round === index ? session.latestRequestInfo : undefined;
-    const latestResponse = session.latestResponseInfo?.round === index ? session.latestResponseInfo : undefined;
-    turns.push({
-      round: index,
-      request,
-      response,
-      latestRequest,
-      latestResponse,
-      messages: messagesForLLMSessionTurn(session, index, request, response, latestRequest)
-    });
-  }
-  return turns;
-}
-
-export function compareLLMLogEntries(left: { time?: string; id?: number }, right: { time?: string; id?: number }): number {
-  const byTime = String(left.time || "").localeCompare(String(right.time || ""));
-  if (byTime) return byTime;
-  return Number(left.id || 0) - Number(right.id || 0);
+  return buildLLMSessionTurnsFromTranscript(session);
 }
 
 function llmSessionRoundCount(session: LLMSessionRecord): number {
   const rounds = [
-    session.requests?.length ?? 0,
-    session.responses?.length ?? 0,
     session.requestIds.length,
     session.responseIds.length,
     typeof session.currentRound?.round === "number" ? session.currentRound.round + 1 : 0,
@@ -145,17 +114,4 @@ function transcriptResponseEntry(
     message,
     finishReason: latestResponse?.finishReason
   };
-}
-
-function messagesForLLMSessionTurn(
-  session: LLMSessionRecord,
-  index: number,
-  request: LLMRequestLogEntry | undefined,
-  response: LLMResponseLogEntry | undefined,
-  latestRequest: LLMSessionRequestInfo | undefined
-): LLMChatInput["messages"] {
-  if (request?.messages?.length) return cloneLLMMessages(request.messages);
-  if (latestRequest?.messageCount) return cloneLLMMessages(session.messages.slice(0, latestRequest.messageCount));
-  if (index === llmSessionRoundCount(session) - 1) return cloneLLMMessages(session.messages);
-  return response ? [{ ...response.message }] : [];
 }

@@ -3,7 +3,7 @@ import type { LLMChatInput } from "../../../llm-gateway/src/index.js";
 import { cloneLLMMessages } from "../adapters/jsonl-llm-session-log.js";
 import { createLLMSessionStore, type LLMSessionStore, type StoredLLMSession } from "../adapters/sqlite-llm-session-store.js";
 import { clearLLMSessionPointer, pointerFilePath, readLLMSessionPointer, writeLLMSessionPointer } from "../adapters/llm-session-pointer.js";
-import type { LLMSessionRecord, LLMRequestLogEntry, LLMResponseLogEntry } from "../domain/llm-session.js";
+import type { LLMSessionRecord } from "../domain/llm-session.js";
 
 const path = await import("node:path");
 
@@ -228,11 +228,6 @@ export function restoreLLMSessionRecord(stored: StoredLLMSession): LLMSessionRec
   const agentId = stored.agentType === "chat" || stored.agentType === "talk" || stored.agentType === "memorize"
     ? stored.agentType
     : undefined;
-  // 旧 JSONL meta 使用 latestRequest/latestResponse/clearReason/modeStaticMessageCount
-  // 字段名, 新 meta 使用 latestRequestInfo/latestResponseInfo/reason/modeStaticMessages;
-  // 迁移会话保留旧字段名, 这里做兼容映射, 避免恢复后丢失展示与模式状态。
-  const latestRequestInfo = meta.latestRequestInfo ?? meta.latestRequest;
-  const latestResponseInfo = meta.latestResponseInfo ?? meta.latestResponse;
   const reason = typeof meta.reason === "string" ? meta.reason : (typeof meta.clearReason === "string" ? meta.clearReason : undefined);
   const modeStaticMessages = Array.isArray(meta.modeStaticMessages)
     ? meta.modeStaticMessages as LLMChatInput["messages"]
@@ -250,10 +245,6 @@ export function restoreLLMSessionRecord(stored: StoredLLMSession): LLMSessionRec
     responseIds: Array.isArray(meta.responseIds) ? meta.responseIds as number[] : [],
     requestTimestamps: Array.isArray(meta.requestTimestamps) ? meta.requestTimestamps as string[] : [],
     messages: stored.messages,
-    requests: Array.isArray(meta.requests) ? meta.requests as LLMRequestLogEntry[] : [],
-    responses: Array.isArray(meta.responses) ? meta.responses as LLMResponseLogEntry[] : [],
-    latestRequestInfo,
-    latestResponseInfo,
     reason,
     modeStaticMessages,
     archiveMetadata: stored.meta

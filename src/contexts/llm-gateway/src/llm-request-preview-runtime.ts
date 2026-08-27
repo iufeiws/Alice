@@ -2,11 +2,15 @@ import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 import type { LLMChatInput } from "./index.js";
 import { buildRawLLMRequest } from "./llm-request-shape.js";
 import type { LLMRequestLogEntry, LLMRequestPreview } from "../../../contexts/llm-session/src/index.js";
+import { cloneLLMMessages } from "../../../contexts/llm-session/src/adapters/jsonl-llm-session-log.js";
 import type { LLMApiPreset } from "./llm-api-profile.js";
 
 export function createLLMRequestPreviewRuntime(input: {
   requestLogs: LLMRequestLogEntry[];
-  hasActiveSession(): boolean;
+  getActiveSession(): {
+    id: number;
+    messages: LLMChatInput["messages"];
+  } | undefined;
   listRecentMessages(): any[];
   getPromptProfile(): any;
   getTalkPromptProfile(): any;
@@ -18,19 +22,32 @@ export function createLLMRequestPreviewRuntime(input: {
 }) {
   return {
     getLLMRequestPreview,
+    getLatestActualLLMRequestPreview,
     getLLMRequestProfilePreview,
     getTalkLLMRequestProfilePreview
   };
 
   async function getLLMRequestPreview(): Promise<LLMRequestPreview | undefined> {
-    const latest = input.requestLogs[input.requestLogs.length - 1];
-    if (input.hasActiveSession() && latest) return { ...latest, source: "actual" };
+    const actual = getLatestActualLLMRequestPreview();
+    if (actual) return actual;
 
     const preview = await buildLLMRequestPreviewFromMessages();
     if (preview) return { ...preview, rawRequest: buildRawLLMRequest(preview) };
 
-    if (latest) return { ...latest, source: "actual" };
     return undefined;
+  }
+
+  function getLatestActualLLMRequestPreview(): LLMRequestPreview | undefined {
+    const latest = input.requestLogs[input.requestLogs.length - 1];
+    const session = input.getActiveSession();
+    if (!latest || !session || String(latest.sessionId) !== String(session.id)) return undefined;
+    const messageCount = Math.max(0, Math.min(session.messages.length, latest.messageCount));
+    const preview: LLMRequestPreview = {
+      ...latest,
+      source: "actual",
+      messages: cloneLLMMessages(session.messages.slice(0, messageCount))
+    };
+    return { ...preview, rawRequest: buildRawLLMRequest(preview) };
   }
 
   async function getLLMRequestProfilePreview(apiPreset?: { model?: string; temperature?: number; maxTokens?: number; extraParams?: Record<string, unknown> }): Promise<LLMRequestPreview | undefined> {
@@ -68,6 +85,7 @@ export function createLLMRequestPreviewRuntime(input: {
         receivedAtUtc: previewTime.date.toISOString()
       }
     } as const;
+    const messages = await input.buildPromptPreviewMessages(profile, previewEvent, true);
     return {
       id: 0,
       source: "preview",
@@ -77,7 +95,8 @@ export function createLLMRequestPreviewRuntime(input: {
       temperature: apiPreset?.temperature,
       maxTokens: apiPreset?.maxTokens,
       extraParams: apiPreset?.extraParams ?? {},
-      messages: await input.buildPromptPreviewMessages(profile, previewEvent, true),
+      messageCount: messages.length,
+      messages,
       tools: input.visibleToolSpecs(profile)
     };
   }
@@ -114,6 +133,7 @@ export function createLLMRequestPreviewRuntime(input: {
     const profile = input.getPromptProfile();
     const chatPreset = input.resolveChatPreset();
 
+    const messages = await input.buildPromptPreviewMessages(profile, previewEvent, true);
     return {
       id: 0,
       source: "preview",
@@ -123,7 +143,8 @@ export function createLLMRequestPreviewRuntime(input: {
       temperature: chatPreset?.temperature,
       maxTokens: chatPreset?.maxTokens,
       extraParams: chatPreset?.extraParams ?? {},
-      messages: await input.buildPromptPreviewMessages(profile, previewEvent, true),
+      messageCount: messages.length,
+      messages,
       tools: input.visibleToolSpecs(profile)
     };
   }

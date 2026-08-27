@@ -1,15 +1,13 @@
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 import type { LLMChatInput, LLMChatResult } from "./index.js";
-import { buildRawLLMRequest } from "./llm-request-shape.js";
-import { diffRequests } from "./llm-request-diff.js";
-import type { LLMRequestLogEntry, LLMResponseLogEntry } from "../../../contexts/llm-session/src/index.js";
+import type { LLMRequestLogEntry, LLMResponseLogEntry, LLMResponseLogInfo } from "../../../contexts/llm-session/src/index.js";
 
 type AgentId = "chat" | "talk";
 
 export function createLLMLogRuntime(input: {
   time: CurrentTimeProvider;
   requestLogs: LLMRequestLogEntry[];
-  responseLogs: LLMResponseLogEntry[];
+  responseLogs: LLMResponseLogInfo[];
   ensureActiveSession(time: string, agentId: AgentId): { id: number };
   getActiveSession(): { id: number | string; requestIds?: number[] } | undefined;
   noteRequest(entry: LLMRequestLogEntry, agentId: AgentId, transcriptMessages: LLMChatInput["messages"]): void;
@@ -29,9 +27,6 @@ export function createLLMLogRuntime(input: {
     agentId: AgentId,
     transcriptMessages: LLMChatInput["messages"]
   ): LLMRequestLogEntry {
-    const rawRequest = buildRawLLMRequest(request);
-    const previous = input.requestLogs[input.requestLogs.length - 1]?.rawRequest;
-    const diffFromPrevious = previous === undefined ? undefined : diffRequests(previous, rawRequest);
     const now = input.time.now();
     const sessionId = input.ensureActiveSession(now.iso, agentId).id;
     const entry = {
@@ -43,12 +38,10 @@ export function createLLMLogRuntime(input: {
       model: request.model,
       temperature: request.temperature,
       maxTokens: request.maxTokens,
-      messages: request.messages.map((message) => ({ ...message })),
+      messageCount: transcriptMessages.length,
       tools: request.tools?.map((tool) => ({ ...tool, function: { ...tool.function } })),
       extraParams: request.extraParams,
-      presetName: request.presetName,
-      rawRequest,
-      diffFromPrevious
+      presetName: request.presetName
     } satisfies LLMRequestLogEntry;
     input.requestLogs.push(entry);
     input.noteRequest(entry, agentId, transcriptMessages);
@@ -75,7 +68,16 @@ export function createLLMLogRuntime(input: {
       usage: result.usage,
       raw: result.raw
     } satisfies LLMResponseLogEntry;
-    input.responseLogs.push(entry);
+    input.responseLogs.push({
+      id: entry.id,
+      agentId: entry.agentId,
+      sessionId: entry.sessionId,
+      requestId: entry.requestId,
+      time: entry.time,
+      timeUtc: entry.timeUtc,
+      finishReason: entry.finishReason,
+      toolCallCount: entry.message.toolCalls?.length ?? 0
+    });
     input.noteResponse(entry);
     nextResponseId += 1;
     if (input.responseLogs.length > 50) {

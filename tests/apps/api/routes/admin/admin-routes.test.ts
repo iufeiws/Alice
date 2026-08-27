@@ -55,6 +55,33 @@ test("voice call app config defines frontend and signaling routes", async () => 
   assert.equal(body.ui.portraitUrl, "/voice-call/assets/alice-default-portrait.png");
 });
 
+test("llm requests admin response uses the materialized actual request view", async () => {
+  const root = makeTempDir("admin-llm-requests-materialized");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
+  const context = {
+    ...baseContext(root, memoryStore, promptStore),
+    llmRequestLogs: [{ id: 7, messageCount: 1, model: "chat-model" }],
+    getLatestActualLLMRequestPreview: () => ({
+      id: 7,
+      source: "actual",
+      model: "chat-model",
+      messageCount: 1,
+      messages: [{ role: "user", content: "from session" }],
+      rawRequest: { model: "chat-model", messages: [{ role: "user", content: "from session" }] }
+    })
+  };
+  const handler = createAdminHandler(context);
+
+  const response = createResponse();
+  await handler(createRequest("GET", "/admin/api/llm-requests", {}), response);
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(body.actual.messages, [{ role: "user", content: "from session" }]);
+  assert.deepEqual(body.actual.rawRequest.messages, [{ role: "user", content: "from session" }]);
+});
+
 test("llm api preset save stores extra params as part of the preset", async () => {
   const root = makeTempDir("admin-llm-preset-extra");
   const memoryStore = createMarkdownMemoryStore(root);

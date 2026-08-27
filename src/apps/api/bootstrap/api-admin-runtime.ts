@@ -46,6 +46,7 @@ export function createApiAdminRuntime(input: {
     getLLMSession: input.adminLLMSessionRuntime.llmSessionBrowserRuntime.getLLMSession,
     store: input.store,
     getLLMRequestPreview: input.adminLLMSessionRuntime.getLLMRequestPreview,
+    getLatestActualLLMRequestPreview: input.adminLLMSessionRuntime.getLatestActualLLMRequestPreview,
     getLLMRequestProfilePreview: input.adminLLMSessionRuntime.getLLMRequestProfilePreview,
     getTalkLLMRequestProfilePreview: input.adminLLMSessionRuntime.getTalkLLMRequestProfilePreview,
     getPromptRenderer: () => input.apiContextRuntime.promptContextRuntime,

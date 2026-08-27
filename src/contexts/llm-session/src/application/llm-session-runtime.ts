@@ -3,7 +3,6 @@ import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js"
 import { parseZonedIso } from "../../../../platform/time/src/index.js";
 import type { LLMChatInput } from "../../../llm-gateway/src/index.js";
 import { cloneLLMMessages } from "../adapters/jsonl-llm-session-log.js";
-import { buildRawLLMRequest } from "../../../llm-gateway/src/llm-request-shape.js";
 import type { LLMSessionRecord, LLMRequestLogEntry, LLMResponseLogEntry } from "../domain/llm-session.js";
 import { summarizeLLMSession } from "./llm-session-view.js";
 import { cloneJsonObject, cloneLLMTools } from "../domain/llm-session-utils.js";
@@ -100,8 +99,6 @@ export function createLLMSessionRuntime(input: {
       updatedAt: entry.time,
       updatedAtUtc: entry.timeUtc,
       requestIds: [...session.requestIds, entry.id],
-      latestRequest: entry.rawRequest,
-      requests: [...(session.requests ?? []), archiveRequestEntry(entry)],
       currentRound: {
         status: "running",
         round,
@@ -122,7 +119,7 @@ export function createLLMSessionRuntime(input: {
         tools: cloneLLMTools(entry.tools),
         extraParams: cloneJsonObject(entry.extraParams),
         presetName: entry.presetName,
-        messageCount: entry.messages.length
+        messageCount: transcriptMessages.length
       },
       messages: cloneLLMMessages(transcriptMessages)
     };
@@ -145,8 +142,6 @@ export function createLLMSessionRuntime(input: {
       updatedAt: entry.time,
       updatedAtUtc: entry.timeUtc,
       responseIds: [...session.responseIds, entry.id],
-      // 会话 meta 不保存 usage/raw(token usage 由 token-usage-store 独立审计, 零消费冗余)。
-      responses: [...(session.responses ?? []), stripResponseLogEntry(entry)],
       currentRound: {
         ...(session.currentRound ?? { round, startedAt: entry.time }),
         status: "finished",
@@ -429,27 +424,10 @@ export function createLLMSessionRuntime(input: {
       requestIds: [],
       responseIds: [],
       messages: [],
-      latestRequest: undefined,
       staticPromptMessageCount: 0,
       requestTimestamps: []
     };
   }
-}
-
-function archiveRequestEntry(entry: Omit<LLMRequestLogEntry, "agentId"> & { agentId?: string }): LLMRequestLogEntry {
-  return {
-    ...entry,
-    agentId: entry.agentId === "talk" || entry.agentId === "chat" ? entry.agentId : undefined,
-    messages: cloneLLMMessages(entry.messages),
-    tools: cloneLLMTools(entry.tools),
-    rawRequest: entry.rawRequest ?? buildRawLLMRequest(entry)
-  };
-}
-
-/** 会话 meta 不保存 usage/raw(token usage 由 token-usage-store 独立审计)。 */
-function stripResponseLogEntry(entry: LLMResponseLogEntry): LLMResponseLogEntry {
-  const { usage: _usage, raw: _raw, ...rest } = entry;
-  return rest;
 }
 
 function commonMessagePrefixLength(left: LLMChatInput["messages"], right: LLMChatInput["messages"]): number {

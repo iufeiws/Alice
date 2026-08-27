@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createLLMRequestsRuntime } from "../../../src/contexts/llm-gateway/src/llm-requests-runtime.js";
 import { createLLMLogRuntime } from "../../../src/contexts/llm-gateway/src/llm-log-runtime.js";
+import { createLLMRequestPreviewRuntime } from "../../../src/contexts/llm-gateway/src/llm-request-preview-runtime.js";
 import { runLLMToolLoop } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
 import { createTokenUsageRuntime } from "../../../src/contexts/llm-gateway/src/token-usage-runtime.js";
 import { createApiSessionRuntime } from "../../../src/contexts/llm-session/src/index.js";
@@ -85,6 +86,9 @@ test("LLM log runtime binds responses to the request session instead of current 
   assert.equal(response.sessionId, 100);
   assert.equal(response.requestId, request.id);
   assert.equal(responseLogs[0].sessionId, 100);
+  assert.equal(Object.prototype.hasOwnProperty.call(requestLogs[0], "messages"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(requestLogs[0], "rawRequest"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(responseLogs[0], "message"), false);
 });
 
 test("LLM session runtime writes chat request directly to sqlite", () => {
@@ -268,13 +272,47 @@ test("gateway sanitization does not replace the authoritative session transcript
   });
 
   assert.deepEqual(transportMessages[1][1], { role: "assistant", content: "" }, "upstream receives the sanitized assistant message");
-  assert.deepEqual(requestLogs[1].messages[1], { role: "assistant", content: "" }, "request audit records the transport payload");
+  assert.equal(Object.prototype.hasOwnProperty.call(requestLogs[1], "messages"), false, "request log must not duplicate session messages");
+  assert.equal(Object.prototype.hasOwnProperty.call(requestLogs[1], "rawRequest"), false, "request log must not duplicate messages through rawRequest");
   const persisted = readCurrentSession().session;
   assert.deepEqual(persisted?.messages.slice(0, 3), [
     { role: "user", content: "start" },
     { role: "assistant", content: "", reasoningContent: "private reasoning", toolCalls: [] },
     { role: "user", content: "again" }
   ], "session transcript retains the unsanitized history used by the loop");
+});
+
+test("LLM request preview materializes messages from the active session", () => {
+  const requestLogs = [{
+    id: 7,
+    agentId: "chat" as const,
+    sessionId: 100,
+    time: "2026-06-14T01:00:00.000",
+    model: "chat-model",
+    messageCount: 2
+  }];
+  const sessionMessages = [
+    { role: "system" as const, content: "system" },
+    { role: "user" as const, content: "hello" },
+    { role: "assistant" as const, content: "not part of the request" }
+  ];
+  const runtime = createLLMRequestPreviewRuntime({
+    requestLogs,
+    getActiveSession: () => ({ id: 100, messages: sessionMessages }),
+    listRecentMessages: () => [],
+    getPromptProfile: () => ({}),
+    getTalkPromptProfile: () => ({}),
+    getDefaultTarget: () => undefined,
+    resolveChatPreset: () => undefined,
+    time: fixedTime("2026-06-14T01:00:00.000Z"),
+    buildPromptPreviewMessages: async () => [],
+    visibleToolSpecs: () => []
+  });
+
+  const preview = runtime.getLatestActualLLMRequestPreview();
+  assert.deepEqual(preview?.messages.map((message) => ({ role: message.role, content: message.content })), sessionMessages.slice(0, 2));
+  assert.deepEqual((preview?.rawRequest as any)?.messages.map((message: any) => ({ role: message.role, content: message.content })), sessionMessages.slice(0, 2));
+  assert.equal(Object.prototype.hasOwnProperty.call(requestLogs[0], "messages"), false);
 });
 
 test("LLM requests runtime records deferred chat and talk responses after tool-loop formatting", async () => {

@@ -101,6 +101,7 @@ export function baseContext(root: string, memoryStore: ReturnType<typeof createM
     getLLMSession: () => undefined,
     store: undefined,
     getLLMRequestPreview: () => undefined,
+    getLatestActualLLMRequestPreview: () => undefined,
     getLLMRequestProfilePreview: () => undefined,
     getPromptRenderer() {
       return createPromptContextRuntime({

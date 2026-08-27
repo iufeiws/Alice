@@ -51,6 +51,9 @@ const PRE_CREATED_AGENT_TYPES = ["chat", "talk", "memorize"];
 /** 表名固定前缀。 */
 const TABLE_PREFIX = "llm_messages_";
 
+/** schema v1 删除误写进最终 meta 的完整请求/响应审计。 */
+const LLM_SESSION_SCHEMA_VERSION = 1;
+
 /**
  * agent_type -> 分表名 的可逆安全编码:
  * 小写 ASCII 字母(a-z)与数字(0-9)原样保留, 其余 UTF-8 字节编码为 _xHH(两位小写十六进制)。
@@ -265,6 +268,27 @@ function initializeSchema(db: DatabaseSync): void {
   for (const agentType of PRE_CREATED_AGENT_TYPES) {
     ensureAgentMessagesTable(db, agentType);
   }
+  migrateSchema(db);
+}
+
+function migrateSchema(db: DatabaseSync): void {
+  const row = db.prepare("PRAGMA user_version").get() as { user_version: number } | undefined;
+  const currentVersion = Number(row?.user_version ?? 0);
+  if (currentVersion >= LLM_SESSION_SCHEMA_VERSION) return;
+  transaction(db, () => {
+    db.exec(`
+      UPDATE llm_session_meta
+      SET meta_json = json_remove(meta_json, '$.latestRequest', '$.latestResponse', '$.requests', '$.responses')
+      WHERE agent_type IN ('chat', 'talk', 'memorize')
+        AND (
+          json_type(meta_json, '$.latestRequest') IS NOT NULL
+          OR json_type(meta_json, '$.latestResponse') IS NOT NULL
+          OR json_type(meta_json, '$.requests') IS NOT NULL
+          OR json_type(meta_json, '$.responses') IS NOT NULL
+        );
+      PRAGMA user_version = ${LLM_SESSION_SCHEMA_VERSION};
+    `);
+  });
 }
 
 /** 惰性创建 agent messages 分表(幂等)。 */

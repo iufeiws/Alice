@@ -52,7 +52,7 @@ export function createAdminLLMSessionRuntime(input: {
   });
   const llmRequestPreviewRuntime = createLLMRequestPreviewRuntime({
     requestLogs: input.requestLogs,
-    hasActiveSession: () => Boolean(input.getActiveSession()),
+    getActiveSession: input.getActiveSession,
     listRecentMessages: input.listRecentMessages,
     getPromptProfile: input.getPromptProfile,
     getTalkPromptProfile: input.getTalkPromptProfile,
@@ -69,6 +69,7 @@ export function createAdminLLMSessionRuntime(input: {
     llmSessionListRuntime,
     llmSessionBrowserRuntime,
     getLLMRequestPreview: llmRequestPreviewRuntime.getLLMRequestPreview,
+    getLatestActualLLMRequestPreview: llmRequestPreviewRuntime.getLatestActualLLMRequestPreview,
     getLLMRequestProfilePreview: llmRequestPreviewRuntime.getLLMRequestProfilePreview,
     getTalkLLMRequestProfilePreview: llmRequestPreviewRuntime.getTalkLLMRequestProfilePreview
   };

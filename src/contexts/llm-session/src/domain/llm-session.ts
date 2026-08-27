@@ -1,5 +1,4 @@
 import type { LLMChatInput, LLMChatResult } from "../../../llm-gateway/src/index.js";
-import type { LLMRequestDiff } from "../../../llm-gateway/src/llm-request-diff.js";
 
 export type LLMSessionClearReason = "prompt_static_changed" | "admin_clear" | "admin_cancel" | "mode_transition" | "mode_timeout" | "yield_end" | "process_restart_recovery_failed" | "force_wake";
 export type LLMSessionSnapshot = {
@@ -37,17 +36,17 @@ export type LLMRequestLogEntry = {
   model?: string;
   temperature?: number;
   maxTokens?: number;
-  messages: LLMChatInput["messages"];
+  messageCount: number;
   tools?: LLMChatInput["tools"];
   extraParams?: Record<string, unknown>;
   presetName?: string;
-  rawRequest?: unknown;
-  diffFromPrevious?: LLMRequestDiff;
 };
 
 export type LLMRequestPreview = LLMRequestLogEntry & {
   source: "preview" | "actual";
   conversationId?: string;
+  messages: LLMChatInput["messages"];
+  rawRequest?: unknown;
 };
 
 export type LLMResponseLogEntry = {
@@ -61,6 +60,10 @@ export type LLMResponseLogEntry = {
   finishReason?: string;
   usage?: LLMChatResult["usage"];
   raw?: unknown;
+};
+
+export type LLMResponseLogInfo = Omit<LLMResponseLogEntry, "message" | "usage" | "raw"> & {
+  toolCallCount: number;
 };
 
 export type LLMSessionTurn = {
@@ -84,7 +87,6 @@ export type LLMSessionRecord = {
   requestIds: number[];
   responseIds: number[];
   messages: LLMChatInput["messages"];
-  latestRequest?: unknown;
   staticPromptFingerprint?: string;
   staticPromptMessageCount?: number;
   requestTimestamps: string[];
@@ -108,8 +110,6 @@ export type LLMSessionRecord = {
   clearedAt?: string;
   clearedAtUtc?: string;
   reason?: string;
-  requests?: LLMRequestLogEntry[];
-  responses?: LLMResponseLogEntry[];
 };
 
 export type LLMSessionRoundInfo = {

@@ -53,22 +53,21 @@ export function createLLMSessionBrowserRuntime(input: {
   }
 
   function buildListItem(item: LLMSessionListItem, meta: Record<string, unknown>, source: LLMSessionBrowserSource): unknown {
-    const requests = Array.isArray(meta.requests) ? meta.requests as unknown[] : [];
-    const responses = Array.isArray(meta.responses) ? meta.responses as unknown[] : [];
-    // 兼容旧 meta 字段名: 旧格式用 latestRequest/latestResponse 存 info, 新格式用 latestRequestInfo/latestResponseInfo。
-    const latestRequest = meta.latestRequestInfo ?? meta.latestRequest;
-    const latestResponse = meta.latestResponseInfo ?? meta.latestResponse;
+    const requestIds = Array.isArray(meta.requestIds) ? meta.requestIds : [];
+    const responseIds = Array.isArray(meta.responseIds) ? meta.responseIds : [];
+    const latestRequest = meta.latestRequestInfo;
+    const latestResponse = meta.latestResponseInfo;
     return {
       id: item.sessionId,
       agent: item.agentType,
       agentId: item.agentType,
       startedAt: item.startedAt,
       updatedAt: typeof meta.updatedAt === "string" ? meta.updatedAt : item.startedAt,
-      requestCount: requests.length,
-      responseCount: responses.length,
+      requestCount: requestIds.length,
+      responseCount: responseIds.length,
       roundCount: Math.max(
-        requests.length,
-        responses.length,
+        requestIds.length,
+        responseIds.length,
         typeof (latestRequest as { round?: unknown } | undefined)?.round === "number" ? (latestRequest as { round: number }).round + 1 : 0,
         typeof (latestResponse as { round?: unknown } | undefined)?.round === "number" ? (latestResponse as { round: number }).round + 1 : 0
       ),

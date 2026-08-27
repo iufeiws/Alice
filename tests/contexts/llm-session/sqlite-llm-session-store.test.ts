@@ -77,6 +77,46 @@ test("creates the exact six-column metadata table", () => {
   raw.close();
 });
 
+test("migrates request audit payloads out of main session metadata", () => {
+  const dbPath = dbFile("store-remove-request-audit");
+  const raw = openRaw(dbPath);
+  raw.db.exec(`
+    CREATE TABLE llm_session_meta (
+      session_id TEXT PRIMARY KEY,
+      agent_type TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      started_at_utc TEXT NOT NULL,
+      message_count INTEGER NOT NULL DEFAULT 0 CHECK (message_count >= 0),
+      meta_json TEXT NOT NULL CHECK (json_valid(meta_json))
+    );
+  `);
+  raw.db.prepare(`
+    INSERT INTO llm_session_meta(session_id, agent_type, started_at, started_at_utc, message_count, meta_json)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run("legacy", "chat", "2026-06-14T01:00:00.000", "2026-06-14T01:00:00.000Z", 0, JSON.stringify({
+    updatedAt: "2026-06-14T01:00:00.000",
+    requestIds: [1],
+    responseIds: [2],
+    latestRequest: { messages: [{ role: "user", content: "duplicate" }] },
+    latestResponse: { message: { role: "assistant", content: "duplicate" } },
+    requests: [{ rawRequest: { messages: [{ role: "user", content: "duplicate" }] } }],
+    responses: [{ message: { role: "assistant", content: "duplicate" } }]
+  }));
+  raw.close();
+
+  const store = createLLMSessionStore(dbPath);
+  assert.deepEqual(store.readMeta("legacy"), {
+    updatedAt: "2026-06-14T01:00:00.000",
+    requestIds: [1],
+    responseIds: [2]
+  });
+  store.close();
+
+  const migrated = openRaw(dbPath);
+  assert.equal((migrated.db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version, 1);
+  migrated.close();
+});
+
 test("creates exact three-column agent message tables", () => {
   const dbPath = dbFile("store-message-tables");
   const store = createLLMSessionStore(dbPath);

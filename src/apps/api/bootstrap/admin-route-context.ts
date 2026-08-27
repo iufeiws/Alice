@@ -58,6 +58,7 @@ export type AdminRuntimeContext = {
     listMessagesChronological?(limit?: number): StoredConversationMessage[];
   } | undefined;
   getLLMRequestPreview(): unknown | Promise<unknown>;
+  getLatestActualLLMRequestPreview(): unknown | Promise<unknown>;
   getLLMRequestProfilePreview(apiPreset?: LLMApiPreset): unknown | Promise<unknown>;
   getTalkLLMRequestProfilePreview?(apiPreset?: LLMApiPreset): unknown | Promise<unknown>;
   getPromptRenderer(): PromptContextRuntime;

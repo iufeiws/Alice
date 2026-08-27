@@ -1,8 +1,8 @@
-import type { LLMRequestLogEntry, LLMResponseLogEntry } from "../../../contexts/llm-session/src/index.js";
+import type { LLMRequestLogEntry, LLMResponseLogInfo } from "../../../contexts/llm-session/src/index.js";
 
 export function createApiRuntimeState() {
   const llmRequestLogs: LLMRequestLogEntry[] = [];
-  const llmResponseLogs: LLMResponseLogEntry[] = [];
+  const llmResponseLogs: LLMResponseLogInfo[] = [];
 
   return {
     llmRequestLogs,

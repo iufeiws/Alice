@@ -331,7 +331,7 @@ export async function handleAdminApiServiceRoute(context: AdminRoutesContext, re
       profilePreview: await context.getLLMRequestProfilePreview(resolvePromptApiPreset(context, "chat")),
       talkProfilePreview: await context.getTalkLLMRequestProfilePreview?.(resolvePromptApiPreset(context, "talk")),
       messagePreview: await context.getLLMRequestPreview(),
-      actual: context.llmRequestLogs[context.llmRequestLogs.length - 1]
+      actual: await context.getLatestActualLLMRequestPreview()
     });
     return;
   }

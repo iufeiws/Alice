@@ -177,11 +177,9 @@ test("loads current only from the external pointer", () => {
   assert.deepEqual(restored.messages.map((message: any) => message.content), ["persisted"]);
 });
 
-test("restores legacy jsonl metadata field names", () => {
-  const memoryRoot = makeTempDir("runtime-legacy-meta");
+test("restores final session metadata without request audit payloads", () => {
+  const memoryRoot = makeTempDir("runtime-final-meta");
   const store = createLLMSessionStore(dbPathFor(memoryRoot));
-  // 旧 JSONL meta 使用 latestRequest/latestResponse/clearReason/modeStaticMessageCount,
-  // 迁移后原样保留; 恢复时必须映射回新字段名, 不丢展示与模式状态。
   store.create(storedSession({
     sessionId: "100",
     agentType: "chat",
@@ -189,18 +187,21 @@ test("restores legacy jsonl metadata field names", () => {
       type: "llm_session",
       agent: "chat",
       sessionId: 100,
-      staticPromptFingerprint: "sha256:legacy",
+      staticPromptFingerprint: "sha256:current",
       requestIds: [1],
       responseIds: [2],
-      latestRequest: { round: 0, time: "2026-06-14T01:00:00.000", messageCount: 2 },
-      latestResponse: { round: 0, time: "2026-06-14T01:00:05.000", finishReason: "stop" },
-      clearReason: "admin_clear",
+      latestRequestInfo: { round: 0, time: "2026-06-14T01:00:00.000", messageCount: 2 },
+      latestResponseInfo: { round: 0, time: "2026-06-14T01:00:05.000", finishReason: "stop" },
+      reason: "admin_clear",
       mode: "fixed_prefix",
-      modeStaticMessageCount: 2
+      modeStaticMessages: [
+        { role: "system", content: "prefix" },
+        { role: "user", content: "current" }
+      ]
     },
     messages: [
       { role: "system", content: "prefix" },
-      { role: "user", content: "legacy" },
+      { role: "user", content: "current" },
       { role: "assistant", content: "old answer" }
     ]
   }));
@@ -208,11 +209,11 @@ test("restores legacy jsonl metadata field names", () => {
   writePointer(memoryRoot, { sessionId: 100, agentType: "chat" });
   const { runtime } = makeEnv(memoryRoot);
   const restored = runtime.restorePersistedCurrentLLMSession();
-  assert.ok(restored, "legacy session must restore");
-  assert.equal((restored.latestRequestInfo as any)?.round, 0, "latestRequest must map to latestRequestInfo");
-  assert.equal((restored.latestResponseInfo as any)?.finishReason, "stop", "latestResponse must map to latestResponseInfo");
-  assert.equal(restored.reason, "admin_clear", "clearReason must map to reason");
-  assert.deepEqual((restored.modeStaticMessages ?? []).map((message: any) => message.content), ["prefix", "legacy"], "modeStaticMessageCount must rebuild modeStaticMessages");
+  assert.ok(restored, "current session must restore");
+  assert.equal((restored.latestRequestInfo as any)?.round, 0);
+  assert.equal((restored.latestResponseInfo as any)?.finishReason, "stop");
+  assert.equal(restored.reason, "admin_clear");
+  assert.deepEqual((restored.modeStaticMessages ?? []).map((message: any) => message.content), ["prefix", "current"]);
 });
 
 test("does not infer current when the pointer is absent", () => {
@@ -404,7 +405,7 @@ test("commits each tool result before the next request", () => {
   reader.close();
 });
 
-test("records the transport request while appending the authoritative transcript delta", () => {
+test("does not persist transport request audit while appending the authoritative transcript delta", () => {
   const memoryRoot = makeTempDir("runtime-request-transport-transcript-separation");
   const { runtime } = makeEnv(memoryRoot);
   const user = { role: "user" as const, content: "start" };
@@ -437,16 +438,12 @@ test("records the transport request while appending the authoritative transcript
   const reader = createLLMSessionStore(dbPathFor(memoryRoot));
   const persisted = reader.read(String(id));
   assert.deepEqual(persisted?.messages, [user, assistant, nextUser], "session transcript must retain the unsanitized assistant message");
-  const archivedRequests = persisted?.meta.requests as Array<{ messages: unknown[] }>;
-  assert.deepEqual(archivedRequests.at(-1)?.messages, [
-    user,
-    { role: "assistant", content: "" },
-    nextUser
-  ], "request audit must retain the actual sanitized transport payload");
+  assert.equal(Object.prototype.hasOwnProperty.call(persisted?.meta ?? {}, "requests"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(persisted?.meta ?? {}, "latestRequest"), false);
   reader.close();
 });
 
-test("keeps consecutive assistant messages separate when the transport request merges them", () => {
+test("keeps consecutive assistant messages separate without persisting the merged transport request", () => {
   const memoryRoot = makeTempDir("runtime-request-assistant-merge-separation");
   const { runtime } = makeEnv(memoryRoot);
   const transcriptMessages = [
@@ -461,7 +458,8 @@ test("keeps consecutive assistant messages separate when the transport request m
   const reader = createLLMSessionStore(dbPathFor(memoryRoot));
   const persisted = reader.read(String(id));
   assert.deepEqual(persisted?.messages, transcriptMessages);
-  assert.deepEqual((persisted?.meta.requests as Array<{ messages: unknown[] }>)[0].messages, transportMessages);
+  assert.equal(Object.prototype.hasOwnProperty.call(persisted?.meta ?? {}, "requests"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(persisted?.meta ?? {}, "latestRequest"), false);
   reader.close();
 });
 

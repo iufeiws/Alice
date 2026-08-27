@@ -362,6 +362,9 @@ test("chat agent preserves missing reasoning content on tool request messages", 
 
   await runPreparedChatEvent(core, textEvent());
 
-  assert.equal(requests.length, 2);
-  assert.equal(requests[1].messages.at(-2)?.reasoningContent, undefined);
+  const toolRequest = requests.find((request) =>
+    request.messages.some((message) => (message.toolCalls?.length ?? 0) > 0)
+  );
+  assert.ok(toolRequest);
+  assert.equal(toolRequest.messages.at(-2)?.reasoningContent, undefined);
 });

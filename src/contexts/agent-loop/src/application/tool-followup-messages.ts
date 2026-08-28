@@ -1,5 +1,5 @@
 import type { LLMMessage } from "../../../llm-gateway/src/index.js";
-import type { ToolResult } from "../contracts/agent-contracts.js";
+import type { ToolResult } from "../../../tool-execution/src/index.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");

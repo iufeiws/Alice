@@ -1,4 +1,4 @@
-import type { ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/tool-execution/src/index.js";
 import { diceTool, diceToolName, diceToolText } from "../profile.js";
 
 export type DiceToolsDeps = {

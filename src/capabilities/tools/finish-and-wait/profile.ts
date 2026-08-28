@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolDefinition } from "../../../contexts/tool-execution/src/index.js";
 
 export const minYieldWaitSeconds = 10;
 export const maxYieldWaitSeconds = 15 * 60;

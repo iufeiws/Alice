@@ -2,7 +2,7 @@ import { createChatAgent } from "../application/chat-agent.js";
 import { createAllowAllPolicy } from "../ports/policy.js";
 import { createIntentRouter } from "../application/intent-router.js";
 import { createSessionResolver } from "../application/session-resolver.js";
-import type { AppendAlbertMessageInput } from "../contracts/agent-contracts.js";
+import type { AppendAlbertMessageInput } from "../../../tool-execution/src/index.js";
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 
 export function createChatAgentRuntime(input: {

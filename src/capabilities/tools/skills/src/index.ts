@@ -1,6 +1,6 @@
 import type { LoadedSkill } from "../../../../contexts/skills/src/index.js";
 import { SkillLoadError } from "../../../../contexts/skills/src/index.js";
-import type { ToolPlugin } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolPlugin } from "../../../../contexts/tool-execution/src/index.js";
 import { skillTool } from "../profile.js";
 
 export function createSkillsTools(input: { loader: { load(name: string, args?: string): LoadedSkill } }): ToolPlugin {

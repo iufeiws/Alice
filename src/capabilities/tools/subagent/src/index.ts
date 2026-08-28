@@ -1,4 +1,4 @@
-import type { ToolCall, ToolExecutionContext, ToolPlugin } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall, ToolExecutionContext, ToolPlugin } from "../../../../contexts/tool-execution/src/index.js";
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import type { PiWorkerRuntime } from "../../../../contexts/pi-worker/src/index.js";
 import { subAgentTool } from "../profile.js";

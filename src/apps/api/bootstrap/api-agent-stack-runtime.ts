@@ -1,6 +1,6 @@
 import { createApiAgentRuntime } from "./api-agent-runtime.js";
 import { createAgentRunIndicatorRuntime } from "../../../contexts/agent-run-indicator/src/index.js";
-import type { AppendAlbertMessageInput } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { AppendAlbertMessageInput } from "../../../contexts/tool-execution/src/index.js";
 
 export function createApiAgentStackRuntime(input: {
   config: any;

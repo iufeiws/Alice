@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  registerLLMToolLoopTools,
   runLLMToolLoop,
   type LLMToolLoopContinuation
 } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
+import { registerToolPlugins } from "../../../src/contexts/tool-execution/src/index.js";
 import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
 
 test("LLM tool loop resumes a multi-tool response after a process restart without repeating completed tools", async () => {
@@ -14,7 +14,7 @@ test("LLM tool loop resumes a multi-tool response after a process restart withou
   const checkpoint = new Promise<void>((resolve) => {
     checkpointReady = resolve;
   });
-  registerLLMToolLoopTools("continuation-test", [{
+  registerToolPlugins("continuation-test", [{
     id: "continuation-test",
     listTools: () => ["Before", "Restart", "After"].map((name) => ({ name, description: name, inputSchema: { type: "object" } })),
     async execute(call, context) {

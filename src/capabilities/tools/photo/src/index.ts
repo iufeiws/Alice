@@ -1,5 +1,5 @@
 import { createCurrentTimeProvider } from "../../../../platform/time/src/index.js";
-import type { ToolPlugin } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolPlugin } from "../../../../contexts/tool-execution/src/index.js";
 import { photoToolText, selfieTool } from "../profile.js";
 import { createSelfieExecutor, type PhotoToolsDeps } from "./selfie-tool.js";
 

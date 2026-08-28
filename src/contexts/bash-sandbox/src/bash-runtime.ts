@@ -1,4 +1,4 @@
-import type { ToolCall, ToolExecutionContext } from "../../agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall, ToolExecutionContext } from "../../tool-execution/src/index.js";
 import type { BashSandboxConfig, BashSandboxSkillMountConfig } from "./config.js";
 import { addBashSandboxSkillMount } from "./config.js";
 import type { DockerExecutor } from "./docker-executor.js";

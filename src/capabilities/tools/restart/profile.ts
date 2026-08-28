@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolDefinition } from "../../../contexts/tool-execution/src/index.js";
 
 export const restartToolName = "restart";
 export const restartSuccessOutput = "服务已重启，代码更新已加载";

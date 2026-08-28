@@ -1,4 +1,4 @@
-import type { ToolCall } from "../../agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall } from "../../tool-execution/src/index.js";
 
 export type ToolOutputTarget = {
   plugin: string;

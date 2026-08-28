@@ -1,4 +1,5 @@
-import type { AgentEvent, AppendAlbertMessageInput, ToolResult } from "../contracts/agent-contracts.js";
+import type { AgentEvent } from "../contracts/agent-contracts.js";
+import type { AppendAlbertMessageInput, ToolResult } from "../../../tool-execution/src/index.js";
 import type { LLMChatInput, LLMChatResult, LLMClient, LLMStreamHandlers } from "../../../llm-gateway/src/index.js";
 import type { LLMRequestLogEntry } from "../../../llm-session/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";

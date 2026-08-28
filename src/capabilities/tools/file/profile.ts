@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolDefinition } from "../../../contexts/tool-execution/src/index.js";
 
 /**
  * 容器工具名映射:Alice 对外大写名 → Pi 容器小写工具名。

@@ -3,7 +3,7 @@ import type { LLMClient } from "../../../contexts/llm-gateway/src/index.js";
 import type { LLMRequestSender } from "../../../contexts/llm-gateway/src/llm-tool-loop.js";
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 import type { SessionClearResult } from "../../../contexts/llm-session/src/application/session-clear-coordinator.js";
-import type { ToolPlugin } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolPlugin } from "../../../contexts/tool-execution/src/index.js";
 import type { TokenUsageQuery } from "../../../platform/storage/src/token-usage-store.js";
 import type { DiaryStore } from "../../../platform/storage/src/diary-store.js";
 import type { CalendarStore } from "../../../platform/storage/src/calendar-store.js";

@@ -3,7 +3,7 @@ import { createChannelPluginRuntime } from "./channel-plugin-runtime.js";
 import { createMessageRuntimeRuntime } from "./message-runtime-runtime.js";
 import { createWorldWandererRuntime, defaultWorldWandererPluginConfigPath } from "../../../contexts/world-wanderer/src/index.js";
 import { createFeishuDynamicCardAgentRunIndicator, createFeishuToolExecutionReporter, createJsonFeishuAgentRunIndicatorCardStore } from "../../../contexts/agent-run-indicator/src/index.js";
-import { setLLMToolExecutionReporter } from "../../../contexts/llm-gateway/src/llm-tool-loop.js";
+import { setToolExecutionReporter } from "../../../contexts/tool-execution/src/index.js";
 import { isFeishuConfigured } from "../../../channels/feishu/src/config.js";
 import type { StoredMessageLog } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { ImageRecognitionTarget } from "../../../channels/image-recognition/src/index.js";
@@ -102,7 +102,7 @@ export function createApiCommunicationRuntime(input: {
   input.outputRouter.onSent(async () => {
     input.agentState.restartInactivityTimer();
   });
-  setLLMToolExecutionReporter(toolExecutionReporter);
+  setToolExecutionReporter(toolExecutionReporter);
   const worldWandererRuntime = createWorldWandererRuntime({
     configPath: defaultWorldWandererPluginConfigPath,
     dbPath: path.join(input.config.memoryFiles.root, "alice.sqlite"),

@@ -2,7 +2,7 @@ import { createChatAgentRuntime } from "../../../contexts/agent-loop/src/runtime
 import { createTalkRuntimeRuntime } from "../../../contexts/talk-session/src/runtime/talk-session-runtime.js";
 import type { PromptContextRuntime } from "../../../contexts/prompt-context/src/index.js";
 import { restartToolName } from "../../../capabilities/tools/restart/profile.js";
-import type { AppendAlbertMessageInput } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { AppendAlbertMessageInput } from "../../../contexts/tool-execution/src/index.js";
 
 export function createApiAgentRuntime(input: {
   config: any;

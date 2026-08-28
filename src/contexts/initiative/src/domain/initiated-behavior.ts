@@ -1,4 +1,5 @@
-import type { AgentEvent, ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../agent-loop/src/contracts/agent-contracts.js";
+import type { AgentEvent } from "../../../agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall, ToolDefinition, ToolPlugin, ToolResult } from "../../../tool-execution/src/index.js";
 import type { LLMChatInput } from "../../../llm-gateway/src/index.js";
 import { buildLayerMessagesWithToolResults, promptRenderer, type PromptProfile, type PromptRenderContext } from "../../../../contexts/agent-profile/src/application/build-system-prompt.js";
 import { normalizePromptLayer, type PromptLayer, type PromptMessage } from "../../../../contexts/agent-profile/src/domain/prompt-layer.js";

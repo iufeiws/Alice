@@ -1,8 +1,9 @@
 import { createChatAgent as createChatAgentUnderTest, type ChatAgentDeps } from "../../../src/contexts/agent-loop/src/application/chat-agent.js";
 import type { LLMChatInput } from "../../../src/contexts/llm-gateway/src/index.js";
 import { createLLMRequests } from "../../../src/contexts/llm-gateway/src/llm-requests.js";
-import { registerLLMToolLoopTools } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
-import type { AgentEvent, AgentOutput, ToolCall } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
+import { registerToolPlugins } from "../../../src/contexts/tool-execution/src/index.js";
+import type { AgentEvent, AgentOutput } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall } from "../../../src/contexts/tool-execution/src/index.js";
 import type { PromptProfile } from "../../../src/contexts/agent-profile/src/application/build-system-prompt.js";
 import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.js";
 import type { AgentStateStore } from "../../../src/contexts/agent-loop/src/domain/agent-loop-state.js";
@@ -20,7 +21,7 @@ export type TestChatAgentDeps = Omit<ChatAgentDeps, "llmRequestSender" | "getPro
 };
 
 export function createChatAgent(deps: TestChatAgentDeps) {
-  registerLLMToolLoopTools("default", deps.tools ?? []);
+  registerToolPlugins("default", deps.tools ?? []);
   let persistedSession = deps.initialLLMSession;
   const loadLLMSession = deps.loadLLMSession ?? (() => persistedSession);
   const onLLMSessionUpdated = deps.onLLMSessionUpdated;

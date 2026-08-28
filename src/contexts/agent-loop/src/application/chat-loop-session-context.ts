@@ -1,7 +1,8 @@
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { LLMChatInput, LLMToolCall } from "../../../llm-gateway/src/index.js";
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
-import type { AgentEvent, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
+import type { AgentEvent } from "../contracts/agent-contracts.js";
+import type { ToolPlugin, ToolResult } from "../../../tool-execution/src/index.js";
 import { formatAgentLoopToolMessageContent, runPromptToolRequest as executePromptToolRequest } from "./agent-loop-tool-executor.js";
 import type { ChatAgentLoopInput, ChatAgentLoopSession, ChatAgentModeState } from "./run-chat-loop.js";
 

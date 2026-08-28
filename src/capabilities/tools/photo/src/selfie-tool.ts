@@ -1,5 +1,5 @@
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
-import type { ToolCall, ToolExecutionContext, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall, ToolExecutionContext, ToolResult } from "../../../../contexts/tool-execution/src/index.js";
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import type { PromptContextRuntime } from "../../../../contexts/prompt-context/src/index.js";
 import { normalizePhotoPluginConfig, readPhotoPluginConfig, type PhotoPluginConfig } from "./config.js";

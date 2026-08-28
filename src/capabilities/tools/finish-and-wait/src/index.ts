@@ -1,4 +1,4 @@
-import type { ToolCall, ToolExecutionContext, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall, ToolExecutionContext, ToolPlugin, ToolResult } from "../../../../contexts/tool-execution/src/index.js";
 import { awaitChatWaitSeconds, clearYieldAlbertContent, finishAndWaitTool, maxYieldWaitSeconds, minYieldWaitSeconds } from "../profile.js";
 
 export type FinishAndWaitActions = "schedule" | "clear" | "await_chat" | "finish";

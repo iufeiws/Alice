@@ -1,8 +1,8 @@
 import type { StoredConversationMessage } from '../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js';
-import { registerLLMToolLoopTools, runLLMToolLoop } from '../../../contexts/llm-gateway/src/llm-tool-loop.js';
+import { runLLMToolLoop } from '../../../contexts/llm-gateway/src/llm-tool-loop.js';
+import { registerToolPlugins, type ToolDefinition } from '../../tool-execution/src/index.js';
 import type { LLMRequestSenderInput } from '../../../contexts/llm-gateway/src/llm-tool-loop.js';
 import type { LLMToolSpec } from '../../../contexts/llm-gateway/src/index.js';
-import type { ToolDefinition } from '../../../contexts/agent-loop/src/contracts/agent-contracts.js';
 import type { MemoryInductionSession, MemoryRunResult, MemoryRunSummary, MemorySummaryDeps, MemoryTarget } from './model.js';
 import { maxMessagesPerSummary, memoryFileLimits, targetFiles, targetResultFiles } from './model.js';
 import { latestMemorySleepWindow } from './sleep-window.js';
@@ -355,7 +355,7 @@ async function runMemoryOrganizationInduction(
     const memoryDefinitions = piAdapter.listTools().filter((tool) => tool.name === "Read" || tool.name === "Edit");
     const selfTalkPlugin = createMemorySelfTalkToolPlugin({ toolCalls });
     const memoryToolNames = [...memoryDefinitions.map((tool) => tool.name), memorySelfTalkToolName];
-    const unregisterTools = registerLLMToolLoopTools(toolRegistryName, [piAdapter, selfTalkPlugin]);
+    const unregisterTools = registerToolPlugins(toolRegistryName, [piAdapter, selfTalkPlugin]);
 
     let currentMessages = messages;
     let totalRounds = 0;

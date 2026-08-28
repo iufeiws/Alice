@@ -1,4 +1,4 @@
-import type { ToolExecutionContext } from "../../agent-loop/src/contracts/agent-contracts.js";
+import type { ToolExecutionContext } from "../../tool-execution/src/index.js";
 import type { PiInvocationCompletion, PiModelConfig, PiWorkerRuntime, PiWorkerClient, PiWorkerHealth, PiToolDefinition } from "./contracts.js";
 
 export function createPiWorkerRuntime(input: {

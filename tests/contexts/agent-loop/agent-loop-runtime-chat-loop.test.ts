@@ -2,8 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildChatAgentLoop } from "../../../src/contexts/agent-loop/src/application/run-chat-loop.js";
 import { runAgentFunctionCallLoop } from "../../../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js";
-import { registerLLMToolLoopTools } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
-import type { ToolPlugin } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
+import { registerToolPlugins } from "../../../src/contexts/tool-execution/src/index.js";
+import type { ToolPlugin } from "../../../src/contexts/tool-execution/src/index.js";
 import { emptyPromptRenderer, fakeTime, textEvent } from "./agent-loop-runtime-helpers.js";
 
 test("chat loop exposes visible tools to LLM requests", async () => {
@@ -24,7 +24,7 @@ test("chat loop exposes visible tools to LLM requests", async () => {
       return { callId: call.id, ok: true, output: "ok" };
     }
   }];
-  registerLLMToolLoopTools("default", tools);
+  registerToolPlugins("default", tools);
   const exposedToolNames: string[][] = [];
   const sentMaxTokens: Array<number | undefined> = [];
   const loop = buildChatAgentLoop({
@@ -92,7 +92,7 @@ test("chat loop preserves assistant content without synthesizing a Chat tool cal
       return { callId: call.id, ok: true, output: "ok" };
     }
   }];
-  registerLLMToolLoopTools("default", tools);
+  registerToolPlugins("default", tools);
   const loop = buildChatAgentLoop({
     llmInput: {
       messages: session.messages,

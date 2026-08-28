@@ -7,7 +7,7 @@ import {
   sanitizeLLMResponseMessage,
   type LLMMessageSanitizationOptions
 } from "./llm-message-sanitization.js";
-import type { ToolDefinition } from "../../agent-loop/src/contracts/agent-contracts.js";
+import type { ToolDefinition } from "../../tool-execution/src/index.js";
 import type { PromptContextRuntime } from "../../prompt-context/src/index.js";
 
 export type LLMRequestLogEvent = {

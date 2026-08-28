@@ -2,7 +2,7 @@ import { createToolRuntime } from "../../../capabilities/tools/messaging/src/too
 import { createPromptToolPreviewRuntime } from "../../../contexts/agent-profile/src/application/prompt-tool-preview-runtime.js";
 import { createVoicePluginRuntime } from "./voice-plugin-runtime.js";
 import { createLLMRequestsRuntime } from "../../../contexts/llm-gateway/src/llm-requests-runtime.js";
-import { registerLLMToolLoopTools } from "../../../contexts/llm-gateway/src/llm-tool-loop.js";
+import { registerToolPlugins } from "../../../contexts/tool-execution/src/index.js";
 import { createOpenAICompatibleClient } from "../../../contexts/llm-gateway/src/index.js";
 import { readImageRecognitionConfig, recognizeImageWithPlugin, type ImageRecognitionTarget } from "../../../channels/image-recognition/src/index.js";
 import type { PiWorkerRuntime } from "../../../contexts/pi-worker/src/index.js";
@@ -118,7 +118,7 @@ export function createApiCapabilitiesRuntime(input: {
     piWorkerRuntime: input.piWorkerRuntime,
     recognizeImage
   });
-  const refreshToolRegistry = () => registerLLMToolLoopTools("default", toolRuntime.toolPlugins);
+  const refreshToolRegistry = () => registerToolPlugins("default", toolRuntime.toolPlugins);
   refreshToolRegistry();
 
   const promptToolPreviewRuntime = createPromptToolPreviewRuntime({

@@ -1,6 +1,7 @@
 import type { LLMContentPart, LLMMessage, LLMToolCall } from "../../../../contexts/llm-gateway/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
-import type { AgentEvent, ToolCall, ToolDefinition, ToolResult } from "../../../agent-loop/src/contracts/agent-contracts.js";
+import type { AgentEvent } from "../../../agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall, ToolDefinition, ToolResult } from "../../../tool-execution/src/index.js";
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
 import {
   normalizePromptLayer,

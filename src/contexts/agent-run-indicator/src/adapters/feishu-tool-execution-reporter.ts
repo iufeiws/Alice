@@ -1,6 +1,6 @@
 import type { FeishuDynamicCardClient, FeishuToolExecutionPanel } from "../../../../channels/feishu/src/types.js";
 import type { FeishuPairingStore } from "../../../../channels/feishu/src/pairing.js";
-import type { ToolCall, ToolExecutionReporter, ToolExecutionReportSession, ToolResult } from "../../../agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall, ToolExecutionReporter, ToolExecutionReportSession, ToolResult } from "../../../tool-execution/src/index.js";
 
 export function createFeishuToolExecutionReporter(input: {
   client: FeishuDynamicCardClient;

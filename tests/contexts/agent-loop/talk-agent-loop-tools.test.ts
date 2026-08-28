@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { createTalkAgentLoopForSession } from "../../../src/contexts/agent-loop/src/application/run-talk-loop.js";
 import { defaultPromptProfile } from "../../../src/contexts/agent-profile/src/application/build-system-prompt.js";
 import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.js";
-import { registerLLMToolLoopTools } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
-import type { ToolPlugin } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
+import { registerToolPlugins } from "../../../src/contexts/tool-execution/src/index.js";
+import type { ToolPlugin } from "../../../src/contexts/tool-execution/src/index.js";
 import { noopClient, runPreparedTalkAgentLoop, testPromptRenderer } from "./talk-agent-loop-helpers.js";
 
 test("talk loop includes prompt tool result in first llm request", async () => {
@@ -21,7 +21,7 @@ test("talk loop includes prompt tool result in first llm request", async () => {
       return { callId: call.id, ok: true, output: "talk-prompt-tool-result" };
     }
   }];
-  registerLLMToolLoopTools("default", tools);
+  registerToolPlugins("default", tools);
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
     getCurrentTalkLLMSessionId: () => 107,
@@ -93,7 +93,7 @@ test("talk exposed selfie tool calls receive agent loop run context", async () =
       return { callId: call.id, ok: true, output: "sent" };
     }
   }];
-  registerLLMToolLoopTools("default", tools);
+  registerToolPlugins("default", tools);
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
     getCurrentTalkLLMSessionId: () => 108,

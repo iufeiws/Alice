@@ -1,4 +1,4 @@
-import type { ToolCall, ToolExecutionContext, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall, ToolExecutionContext, ToolPlugin, ToolResult } from "../../../../contexts/tool-execution/src/index.js";
 import type { PiWorkerRuntime } from "../../../../contexts/pi-worker/src/index.js";
 import { piToolResultToToolResult } from "../../../../contexts/pi-worker/src/index.js";
 import { bashPiToolName, bashTool, bashToolName } from "../profile.js";

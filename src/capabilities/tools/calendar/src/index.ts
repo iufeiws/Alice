@@ -1,5 +1,5 @@
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
-import type { ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/tool-execution/src/index.js";
 import { parseZonedIso } from "../../../../platform/time/src/index.js";
 import type { CalendarEntry, CalendarStore } from "../../../../platform/storage/src/calendar-store.js";
 import { calendarTool, calendarToolText } from "../profile.js";

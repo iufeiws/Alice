@@ -1,6 +1,7 @@
 import type { LLMChatInput } from "../../../llm-gateway/src/index.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
-import type { AgentEvent, AgentOutput, ToolPlugin, ToolResult } from "../contracts/agent-contracts.js";
+import type { AgentEvent, AgentOutput } from "../contracts/agent-contracts.js";
+import type { ToolPlugin, ToolResult } from "../../../tool-execution/src/index.js";
 import { createId } from "../../../../shared/uuid/src/index.js";
 import type { PromptProfile } from "../../../agent-profile/src/application/build-system-prompt.js";
 import {

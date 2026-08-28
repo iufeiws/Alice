@@ -1,4 +1,4 @@
-import type { ToolPlugin } from "../../../agent-loop/src/contracts/agent-contracts.js";
+import type { ToolPlugin } from "../../../tool-execution/src/index.js";
 import { createAdminMemoryRuntime } from "../../../memory/src/application/admin-memory-runtime.js";
 import { PromptProfileValidationError, type PromptProfile, type PromptProfileStore } from "./build-system-prompt.js";
 import { isToolVisibleInPromptProfile } from "../../../initiative/src/domain/initiated-behavior.js";

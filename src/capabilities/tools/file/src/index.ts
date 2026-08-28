@@ -1,6 +1,6 @@
 import type { BashSandboxConfig, BashSandboxRuntime } from "../../../../contexts/bash-sandbox/src/index.js";
 import { isAllowedCwd, normalizeContainerPath } from "../../../../contexts/bash-sandbox/src/paths.js";
-import type { ToolCall, ToolDefinition, ToolExecutionContext, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall, ToolDefinition, ToolExecutionContext, ToolPlugin, ToolResult } from "../../../../contexts/tool-execution/src/index.js";
 import type { PiContent, PiWorkerRuntime } from "../../../../contexts/pi-worker/src/index.js";
 import { piToolResultToToolResult } from "../../../../contexts/pi-worker/src/index.js";
 import type { ImageRecognitionTarget } from "../../../../channels/image-recognition/src/index.js";

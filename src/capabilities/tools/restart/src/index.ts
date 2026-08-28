@@ -1,4 +1,4 @@
-import type { ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/tool-execution/src/index.js";
 import { restartSuccessOutput, restartTool, restartToolName } from "../profile.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";

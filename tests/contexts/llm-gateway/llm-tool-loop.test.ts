@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { executeRegisteredLLMTool, registerLLMToolLoopTools, runLLMToolLoop, setLLMToolExecutionReporter } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
+import { runLLMToolLoop } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
+import { registerToolPlugins } from "../../../src/contexts/tool-execution/src/index.js";
 import type { LLMChatResult } from "../../../src/contexts/llm-gateway/src/index.js";
 import { finishAndWaitTool } from "../../../src/capabilities/tools/finish-and-wait/profile.js";
 import { chatTool } from "../../../src/capabilities/tools/messaging/profile.js";
@@ -48,45 +49,10 @@ test("tool profiles explicitly configure whether results pass through renderText
   ].map((tool) => tool.passRenderText), Array(6).fill(undefined));
 });
 
-test("registered tool execution reports progress unless its profile suppresses the card", async () => {
-  const events: string[] = [];
-  setLLMToolExecutionReporter({
-    endSequence() {},
-    begin(call) {
-      events.push(`begin:${call.toolName}`);
-      return {
-        appendProgress(content) { events.push(`progress:${content}`); },
-        finish(result) { events.push(`finish:${result.callId}`); },
-        fail(error) { events.push(`fail:${String(error)}`); }
-      };
-    }
-  });
-  registerLLMToolLoopTools("tool-report-test", [{
-    id: "test",
-    listTools: () => [
-      { name: "Visible", description: "visible", inputSchema: {} },
-      { name: "Hidden", description: "hidden", inputSchema: {}, suppressExecutionCard: true }
-    ],
-    async execute(call, context) {
-      context?.reportProgress?.("working");
-      return { callId: call.id, ok: true };
-    }
-  }]);
-
-  try {
-    await executeRegisteredLLMTool("tool-report-test", { id: "visible", toolName: "Visible", input: {} });
-    await executeRegisteredLLMTool("tool-report-test", { id: "hidden", toolName: "Hidden", input: {} });
-  } finally {
-    setLLMToolExecutionReporter(undefined);
-  }
-
-  assert.deepEqual(events, ["begin:Visible", "progress:working", "finish:visible"]);
-});
-
 test("LLM tool loop throws on repeated assistant messages ignoring tool call id", async () => {
   let requests = 0;
   let toolExecutions = 0;
-  registerLLMToolLoopTools("llm-tool-loop-test", [{
+  registerToolPlugins("llm-tool-loop-test", [{
     id: "test",
     listTools: () => [{ name: "Chat", description: "chat", inputSchema: { type: "object" } }],
     async execute(call) {
@@ -130,7 +96,7 @@ test("LLM tool loop throws on repeated assistant messages ignoring tool call id"
 
 test("LLM tool loop transforms assistant content before tool execution", async () => {
   const calls: string[] = [];
-  registerLLMToolLoopTools("llm-tool-loop-transform-test", [{
+  registerToolPlugins("llm-tool-loop-transform-test", [{
     id: "test",
     listTools: () => [
       { name: "Chat", description: "chat", inputSchema: { type: "object" } },
@@ -190,7 +156,7 @@ test("LLM tool loop transforms assistant content before tool execution", async (
 
 test("LLM tool loop returns tool execution errors to the LLM and continues", async () => {
   let requests = 0;
-  registerLLMToolLoopTools("llm-tool-loop-tool-error-test", [{
+  registerToolPlugins("llm-tool-loop-tool-error-test", [{
     id: "test",
     listTools: () => [{ name: "Bash", description: "bash", inputSchema: { type: "object" } }],
     async execute() {
@@ -264,7 +230,7 @@ test("LLM tool loop returns an unavailable tool result to the LLM and continues"
 });
 
 test("LLM tool loop preserves legacy mustache text returned by a tool", async () => {
-  registerLLMToolLoopTools("llm-tool-loop-legacy-mustache-test", [{
+  registerToolPlugins("llm-tool-loop-legacy-mustache-test", [{
     id: "test",
     listTools: () => [{ name: "External", description: "external", inputSchema: { type: "object" } }],
     async execute(call) {
@@ -301,7 +267,7 @@ test("LLM tool loop preserves legacy mustache text returned by a tool", async ()
 });
 
 test("LLM tool loop only passes tool result text through renderText when the profile enables it", async () => {
-  registerLLMToolLoopTools("llm-tool-loop-pass-render-text-test", [{
+  registerToolPlugins("llm-tool-loop-pass-render-text-test", [{
     id: "test",
     listTools: () => [
       { name: "Raw", description: "raw", inputSchema: {} },

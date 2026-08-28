@@ -1,7 +1,7 @@
 import type { VoiceSynthesizer } from "../../../../channels/tts/src/index.js";
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import type { BashSandboxConfig } from "../../../../contexts/bash-sandbox/src/index.js";
-import type { ToolPlugin } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolPlugin } from "../../../../contexts/tool-execution/src/index.js";
 import type {
   AliceStore
 } from "../../../../contexts/conversation-hub/src/ports/conversation-store.js";

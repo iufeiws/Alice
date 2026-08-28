@@ -1,6 +1,6 @@
 import type { PromptContextRuntime } from "../../../prompt-context/src/index.js";
-import { executeRegisteredLLMTool, getRegisteredLLMToolDefinition } from "../../../llm-gateway/src/llm-tool-loop.js";
-import type { AgentEvent, ToolExecutionContext, ToolResult } from "../contracts/agent-contracts.js";
+import { executeRegisteredTool, getRegisteredToolDefinition, type ToolExecutionContext, type ToolResult } from "../../../tool-execution/src/index.js";
+import type { AgentEvent } from "../contracts/agent-contracts.js";
 
 export type AgentLoopToolExecutionOptions = {
   registryName?: string;
@@ -20,7 +20,7 @@ export async function runPromptToolRequest(
   call: AgentLoopPromptToolRequest,
   options: AgentLoopToolExecutionOptions = {}
 ): Promise<ToolResult> {
-  return executeRegisteredLLMTool(options.registryName ?? "default", {
+  return executeRegisteredTool(options.registryName ?? "default", {
     ...call,
     input: options.transformInput?.(call.toolName, call.input) ?? call.input
   }, options.context);
@@ -28,7 +28,7 @@ export async function runPromptToolRequest(
 
 export function formatAgentLoopToolMessageContent(result: ToolResult, runtime: PromptContextRuntime | undefined, toolName?: string): string {
   if (!runtime) throw new Error("prompt_context_runtime_required");
-  const passRenderText = toolName !== undefined && getRegisteredLLMToolDefinition("default", toolName)?.passRenderText === true;
+  const passRenderText = toolName !== undefined && getRegisteredToolDefinition("default", toolName)?.passRenderText === true;
   if (!result.ok && typeof result.output === "string") return passRenderText ? runtime.renderText(result.output) : result.output;
   if (!result.ok) return result.error ? `error: ${passRenderText ? runtime.renderText(result.error) : result.error}` : "error";
   if (typeof result.output === "string") return passRenderText ? runtime.renderText(result.output) : result.output;

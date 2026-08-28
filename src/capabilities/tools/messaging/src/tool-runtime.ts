@@ -1,5 +1,5 @@
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
-import type { ToolPlugin } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolPlugin } from "../../../../contexts/tool-execution/src/index.js";
 import { createMessagingTools, defaultMessagingPluginConfigPath, readMessagingPluginConfig } from "./index.js";
 import { createPhotoTools } from "../../photo/src/index.js";
 import { createWardrobeTools } from "../../wardrobe/src/index.js";

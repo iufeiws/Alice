@@ -1,6 +1,6 @@
 import type { OutputRouter } from "../../../../platform/output-router/src/index.js";
 import type { AliceStore } from "../../../../contexts/conversation-hub/src/ports/conversation-store.js";
-import type { ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/tool-execution/src/index.js";
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import { sendSystemNoticeFromRuntime } from "../../../../contexts/conversation-hub/src/application/message-runtime.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";

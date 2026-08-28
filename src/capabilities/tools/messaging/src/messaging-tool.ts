@@ -1,7 +1,8 @@
 import type { VoiceSynthesisResult } from "../../../../channels/tts/src/index.js";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import type { AgentOutput, ToolCall, ToolResult } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { AgentOutput } from "../../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall, ToolResult } from "../../../../contexts/tool-execution/src/index.js";
 import type { StoredConversationMessage } from "../../../../contexts/conversation-hub/src/ports/conversation-store.js";
 import { resolveSandboxHostPath } from "../../../../contexts/bash-sandbox/src/index.js";
 import { createCurrentTimeProvider, todayMessagingAnchor } from "../../../../platform/time/src/index.js";

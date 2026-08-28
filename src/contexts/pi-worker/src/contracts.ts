@@ -1,4 +1,4 @@
-import type { ToolExecutionContext, ToolResult } from "../../agent-loop/src/contracts/agent-contracts.js";
+import type { ToolExecutionContext, ToolResult } from "../../tool-execution/src/index.js";
 
 export type PiToolDefinition = {
   name: string;

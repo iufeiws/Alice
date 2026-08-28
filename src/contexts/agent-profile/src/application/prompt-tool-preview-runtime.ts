@@ -1,6 +1,6 @@
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { LLMChatInput } from "../../../llm-gateway/src/index.js";
-import type { ToolDefinition } from "../../../agent-loop/src/contracts/agent-contracts.js";
+import type { ToolDefinition } from "../../../tool-execution/src/index.js";
 import {
   buildAppendPromptMessagesWithToolResults,
   buildPromptMessagesWithToolResults,

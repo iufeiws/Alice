@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createAgentLoopRuntime, runAgentFunctionCallLoop } from "../../../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js";
-import { registerLLMToolLoopTools } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
+import { registerToolPlugins } from "../../../src/contexts/tool-execution/src/index.js";
 import { emptyPromptRenderer, textEvent } from "./agent-loop-runtime-helpers.js";
 
 test("agent loop runtime returns chat outputs from the configured runner", async () => {
@@ -86,7 +86,7 @@ test("agent loop runtime appends pending interrupt after completed tool result b
   const toolReleased = new Promise<void>((resolve) => {
     releaseTool = resolve;
   });
-  registerLLMToolLoopTools("agent-loop-runtime-interrupt", [{
+  registerToolPlugins("agent-loop-runtime-interrupt", [{
     id: "interrupt-test",
     listTools: () => [{ name: "test_tool", description: "test", inputSchema: { type: "object" } }],
     async execute(call) {
@@ -127,7 +127,7 @@ test("agent loop runtime appends pending interrupt after completed tool result b
 test("pending inbound starts a fresh function-call loop budget after a single output", async () => {
   const runtime = createAgentLoopRuntime();
   const requests: any[][] = [];
-  registerLLMToolLoopTools("agent-loop-runtime-interrupt-budget", [{
+  registerToolPlugins("agent-loop-runtime-interrupt-budget", [{
     id: "interrupt-budget-test",
     listTools: () => [{ name: "test_tool", description: "test", inputSchema: { type: "object" } }],
     async execute(call) {
@@ -189,7 +189,7 @@ test("agent loop runtime resumes yield directly when a user message arrives duri
   const requests: any[][] = [];
   let loopStopReason: string | undefined;
   let resumeCalls = 0;
-  registerLLMToolLoopTools("agent-loop-runtime-yield-interrupt", [{
+  registerToolPlugins("agent-loop-runtime-yield-interrupt", [{
     id: "yield-test",
     listTools: () => [{ name: "Yield", description: "wait", inputSchema: { type: "object" } }],
     async execute(call) {
@@ -236,7 +236,7 @@ test("agent loop runtime resumes yield directly when a user message arrives duri
 test("pending inbound starts a fresh function-call loop budget after Yield", async () => {
   const runtime = createAgentLoopRuntime();
   const requests: any[][] = [];
-  registerLLMToolLoopTools("agent-loop-runtime-yield-budget", [{
+  registerToolPlugins("agent-loop-runtime-yield-budget", [{
     id: "yield-budget-test",
     listTools: () => [{ name: "Yield", description: "wait", inputSchema: { type: "object" } }],
     async execute(call) {
@@ -326,7 +326,7 @@ test("agent loop runtime executes prepared chat runs through the function-call l
 
 test("standalone agent function-call loop writes tool result back into the next request", async () => {
   const requests: unknown[][] = [];
-  registerLLMToolLoopTools("agent-loop-runtime-test", [{
+  registerToolPlugins("agent-loop-runtime-test", [{
     id: "test",
     listTools: () => [{ name: "test_tool", description: "test", inputSchema: { type: "object" } }],
     async execute(call) {

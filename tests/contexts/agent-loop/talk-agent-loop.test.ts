@@ -4,8 +4,8 @@ import { createTalkAgentLoopForSession } from "../../../src/contexts/agent-loop/
 import { defaultTalkOutputReadyChars } from "../../../src/contexts/talk-session/src/application/talk-session-runtime.js";
 import { defaultPromptProfile } from "../../../src/contexts/agent-profile/src/application/build-system-prompt.js";
 import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.js";
-import { registerLLMToolLoopTools } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
-import type { ToolPlugin } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
+import { registerToolPlugins } from "../../../src/contexts/tool-execution/src/index.js";
+import type { ToolPlugin } from "../../../src/contexts/tool-execution/src/index.js";
 import { noopClient, runPreparedTalkAgentLoop, testPromptRenderer } from "./talk-agent-loop-helpers.js";
 
 test("talk loop returns no prepared run while voice output backpressure is active", async () => {
@@ -240,7 +240,7 @@ test("talk tool-call followup runs in the same function-call loop", async () => 
       return { callId: "call-1", ok: true, output: "tool result" };
     }
   }];
-  registerLLMToolLoopTools("default", tools);
+  registerToolPlugins("default", tools);
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
     getCurrentTalkLLMSessionId: () => 106,
@@ -309,7 +309,7 @@ test("talk Chat tool-call executes through the common tool plugin path", async (
       return { callId: call.id, ok: true, output: "sent" };
     }
   }];
-  registerLLMToolLoopTools("default", tools);
+  registerToolPlugins("default", tools);
   const controller = createTalkAgentLoopForSession({
     isActiveTalkLLMSession: () => true,
     getCurrentTalkLLMSessionId: () => 107,

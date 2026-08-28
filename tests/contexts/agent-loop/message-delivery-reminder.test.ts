@@ -2,8 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildChatAgentLoop } from "../../../src/contexts/agent-loop/src/application/run-chat-loop.js";
 import { runAgentFunctionCallLoop } from "../../../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js";
-import type { ToolCall, ToolPlugin } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
-import { registerLLMToolLoopTools, type LLMToolLoopContinuation } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
+import type { ToolCall, ToolPlugin } from "../../../src/contexts/tool-execution/src/index.js";
+import { type LLMToolLoopContinuation } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
+import { registerToolPlugins } from "../../../src/contexts/tool-execution/src/index.js";
 import { defaultPromptProfile } from "../../../src/contexts/agent-profile/src/application/build-system-prompt.js";
 import { emptyPromptRenderer, fakeTime, textEvent } from "./agent-loop-runtime-helpers.js";
 
@@ -205,7 +206,7 @@ function createReminderLoop(input: {
   respond(round: number, messages: Array<{ role: string; content?: unknown }>): Promise<any>;
   continuation?: LLMToolLoopContinuation;
 }) {
-  registerLLMToolLoopTools("default", input.tools);
+  registerToolPlugins("default", input.tools);
   const session = {
     messages: [{ role: "user" as const, content: "start" }],
     requestTimestamps: [],

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildAgentInitiatedBehaviorMessages } from "../../../src/contexts/initiative/src/domain/initiated-behavior.js";
-import type { ToolCall } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall } from "../../../src/contexts/tool-execution/src/index.js";
 import {
   initiatedBehaviorPlan,
   promptRenderContext,

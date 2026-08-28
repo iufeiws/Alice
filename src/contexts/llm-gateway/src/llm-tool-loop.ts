@@ -1,5 +1,12 @@
 import type { LLMChatResult, LLMClient, LLMMessage, LLMStreamHandlers, LLMToolCall } from "./index.js";
-import type { AgentEvent, ToolCall, ToolDefinition, ToolExecutionContext, ToolExecutionReporter, ToolExecutionReportSession, ToolPlugin, ToolResult } from "../../agent-loop/src/contracts/agent-contracts.js";
+import type { AgentEvent } from "../../agent-loop/src/contracts/agent-contracts.js";
+import {
+  executeRegisteredTool,
+  getRegisteredToolDefinition,
+  type ToolDefinition,
+  type ToolExecutionContext,
+  type ToolResult
+} from "../../tool-execution/src/index.js";
 import { normalizePromptProfile, type PromptProfile } from "../../agent-profile/src/application/build-system-prompt.js";
 import { promptMessageToMessage } from "../../agent-profile/src/domain/prompt-layer.js";
 import type { PromptContextRuntime } from "../../prompt-context/src/index.js";
@@ -178,34 +185,6 @@ export type LLMToolLoopInput = {
 };
 
 const defaultToolRegistryName = "default";
-type RegisteredTool = { plugin: ToolPlugin; definition: ToolDefinition };
-
-const toolRegistries = new Map<string, Map<string, RegisteredTool>>();
-let toolExecutionReporter: ToolExecutionReporter | undefined;
-
-export function setLLMToolExecutionReporter(reporter: ToolExecutionReporter | undefined): void {
-  toolExecutionReporter = reporter;
-}
-
-export function registerLLMToolLoopTools(name: string, plugins: readonly ToolPlugin[]): () => void {
-  const registry = buildToolPluginMap(plugins);
-  toolRegistries.set(name, registry);
-  return () => {
-    if (toolRegistries.get(name) === registry) toolRegistries.delete(name);
-  };
-}
-
-export function executeRegisteredLLMTool(
-  registryName: string,
-  call: ToolCall,
-  context?: ToolExecutionContext
-): Promise<ToolResult> {
-  return executeToolPlugin(toolForCall(registryName, call.toolName), call, context);
-}
-
-export function getRegisteredLLMToolDefinition(registryName: string, toolName: string): ToolDefinition | undefined {
-  return toolRegistries.get(registryName)?.get(toolName)?.definition;
-}
 
 export const defaultLLMToolLoopLimits: Required<LLMToolLoopLimits> = {
   maxRounds: 100,
@@ -560,7 +539,8 @@ async function executeTool(
     recoveredToolResult?: ToolResult;
   }
 ): Promise<LLMToolLoopExecution> {
-  const tool = findToolForCall(input.toolRegistryName ?? defaultToolRegistryName, call.function.name);
+  const registryName = input.toolRegistryName ?? defaultToolRegistryName;
+  const toolDefinition = getRegisteredToolDefinition(registryName, call.function.name);
   const parsedInput = parseToolInput(call.function.arguments);
   const toolInput = input.transformToolInput?.(call.function.name, parsedInput) ?? parsedInput;
   let toolResult: ToolResult;
@@ -570,7 +550,7 @@ async function executeTool(
     processRestartPrepared = false;
     await input.onProcessRestartCancelled?.();
   };
-  if (!tool) {
+  if (!toolDefinition) {
     toolResult = {
       callId: call.id,
       ok: false,
@@ -585,7 +565,7 @@ async function executeTool(
       call,
       callIndex: context.callIndex
     });
-    toolResult = await executeToolPlugin(tool, {
+    toolResult = await executeRegisteredTool(registryName, {
       id: call.id,
       toolName: call.function.name,
       input: toolInput,
@@ -616,7 +596,7 @@ async function executeTool(
     role: "tool" as const,
     toolCallId: call.id,
     name: call.function.name,
-    content: formatToolMessageContent(toolResult, request.toolVariables, tool?.definition.passRenderText === true)
+    content: formatToolMessageContent(toolResult, request.toolVariables, toolDefinition?.passRenderText === true)
   };
   return await input.afterToolResult?.({
     ...context,
@@ -624,7 +604,7 @@ async function executeTool(
     toolInput,
     toolResult,
     toolMessage,
-    toolDefinition: tool?.definition
+    toolDefinition
   }) ?? {
     message: toolMessage,
     control: toolControlFromResult(toolResult)
@@ -643,51 +623,6 @@ function formatToolMessageContent(result: ToolResult, runtime: PromptContextRunt
 
 function escapeXmlText(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
-}
-
-function toolForCall(registryName: string, toolName: string): RegisteredTool {
-  const tool = findToolForCall(registryName, toolName);
-  if (!tool) throw new Error(`llm_tool_unavailable:${toolName}`);
-  return tool;
-}
-
-function findToolForCall(registryName: string, toolName: string): RegisteredTool | undefined {
-  return toolRegistries.get(registryName)?.get(toolName);
-}
-
-function buildToolPluginMap(plugins: readonly ToolPlugin[]): Map<string, RegisteredTool> {
-  const map = new Map<string, RegisteredTool>();
-  for (const plugin of plugins) {
-    for (const definition of plugin.listTools()) map.set(definition.name, { plugin, definition });
-  }
-  return map;
-}
-
-async function executeToolPlugin(tool: RegisteredTool, call: ToolCall, context?: ToolExecutionContext): Promise<ToolResult> {
-  // 卡片 reporter 的 begin/finish 涉及飞书网络往返，改为后台执行，避免阻塞 tool 执行
-  const reportPromise = tool.definition.suppressExecutionCard
-    ? undefined
-    : settleExecutionReport(toolExecutionReporter?.begin(call));
-  const reportProgress = reportPromise
-    ? (content: string) => void reportPromise.then((report) => report?.appendProgress(content)).catch(() => undefined)
-    : context?.reportProgress;
-  try {
-    const result = await tool.plugin.execute(call, {
-      ...context,
-      reportProgress
-    });
-    void reportPromise?.then((report) => report?.finish(result)).catch(() => undefined);
-    return result;
-  } catch (error) {
-    void reportPromise?.then((report) => report?.fail(error)).catch(() => undefined);
-    throw error;
-  }
-}
-
-function settleExecutionReport(
-  value: ToolExecutionReportSession | Promise<ToolExecutionReportSession | undefined> | undefined
-): Promise<ToolExecutionReportSession | undefined> | undefined {
-  return value === undefined ? undefined : Promise.resolve(value).catch(() => undefined);
 }
 
 export function cloneLLMMessages(messages: LLMMessage[]): LLMMessage[] {

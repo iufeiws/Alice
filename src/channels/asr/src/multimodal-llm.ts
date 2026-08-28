@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolDefinition } from "../../../contexts/tool-execution/src/index.js";
 import type { LLMToolCall } from "../../../contexts/llm-gateway/src/index.js";
 import type { AsrPluginConfig, AsrPluginDeps, AsrTranscribeInput, AsrTranscribeResult } from "./types.js";
 import { audioDataUrl, audioFormatForMimeType, mimeTypeForFileName, readAudioInput } from "./audio.js";

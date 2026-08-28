@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { buildChatAgentLoop, type ChatAgentLoopInput, type ChatAgentLoopSession } from "../../../src/contexts/agent-loop/src/application/run-chat-loop.js";
 import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.js";
-import type { AgentEvent, ToolPlugin } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { AgentEvent } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolPlugin } from "../../../src/contexts/tool-execution/src/index.js";
 import {
   createFeishuDynamicCardAgentRunIndicator,
   type AgentRunIndicator,
@@ -10,7 +11,7 @@ import {
 } from "../../../src/contexts/agent-run-indicator/src/index.js";
 import type { FeishuDynamicCardClient } from "../../../src/channels/feishu/src/types.js";
 import type { FeishuPairingStore } from "../../../src/channels/feishu/src/pairing.js";
-import { registerLLMToolLoopTools } from "../../../src/contexts/llm-gateway/src/llm-tool-loop.js";
+import { registerToolPlugins } from "../../../src/contexts/tool-execution/src/index.js";
 import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
 
 export const CARD_LAYOUT_VERSION = 5;
@@ -40,7 +41,7 @@ export function loopInput(overrides: {
   llmInput?: Partial<ChatAgentLoopInput["llmInput"]>;
   toolPlugins?: ToolPlugin[];
 } = {}): ChatAgentLoopInput {
-  registerLLMToolLoopTools("default", overrides.toolPlugins ?? []);
+  registerToolPlugins("default", overrides.toolPlugins ?? []);
   const session: ChatAgentLoopSession = {
     messages: [{ role: "user", content: "hello" }],
     requestTimestamps: [],

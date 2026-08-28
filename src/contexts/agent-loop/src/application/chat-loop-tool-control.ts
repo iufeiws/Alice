@@ -1,5 +1,5 @@
 import type { LLMChatInput, LLMChatResult, LLMToolCall } from "../../../llm-gateway/src/index.js";
-import type { ToolResult } from "../contracts/agent-contracts.js";
+import type { ToolResult } from "../../../tool-execution/src/index.js";
 import type { AgentFunctionCallToolExecution } from "../runtime/agent-loop-runtime.js";
 import type { ChatAgentLoopSession, ChatAgentModeState } from "./run-chat-loop.js";
 

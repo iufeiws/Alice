@@ -1,4 +1,4 @@
-import type { ToolCall, ToolDefinition, ToolPlugin } from "../../agent-loop/src/contracts/agent-contracts.js";
+import type { ToolCall, ToolDefinition, ToolPlugin } from "../../tool-execution/src/index.js";
 import type { LLMToolSpec } from "../../llm-gateway/src/index.js";
 import type { MemoryRunResult } from "./model.js";
 import { targetResultFiles } from "./model.js";

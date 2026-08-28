@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "../../../contexts/agent-loop/src/contracts/agent-contracts.js";
+import type { ToolDefinition } from "../../../contexts/tool-execution/src/index.js";
 
 /** Alice 对外大写名 → Pi 容器小写工具名。参数协议以容器为准。 */
 export const bashToolName = "Bash";

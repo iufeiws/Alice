@@ -39,6 +39,7 @@ test("messageRuntime_eligibleIdleTimerTransition_triggersRandomizedInitiatedBeha
     getDelayMs: () => 0,
     getHeartbeatIntervalMs: () => 10,
     startHeartbeatPaused: true,
+    clearLLMSession() {},
     now: () => current,
     random: randomQueue([0.49, 0]),
     getAgentInitiatedBehaviorPlans: () => randomizedPlans,
@@ -127,6 +128,7 @@ test("messageRuntime_randomizedProbabilityMiss_skipsInitiatedBehavior", async ()
     getDelayMs: () => 0,
     getHeartbeatIntervalMs: () => 10,
     startHeartbeatPaused: true,
+    clearLLMSession() {},
     now: () => current,
     random: randomQueue([0.25]),
     getProcessNowTarget: () => ({ plugin: "feishu", channelId: "chat", userId: "user", sessionId: "session-1" }),
@@ -161,6 +163,7 @@ test("messageRuntime_pendingInbound_skipsRandomizedInitiatedBehavior", async () 
     getDelayMs: () => 60_000,
     getHeartbeatIntervalMs: () => 10,
     startHeartbeatPaused: true,
+    clearLLMSession() {},
     now: () => current,
     random: randomQueue([0]),
     getProcessNowTarget: () => ({ plugin: "feishu", channelId: "chat", userId: "user", sessionId: "session-1" }),
@@ -212,6 +215,7 @@ test("messageRuntime_missingTargetOrHistory_skipsRandomizedInitiatedBehavior", a
       getDelayMs: () => 0,
       getHeartbeatIntervalMs: () => 10,
       startHeartbeatPaused: true,
+      clearLLMSession() {},
       now: () => current,
       random: randomQueue([0, 0]),
       getProcessNowTarget: scenario.getTarget,
@@ -256,6 +260,7 @@ test("messageRuntime_sameIdleTimerTransition_evaluatesRandomizedInitiatedBehavio
     getDelayMs: () => 0,
     getHeartbeatIntervalMs: () => 10,
     startHeartbeatPaused: true,
+    clearLLMSession() {},
     now: () => current,
     random: randomQueue([0, 0, 0, 0]),
     getAgentInitiatedBehaviorPlans: () => randomizedPlans,
@@ -288,6 +293,7 @@ test("messageRuntime_manyUnprocessedMessages_processesAllForSessionInOneTurn", a
   const runtime = createMessageRuntime({
     getDelayMs: () => 0,
     startHeartbeatPaused: true,
+    clearLLMSession() {},
     store,
     chatAgent: {
       async prepareEventRun(event) {

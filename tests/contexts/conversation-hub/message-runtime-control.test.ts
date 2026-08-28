@@ -15,6 +15,7 @@ test("messageRuntime_chatAgentFailure_marksBatchFailedAndDoesNotRetry", async ()
   const runtime = createMessageRuntime({
     getDelayMs: () => 10,
     getHeartbeatIntervalMs: () => 10,
+    clearLLMSession() {},
     store,
     chatAgent: {
       async prepareEventRun() {
@@ -57,6 +58,7 @@ test("messageRuntime_manualProcessFailure_sendsConcreteError", async () => {
   const sent: AgentOutput[] = [];
   const runtime = createMessageRuntime({
     getDelayMs: () => 0,
+    clearLLMSession() {},
     getProcessNowTarget: () => ({
       plugin: "feishu",
       accountId: "main",
@@ -97,6 +99,7 @@ test("messageRuntime_heartbeatPaused_processesPendingOnDemand", async () => {
   const runtime = createMessageRuntime({
     getDelayMs: () => 0,
     getHeartbeatIntervalMs: () => 10,
+    clearLLMSession() {},
     store,
     chatAgent: {
       async prepareEventRun(event) {
@@ -132,6 +135,7 @@ test("messageRuntime_startHeartbeatPaused_keepsPendingUntilResume", async () => 
     getDelayMs: () => 0,
     getHeartbeatIntervalMs: () => 10,
     startHeartbeatPaused: true,
+    clearLLMSession() {},
     store,
     chatAgent: {
       async prepareEventRun(event) {
@@ -165,6 +169,7 @@ test("messageRuntime_heartbeatPausedChange_reportsForEnvPersistence", async () =
     return createMessageRuntime({
       getDelayMs: () => 0,
       getHeartbeatIntervalMs: () => 10,
+      clearLLMSession() {},
       startHeartbeatPaused,
       onHeartbeatPausedChange(paused) {
         persisted = paused;
@@ -205,6 +210,7 @@ test("messageRuntime_processNowWithoutPending_startsManualLlmSession", async () 
   const coreInputs: AgentEvent[] = [];
   const runtime = createMessageRuntime({
     getDelayMs: () => 0,
+    clearLLMSession() {},
     getProcessNowTarget: () => ({
       plugin: "feishu",
       accountId: "main",
@@ -252,6 +258,7 @@ test("messageRuntime_recoverPendingSessions_processesStoredInbound", async () =>
   const coreInputs: AgentEvent[] = [];
   const runtime = createMessageRuntime({
     getDelayMs: () => 10,
+    clearLLMSession() {},
     store,
     chatAgent: {
       async prepareEventRun(event) {
@@ -289,6 +296,7 @@ test("messageRuntime_persistedWechatConversation_recoversUserId", async () => {
   const coreInputs: AgentEvent[] = [];
   const runtime = createMessageRuntime({
     getDelayMs: () => 10,
+    clearLLMSession() {},
     store,
     chatAgent: {
       async prepareEventRun(event) {
@@ -319,6 +327,7 @@ test("messageRuntime_lifecycleEvents_recordsStateUpdatesWithoutChatAgent", async
   let handled = 0;
   const runtime = createMessageRuntime({
     getDelayMs: () => 10,
+    clearLLMSession() {},
     store,
     chatAgent: {
       async prepareEventRun() {

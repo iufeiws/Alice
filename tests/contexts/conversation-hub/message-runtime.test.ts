@@ -97,6 +97,7 @@ test("messageRuntime_pendingInboundLogs_sendsOneLlmRequestAndMarksProcessed", as
   const outputs: AgentOutput[] = [textOutput("session-1", "ok")];
   const runtime = createMessageRuntime({
     getDelayMs: () => 10,
+    clearLLMSession() {},
     store,
     chatAgent: {
       async prepareEventRun(event) {
@@ -126,6 +127,7 @@ test("messageRuntime stores inbound image resources under chat_files before inse
   const store = createAliceStore(path.join(root, "alice.sqlite"));
   const runtime = createMessageRuntime({
     getDelayMs: () => 10_000,
+    clearLLMSession() {},
     store,
     chatAgent: {
       async prepareEventRun() {
@@ -164,6 +166,7 @@ test("messageRuntime_sameAttachmentNameSameHash_reusesFileNameWithoutSuffix", as
   const store = createAliceStore(path.join(root, "alice.sqlite"));
   const runtime = createMessageRuntime({
     getDelayMs: () => 10_000,
+    clearLLMSession() {},
     store,
     chatAgent: {
       async prepareEventRun() {
@@ -199,6 +202,7 @@ test("messageRuntime_sameAttachmentNameDifferentHash_appendsNumericSuffix", asyn
   const store = createAliceStore(path.join(root, "alice.sqlite"));
   const runtime = createMessageRuntime({
     getDelayMs: () => 10_000,
+    clearLLMSession() {},
     store,
     chatAgent: {
       async prepareEventRun() {
@@ -234,6 +238,7 @@ test("messageRuntime_audioTranscriptInbound_storesVoiceMarkedAudio", async () =>
   const runtime = createMessageRuntime({
     getDelayMs: () => 0,
     startHeartbeatPaused: true,
+    clearLLMSession() {},
     store,
     chatAgent: {
       async prepareEventRun() {
@@ -264,6 +269,7 @@ test("messageRuntime_audioTranscriptInbound_processesTranscript", async () => {
   const runtime = createMessageRuntime({
     getDelayMs: () => 0,
     startHeartbeatPaused: true,
+    clearLLMSession() {},
     store,
     chatAgent: {
       async prepareEventRun(event) {
@@ -297,6 +303,7 @@ test("messageRuntime_agentStateDelay_recordsInboundActivity", async () => {
   let inboundActivity = 0;
   const runtime = createMessageRuntime({
     getDelayMs: () => 10_000,
+    clearLLMSession() {},
     agentState: {
       canReplyToInbound: () => true,
       canRunHeartbeat: () => true,
@@ -350,6 +357,7 @@ test("messageRuntime_pendingMessageBelowSavedDelay_waitsUntilDelayExceeded", asy
   const runtime = createMessageRuntime({
     getDelayMs: () => 10_000,
     getHeartbeatIntervalMs: () => 10,
+    clearLLMSession() {},
     onHeartbeatTick() {
       heartbeatTicks += 1;
     },
@@ -409,6 +417,7 @@ test("messageRuntime_stateCannotReply_doesNotCountDelay", async () => {
   const runtime = createMessageRuntime({
     getDelayMs: () => 10,
     getHeartbeatIntervalMs: () => 10,
+    clearLLMSession() {},
     now: () => new Date("2026-05-24T01:00:00.000Z"),
     agentState: {
       canReplyToInbound: () => canReply,
@@ -475,6 +484,7 @@ test("messageRuntime_activeLlmSession_waitsBeforeProcessing", async () => {
   const runtime = createMessageRuntime({
     getDelayMs: () => 0,
     getHeartbeatIntervalMs: () => 10,
+    clearLLMSession() {},
     isLLMSessionActive: () => llmActive,
     store,
     chatAgent: {
@@ -509,6 +519,7 @@ test("messageRuntime_flushAllWithGatedInbound_stopsHeartbeatWithoutProcessing", 
   const runtime = createMessageRuntime({
     getDelayMs: () => 10,
     getHeartbeatIntervalMs: () => 10,
+    clearLLMSession() {},
     now: () => new Date("2026-05-24T01:00:00.000Z"),
     agentState: {
       canReplyToInbound: () => false,

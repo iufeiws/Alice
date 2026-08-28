@@ -117,7 +117,7 @@ test("mimo tts voiceclone sends chat completions audio voice data url", async ()
   const requests: Array<{ url: string; headers: Headers; body: any }> = [];
   const audio = Buffer.from("wav-bytes");
   const callEvents: any[] = [];
-  setOpenAICallObserver((event) => callEvents.push(event));
+  setOpenAICallObserver((event) => { callEvents.push(event); });
   const synthesize = createMimoTtsVoiceSynthesizer({
     enabled: true,
     translationEnabled: false,

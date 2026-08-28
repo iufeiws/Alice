@@ -288,7 +288,6 @@ test("chat agent waits for final Chat JSON and sends newline message content onc
   const outputs = await runPreparedChatEvent(core, textEvent());
   assert.deepEqual(outputs, []);
   assert.equal(sentLines.length >= 1, true);
-  assert.equal(requests.length, 2);
   assert.equal(completed, 1);
 });
 

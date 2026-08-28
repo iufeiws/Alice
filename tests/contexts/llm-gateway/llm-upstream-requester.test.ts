@@ -4,7 +4,7 @@ import { createOpenAIUpstreamRequester, setOpenAICallObserver } from "../../../s
 
 test("LLM upstream completion emits one normalized call event after the response is consumed", async () => {
   const events: any[] = [];
-  setOpenAICallObserver((event) => events.push(event));
+  setOpenAICallObserver((event) => { events.push(event); });
   try {
     const request = createOpenAIUpstreamRequester({
       baseURL: "https://upstream.example/v1",
@@ -42,7 +42,7 @@ test("LLM upstream completion emits one normalized call event after the response
 
 test("LLM upstream completion emits one call event for an SSE response", async () => {
   const events: any[] = [];
-  setOpenAICallObserver((event) => events.push(event));
+  setOpenAICallObserver((event) => { events.push(event); });
   try {
     const request = createOpenAIUpstreamRequester({
       baseURL: "https://stream.example/v1",
@@ -79,7 +79,7 @@ test("LLM upstream completion emits one call event for an SSE response", async (
 
 test("LLM upstream completion still emits a call event when the successful body has no usage payload", async () => {
   const events: any[] = [];
-  setOpenAICallObserver((event) => events.push(event));
+  setOpenAICallObserver((event) => { events.push(event); });
   try {
     const request = createOpenAIUpstreamRequester({
       baseURL: "https://provider-specific.example/v1",
@@ -105,7 +105,7 @@ test("LLM upstream completion still emits a call event when the successful body 
 
 test("LLM upstream completion normalizes input_tokens and output_tokens usage", async () => {
   const events: any[] = [];
-  setOpenAICallObserver((event) => events.push(event));
+  setOpenAICallObserver((event) => { events.push(event); });
   try {
     const request = createOpenAIUpstreamRequester({
       baseURL: "https://responses-style.example/v1",

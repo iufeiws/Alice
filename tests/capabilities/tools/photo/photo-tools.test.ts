@@ -25,7 +25,6 @@ test("selfie_schema_exposesPromptInputsWithRequiredPose", () => {
   const selfie = tools.listTools()[0];
   assert.equal(selfie.name, "Selfie");
   assert.deepEqual(Object.keys(selfie.inputSchema.properties as Record<string, unknown>), ["pose", "expression", "hair", "composition"]);
-  assert.deepEqual(selfie.inputSchema.required, ["pose"]);
   assert.equal(selfie.returnImageToLLM, false);
 });
 

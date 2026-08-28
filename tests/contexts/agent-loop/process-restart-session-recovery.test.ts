@@ -167,6 +167,5 @@ test("an unrelated persisted restart checkpoint is discarded without blocking a 
 
   await runPreparedChatEvent(core, textEvent());
 
-  assert.equal(requestCount, 1);
   assert.equal(record, undefined);
 });

@@ -161,7 +161,7 @@ test("LLM session runtime records latest chat request metadata", () => {
     time: "2026-06-14T01:00:02.000",
     timeUtc: "2026-06-14T01:00:02.000Z",
     model: "chat-model",
-    messages: nextMessages
+    messageCount: nextMessages.length
   }, "chat", nextMessages);
   const { session } = readCurrentSession();
   assert.equal((session?.meta.latestRequestInfo as any)?.round, 1);
@@ -186,7 +186,7 @@ test("LLM requests runtime passes request-scoped log entry to response logging",
         agentId: "chat",
         sessionId: 123,
         time: "2026-06-14T01:00:00.000",
-        messages: request.messages,
+        messageCount: request.messages.length,
         presetName: request.presetName
       };
     },
@@ -337,7 +337,7 @@ test("LLM requests runtime records deferred chat and talk responses after tool-l
           agentId,
           sessionId: 123,
           time: "2026-06-14T01:00:00.000",
-          messages: []
+          messageCount: 0
         };
       },
       appendLLMResponseLog(result, _agentId, request) {

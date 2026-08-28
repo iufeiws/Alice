@@ -9,7 +9,12 @@ test("outboundNotice_memoryFailure_usesConcreteErrorWithoutJsonOrTraceback", asy
     time: {
       timeZone: "Asia/Tokyo",
       now() {
-        return { iso: "2026-08-26T10:00:00.000", date: new Date("2026-08-26T01:00:00.000Z") };
+        const date = new Date("2026-08-26T01:00:00.000Z");
+        return { iso: "2026-08-26T10:00:00.000", date, epochMs: date.getTime(), timeZone: "Asia/Tokyo" };
+      },
+      addMs(ms, from) {
+        const date = new Date((from ?? new Date("2026-08-26T01:00:00.000Z")).getTime() + ms);
+        return { iso: "2026-08-26T10:00:00.000", date, epochMs: date.getTime(), timeZone: "Asia/Tokyo" };
       }
     },
     outputRouter: {

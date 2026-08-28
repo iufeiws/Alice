@@ -135,6 +135,7 @@ function chatRequest(id: number, messages: any[], overrides: Record<string, unkn
     time: "2026-06-14T01:00:00.000",
     timeUtc: "2026-06-14T01:00:00.000Z",
     model: "chat-model",
+    messageCount: messages.length,
     messages,
     ...overrides
   };

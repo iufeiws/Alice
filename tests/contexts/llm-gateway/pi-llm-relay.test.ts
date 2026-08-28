@@ -24,7 +24,7 @@ const preset: PiPresetSnapshot = {
 test("relay forwards Pi tools and relies on the shared upstream completion seam", async (t) => {
   const requests: RequestInit[] = [];
   const calls: any[] = [];
-  setOpenAICallObserver((event) => calls.push(event));
+  setOpenAICallObserver((event) => { calls.push(event); });
   t.after(() => setOpenAICallObserver(undefined));
   const relay = createPiLLMRelay({
     time,
@@ -108,7 +108,7 @@ test("relay applies the immutable preset sampling values", async () => {
 test("relay records a successful call centrally even when upstream omits token counts", async (t) => {
   let authorization: string | null | undefined;
   const calls: any[] = [];
-  setOpenAICallObserver((event) => calls.push(event));
+  setOpenAICallObserver((event) => { calls.push(event); });
   t.after(() => setOpenAICallObserver(undefined));
   const relay = createPiLLMRelay({
     time,
@@ -133,7 +133,7 @@ test("relay records a successful call centrally even when upstream omits token c
 
 test("relay preserves SSE while the shared upstream seam observes its completion", async (t) => {
   const calls: any[] = [];
-  setOpenAICallObserver((event) => calls.push(event));
+  setOpenAICallObserver((event) => { calls.push(event); });
   t.after(() => setOpenAICallObserver(undefined));
   const relay = createPiLLMRelay({
     time,

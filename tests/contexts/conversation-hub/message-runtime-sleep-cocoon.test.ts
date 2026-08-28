@@ -76,6 +76,7 @@ test("messageRuntime_sleepCocoonMorningHeartbeat_runsMorningEvent", async () => 
   const runtime = createMessageRuntime({
     getDelayMs: () => 0,
     getHeartbeatIntervalMs: () => 10,
+    clearLLMSession() {},
     getSleepCocoonMorningEvent: () => ({
       ...textEvent("session-1", "sleep_cocoon_morning", "morning"),
       type: "system.heartbeat",
@@ -136,6 +137,7 @@ test("messageRuntime_wakeTick_runsSleepCocoonMorningEvent", async () => {
     getDelayMs: () => 0,
     getHeartbeatIntervalMs: () => 10,
     startHeartbeatPaused: true,
+    clearLLMSession() {},
     now: () => current,
     agentState: controller,
     getSleepCocoonMorningEvent: () => {
@@ -172,6 +174,7 @@ test("messageRuntime_sleepCocoonGoodnightHeartbeat_runsGoodnightEvent", async ()
   const runtime = createMessageRuntime({
     getDelayMs: () => 0,
     getHeartbeatIntervalMs: () => 10,
+    clearLLMSession() {},
     getSleepCocoonGoodnightEvent: () => ({
       ...textEvent("session-1", "sleep_cocoon_goodnight", "goodnight"),
       type: "system.heartbeat",
@@ -207,6 +210,7 @@ test("messageRuntime_generatedGoodnightFailure_doesNotCountGoodnight", async () 
   const runtime = createMessageRuntime({
     getDelayMs: () => 0,
     getHeartbeatIntervalMs: () => 10,
+    clearLLMSession() {},
     getSleepCocoonGoodnightEvent: () => attempts === 0 ? {
       ...textEvent("session-1", "sleep_cocoon_goodnight", "goodnight"),
       type: "system.heartbeat",
@@ -243,6 +247,7 @@ test("messageRuntime_pendingUserMessages_skipsSleepCocoonGoodnight", async () =>
   const runtime = createMessageRuntime({
     getDelayMs: () => 60_000,
     getHeartbeatIntervalMs: () => 10,
+    clearLLMSession() {},
     now: () => new Date("2026-05-24T00:00:00.000Z"),
     getSleepCocoonGoodnightEvent: () => {
       if (!armed) return undefined;
@@ -299,6 +304,7 @@ test("messageRuntime_inboundProcessed_appliesDocumentedStateLanding", async () =
     const runtime = createMessageRuntime({
       getDelayMs: () => 0,
       startHeartbeatPaused: true,
+      clearLLMSession() {},
       agentState: controller,
       store,
       chatAgent: {
@@ -336,6 +342,7 @@ test("messageRuntime_pendingInboundBeforeIdleTick_skipsIdleNoMessageTransition",
   const runtime = createMessageRuntime({
     getDelayMs: () => 0,
     startHeartbeatPaused: true,
+    clearLLMSession() {},
     now: () => current,
     agentState: controller,
     store,
@@ -418,6 +425,7 @@ test("messageRuntime_goingToSleepInbound_keepsStateAndSuspendsSleep", async () =
   const runtime = createMessageRuntime({
     getDelayMs: () => 0,
     startHeartbeatPaused: true,
+    clearLLMSession() {},
     now: () => current,
     agentState: controller,
     store,

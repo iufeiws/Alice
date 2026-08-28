@@ -16,6 +16,7 @@ function createRuntime(input: { store: AliceStore; sent: AgentOutput[]; noteInbo
   const runtime = createMessageRuntime({
     getDelayMs: () => 60_000,
     getHeartbeatIntervalMs: () => 10_000,
+    clearLLMSession() {},
     store: input.store,
     chatAgent: {
       async prepareEventRun() {
@@ -119,6 +120,7 @@ test("pi completion send failure marks the both message send_failed without bloc
   const failing = createMessageRuntime({
     getDelayMs: () => 60_000,
     getHeartbeatIntervalMs: () => 10_000,
+    clearLLMSession() {},
     store,
     chatAgent: {
       async prepareEventRun() {

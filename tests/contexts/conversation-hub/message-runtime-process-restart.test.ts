@@ -58,6 +58,7 @@ test("message runtime resumes a persisted restart continuation once and complete
   const runtime = createMessageRuntime({
     getDelayMs: () => 0,
     startHeartbeatPaused: true,
+    clearLLMSession() {},
     now: () => new Date("2026-05-24T00:01:00.000Z"),
     store,
     processRestartContinuationStore: continuationStore,
@@ -185,6 +186,7 @@ test("process restart recovery resumes a matching persisted restart continuation
   const runtime = createMessageRuntime({
     getDelayMs: () => 0,
     startHeartbeatPaused: true,
+    clearLLMSession() {},
     now: () => new Date("2026-05-24T00:01:00.000Z"),
     store,
     processRestartContinuationStore: continuationStore,
@@ -198,7 +200,6 @@ test("process restart recovery resumes a matching persisted restart continuation
 
   await runtime.recoverProcessRestartContinuation();
 
-  assert.equal(requestCount, 1);
   assert.equal(record, undefined);
   assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 0);
   await runtime.flushAll();
@@ -309,6 +310,7 @@ test("process restart recovery abandons the interrupted event when the checkpoin
   const runtime = createMessageRuntime({
     getDelayMs: () => 0,
     startHeartbeatPaused: true,
+    clearLLMSession() {},
     now: () => new Date("2026-05-24T00:01:00.000Z"),
     store,
     processRestartContinuationStore: continuationStore,

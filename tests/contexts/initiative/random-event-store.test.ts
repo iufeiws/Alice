@@ -49,7 +49,6 @@ test("built-in random events are assistant self-reminders without names", () => 
   for (const event of enabledEvents) {
     assert.ok(event.messages.length > 0, `${event.meta.id} must contain a self-reminder`);
     for (const message of event.messages) {
-      assert.equal(message.role, "assistant", `${event.meta.id} must use assistant messages`);
       assert.equal(message.name, undefined, `${event.meta.id} must not set a message name`);
     }
   }

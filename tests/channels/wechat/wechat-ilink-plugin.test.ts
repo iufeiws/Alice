@@ -271,6 +271,7 @@ test("wechat inbound messages are persisted through message runtime logs", async
   const runtime = createMessageRuntime({
     getDelayMs: () => 60_000,
     getHeartbeatIntervalMs: () => 60_000,
+    clearLLMSession() {},
     store,
     chatAgent: {
       async prepareEventRun() {
@@ -325,6 +326,7 @@ test("wechat quoted inbound messages are visible in persisted chat context", asy
   const runtime = createMessageRuntime({
     getDelayMs: () => 60_000,
     getHeartbeatIntervalMs: () => 60_000,
+    clearLLMSession() {},
     store,
     chatAgent: {
       async prepareEventRun() {

@@ -77,10 +77,10 @@ src/
 | **talk-session** | WebRTC 语音 talk 会话。SQLite 适配器（`logs/talk/talk.sqlite`，talk_sessions/events/transcript/outputs）、`createTalkRuntime`（open/append/delta/interrupt/claim；`closeSession` 异步，经统一清除协调器，成功后按序：重写 Talk LLM transcript → 标记 LLM session cleared 并清 pointer → 关闭 talk.sqlite 会话 → conversation-hub 投影 → 切 waiting，采集失败时保持打开）、`createTalkRuntimeRuntime`（+ conversation-hub 投影，会话关闭转 inbound 消息） |
 | **conversation-hub** | 多渠道消息统一入口。`createMessageRuntime`（ingestEvent/ingestLifecycle/appendAlbertMessage/sendSystemNotice/processNow/flushAll）内部组装 agentLoopRuntime + heartbeat 全部任务；`canRunHeartbeat` 检查 Main Agent 占用（`isMainAgentBusy`），清除期间到达的消息只入库并标记 pending、不进入 loop，force_wake 先获取 clearing 占用再清除、成功后才唤醒；`sqlite-conversation-store` 为 Core 侧消息历史 |
 | **capabilities** | 插件 admin 运行时（asr/photo/tts/geo/image-recognition 等 admin-plugin-*）+ `tool-output-target.ts`（AgentOutput 投递目标解析器，产出 AgentOutput 的工具必须经此解析） |
-| **initiative** | Agent 主动行为。initiated-behavior 定义、触发评估、随机事件、admin 配置、JSON 存储 |
+| **initiative** | Agent 主动行为。initiated-behavior 定义、触发评估、随机事件、admin 配置、JSON 存储；`randomized` 行为 prompt 支持 `user` 与 `assistant` role |
 | **prompt-context** | Prompt 模板变量渲染运行时（统一使用 `${{variable}}`，user/时间/dailyShell/memory/calendar/skills/notes_list/outfit 变量树）。未解析变量 warning 后保留原占位符，不再抛错；旧式 `{{variable}}` 作为普通文本。Short Memory 变量 `memory/shortMemory/content`：必填依赖 `shortMemoryStore`，取最新 wake boundary 的 `occurredAtUtc` 前 24 小时至当前的闭区间记录，输出 `<short_memories>` XML（`& < >` 转义，空结果固定空 XML），是否加入 Prompt layer 完全由用户 Prompt 编辑器配置决定 |
 | **world-wanderer** | Google Street View 世界漫步空闲行为（移动 runtime、选路 policy、geo 计算）；选路优先近期未走过的有向 pano 边，当前出口的有向边全部耗尽时每次 idle 最多搜索一次附近可移动 pano，搜索失败则保留旧链接回退，因此兼容死路原路返回与小型 pano 环路脱困 |
-| **bash-sandbox** | Docker 沙箱 bash 执行（`createBashSandboxRuntime` + `createDockerBashExecutor`、命令权限分类）；`readSandboxNotesIndex` 通过既有容器路径→宿主挂载路径映射同步扫描笔记索引，返回容器路径供 prompt 变量动态构建，因此不依赖容器处于运行状态 |
+| **bash-sandbox** | Docker 沙箱 bash 执行（`createBashSandboxRuntime` + `createDockerBashExecutor`、命令权限分类）；配置挂载覆盖 `tmpDir` 时跳过同路径 `tmpfs`，使宿主绑定的临时目录可通过容器路径映射读取并发送；`readSandboxNotesIndex` 通过既有容器路径→宿主挂载路径映射同步扫描笔记索引，返回容器路径供 prompt 变量动态构建，因此不依赖容器处于运行状态 |
 | **pi-worker** | Pi worker 客户端（授权握手、后台唤起 wake、tool relay、健康轮询）；按 invocation 内最后一轮 assistant 终态判定 completed/failed，重试期间保留 running；SubAgent 对外使用持久化 nickname（来自 `runtime/pi-agent-names.txt`，空格替换为 `_`），映射写入 Pi session 根目录，池满时淘汰最早映射，worker 启动时清除 30 天前映射；内部 watcher 仍按真实 sessionId 读取状态；SubAgent 的 result/wait 返回完成 message 或运行/终态状态，messages 保留 access 语义并返回 Pi 原始 message；未显式传入 timeout 时，SubAgent invocation 默认 6 小时超时 |
 | **approval** | 基于飞书动态卡片的一对一审批服务（含卡片动作回调鉴权） |
 | **skills** | 技能注册表/加载器/占位符/资源路径 |
@@ -108,7 +108,7 @@ src/
 
 | 工具 | Tool 名 | 职责 |
 |---|---|---|
-| messaging | `Chat` | 查看聊天记录 / 发送消息（text/markdown/image/voice/file）；`today` 比较“睡眠茧时间点前最后 10 条消息”与“最后一条 Short Memory 写入时间前最后 10 条消息”的窗口起点并取较晚者，无睡眠茧时以今日锚点参与比较 |
+| messaging | `Chat` | 查看聊天记录 / 发送消息（text/markdown/image/voice/file）；`mapMarkdownLikeToMarkdown` 开启时，飞书纯文本消息包含 Markdown 特征或规范化后超过 3 行会自动转为 Markdown；`today` 比较“睡眠茧时间点前最后 10 条消息”与“最后一条 Short Memory 写入时间前最后 10 条消息”的窗口起点并取较晚者，无睡眠茧时以今日锚点参与比较 |
 | photo | `Selfie` | 自拍（pose 必填，expression、hair、composition 为可选参数；未提供时使用 Photo 配置 Main Prompt 分组的默认值，其中 expression/hair 分别自动加上“表情: ”/“发型: ”和换行，composition 默认使用“镜头距离为超近景, 一臂距离, 人物占画面80%以上”；四个 Selfie prompt 变量位于 `selfie` 父节点下；`returnImageToLLM` 默认关闭，开启后且模型支持图片时才回传图片附件；生成器实际产出的全部图片逐张发送、入库；失败后同一 agent loop 30 秒内阻止重试，超时自动允许；不再发送拍照中/失败系统通知） |
 | calendar | `calendar` | 日历增删查搜 + 上下文渲染（SQLite CalendarStore） |
 | shell | `Bash` | 沙盒 bash 执行（透传 PiWorker） |

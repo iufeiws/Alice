@@ -1,15 +1,16 @@
 import { describeError } from "../../../shared/errors/src/index.js";
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
+import { formatZonedIso } from "../../../platform/time/src/index.js";
 import type { ShortMemoryEntry, ShortMemoryStore, ShortMemoryTransaction } from "./short-memory-store.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
 
 export type ShortMemoryFile = {
-  read(): Promise<{
-    exists: boolean;
-    content: string;
-  }>;
+  read(): Promise<
+    | { exists: false; content: "" }
+    | { exists: true; content: string; modifiedAt: Date }
+  >;
   replace(content: string): Promise<void>;
 };
 
@@ -64,11 +65,10 @@ async function captureOnce(input: {
   let rolledBack = false;
   try {
     tx = input.store.beginWrite();
-    // createdAt 与 createdAtUtc 必须来自同一次 now()（§3.4）。
-    const now = input.time.now();
+    // 两个字段来自同一个文件修改时间 instant；运行环境时区不参与转换。
     const entry = tx.insert({
-      createdAt: now.iso,
-      createdAtUtc: now.date.toISOString(),
+      createdAt: formatZonedIso(file.modifiedAt, input.time.timeZone),
+      createdAtUtc: file.modifiedAt.toISOString(),
       content
     });
     try {
@@ -125,12 +125,19 @@ export function createHostShortMemoryFile(input: {
   }
   return {
     async read() {
+      let handle: Awaited<ReturnType<typeof fs.promises.open>>;
       try {
-        const content = await fs.promises.readFile(filePath, "utf8");
-        return { exists: true, content };
+        handle = await fs.promises.open(filePath, "r");
       } catch (error) {
         if (isNoSuchFileError(error)) return { exists: false, content: "" };
         throw error;
+      }
+      try {
+        const content = await handle.readFile("utf8");
+        const stats = await handle.stat();
+        return { exists: true, content, modifiedAt: stats.mtime };
+      } finally {
+        await handle.close();
       }
     },
     async replace(content) {

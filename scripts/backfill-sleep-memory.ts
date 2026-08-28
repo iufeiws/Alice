@@ -7,6 +7,7 @@ import { createPromptContextRuntime } from "../src/contexts/prompt-context/src/i
 import { createAliceStore } from "../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import { createCalendarStore } from "../src/platform/storage/src/calendar-store.js";
 import { createSkillRegistry } from "../src/contexts/skills/src/index.js";
+import { createShortMemoryStore } from "../src/contexts/memory/src/short-memory-store.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
@@ -19,6 +20,7 @@ const memoryStore = createMarkdownMemoryStore(config.memoryFiles.root);
 const promptStore = createMemoryInductionPromptStore(path.join(config.memoryFiles.root, "config", "memorize-prompts.json"));
 const stateStore = createSleepMemoryStateStore(path.join(config.memoryFiles.root, "state", "sleep-memory-state.json"));
 const calendarStore = createCalendarStore(path.join(config.memoryFiles.root, "alice.sqlite"));
+const shortMemoryStore = createShortMemoryStore(path.join(config.memoryFiles.root, "alice.sqlite"));
 const skillsDirPath = config.bashSandbox.skillsDir;
 const skillsRegistry = createSkillRegistry({
   roots: [
@@ -34,6 +36,7 @@ const promptContextRuntime = createPromptContextRuntime({
   memoryStore,
   diaryStore: createDiaryStore(path.join(config.memoryFiles.root, "alice.sqlite")),
   calendarStore,
+  shortMemoryStore,
   skillsRegistry,
   skillsDirPath
 });

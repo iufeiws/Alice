@@ -35,9 +35,10 @@ function workerWith(file: ShortMemoryFile, store: ShortMemoryStore, time: Curren
 }
 
 /** 可注入 read/replace 失败、记录 replace 参数与读取次数的 fake file port */
-function makeFakeFile(initial: { exists: boolean; content: string }) {
+function makeFakeFile(initial: { exists: boolean; content: string; modifiedAt?: Date }) {
   let content = initial.content;
   let exists = initial.exists;
+  const modifiedAt = initial.modifiedAt ?? new Date(FIXED_UTC);
   let reads = 0;
   const replaceLog: string[] = [];
   const readFailures: Array<Error | null> = [];
@@ -47,7 +48,9 @@ function makeFakeFile(initial: { exists: boolean; content: string }) {
       reads += 1;
       const failure = readFailures.shift();
       if (failure) throw failure;
-      return { exists, content };
+      return exists
+        ? { exists: true, content, modifiedAt }
+        : { exists: false, content: "" };
     },
     async replace(next: string) {
       const failure = replaceFailures.shift();
@@ -361,7 +364,7 @@ test("captureBeforeSessionClear runs strictly serially under concurrent requests
   const file: ShortMemoryFile = {
     async read() {
       events.push("read");
-      return { exists: true, content };
+      return { exists: true, content, modifiedAt: new Date(FIXED_UTC) };
     },
     async replace(next: string) {
       events.push("replace");
@@ -399,13 +402,15 @@ test("host file maps the container path to hostWorkspaceDir and stays inside it"
   const hostPath = path.resolve(hostWorkspaceDir, ".short_memory");
   const file = createHostShortMemoryFile({ hostWorkspaceDir });
   await file.replace("memo\n");
+  const expectedModifiedAt = new Date("2026-08-13T23:45:00.000Z");
+  fs.utimesSync(hostPath, expectedModifiedAt, expectedModifiedAt);
   assert.equal(fs.readFileSync(hostPath, "utf8"), "memo\n", "必须写入 hostWorkspaceDir 下的映射路径");
   // 挂载对应：容器路径相对 workspaceDir 的偏移在宿主下解析到同一文件
   const containerRelative = path.posix.relative(workspaceDir, containerPath);
   assert.equal(containerRelative, ".short_memory");
   assert.equal(path.resolve(hostWorkspaceDir, containerRelative), hostPath);
   const read = await file.read();
-  assert.deepEqual(read, { exists: true, content: "memo\n" });
+  assert.deepEqual(read, { exists: true, content: "memo\n", modifiedAt: expectedModifiedAt });
   // 校验解析结果仍位于 hostWorkspaceDir 内
   const relative = path.relative(hostWorkspaceDir, hostPath);
   assert.ok(
@@ -414,16 +419,14 @@ test("host file maps the container path to hostWorkspaceDir and stays inside it"
   );
 });
 
-// §12.2-15 本地时间与 UTC 时间只取一次当前 instant，并按配置时区正确转换
-// 参照 messages.created_at / created_at_utc 现有双字段约定：
-// createdAt = time.now().iso（配置时区 wall-clock，无 Z 无 offset），createdAtUtc = time.now().date.toISOString()（UTC Z）
-test("captureBeforeSessionClear takes one instant and stores UTC plus configured-timezone wall clock", async () => {
+// §12.2-15 文件修改时间按同一 instant 保存为 UTC 与配置时区 wall-clock，不读取入库当前时间。
+test("captureBeforeSessionClear stores file mtime as UTC plus configured-timezone wall clock", async () => {
   const root = makeTempDir("worker-time");
   const store = createShortMemoryStore(path.join(root, "alice.sqlite"));
-  const fake = makeFakeFile({ exists: true, content: "时间一致性" });
-  const at = new Date("2026-08-13T23:45:00.000Z"); // 跨日 instant：新加坡为 08-14 早上
+  const modifiedAt = new Date("2026-08-13T23:45:00.000Z"); // 跨日 instant：新加坡为 08-14 早上
+  const fake = makeFakeFile({ exists: true, content: "时间一致性", modifiedAt });
   let calls = 0;
-  const base = createCurrentTimeProvider("Asia/Singapore", () => at);
+  const base = createCurrentTimeProvider("Asia/Singapore", () => new Date("2026-08-20T00:00:00.000Z"));
   const time: CurrentTimeProvider = {
     get timeZone() {
       return base.timeZone;
@@ -438,12 +441,12 @@ test("captureBeforeSessionClear takes one instant and stores UTC plus configured
   };
   const worker = createShortMemoryWorker({ file: fake.file, store, time });
   const result = await worker.captureBeforeSessionClear();
-  assert.equal(calls, 1, "created_at 与 created_at_utc 必须来自同一次 now()");
+  assert.equal(calls, 0, "Short Memory 时间不得使用入库当前时间");
   assert.equal(result.captured, true);
   if (result.captured) {
     assert.equal(result.entry.createdAtUtc, "2026-08-13T23:45:00.000Z", "created_at_utc 必须是 UTC Z");
     assert.equal(result.entry.createdAt, "2026-08-14T07:45:00.000", "created_at 必须是配置时区 wall-clock（无 Z 无 offset）");
-    assert.equal(result.entry.createdAt, formatZonedIso(at, "Asia/Singapore"), "必须与项目时间提供器转换结果一致");
+    assert.equal(result.entry.createdAt, formatZonedIso(modifiedAt, "Asia/Singapore"), "必须使用项目时区转换文件 mtime");
   }
   const stored = store.listLatest(10)[0];
   assert.equal(stored.createdAtUtc, "2026-08-13T23:45:00.000Z");

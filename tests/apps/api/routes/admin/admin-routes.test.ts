@@ -480,7 +480,7 @@ test("initiated behavior config patch accepts system messages", async () => {
   });
 });
 
-test("randomized behavior config rejects non-assistant and named messages", async () => {
+test("randomized behavior config accepts user messages and rejects named messages", async () => {
   const root = makeTempDir("admin-random-event-self-reminder");
   const memoryStore = createMarkdownMemoryStore(root);
   const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
@@ -506,8 +506,8 @@ test("randomized behavior config rejects non-assistant and named messages", asyn
     }
   }), namedResponse);
 
-  assert.equal(userResponse.statusCode, 400);
-  assert.equal(JSON.parse(userResponse.body).error, "random_event_message_role_assistant_required");
+  assert.equal(userResponse.statusCode, 200);
+  assert.equal(JSON.parse(userResponse.body).ok, true);
   assert.equal(namedResponse.statusCode, 400);
   assert.equal(JSON.parse(namedResponse.body).error, "random_event_message_name_forbidden");
 });

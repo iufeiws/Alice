@@ -5,7 +5,7 @@ const fs = await import("node:fs");
 const path = await import("node:path");
 
 export type AgentRandomEventMessage = Omit<PromptMessage, "role" | "name"> & {
-  role: "assistant";
+  role: "assistant" | "user";
   name?: never;
 };
 
@@ -135,7 +135,7 @@ function validateStoredMessages(messages: unknown[]): void {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid_random_event_message");
     const message = value as Record<string, unknown>;
     if (!message.meta || typeof message.meta !== "object" || Array.isArray(message.meta)) throw new Error("random_event_message_meta_object_required");
-    if (message.role !== "assistant") throw new Error("invalid_random_event_message_role");
+    if (message.role !== "assistant" && message.role !== "user") throw new Error("invalid_random_event_message_role");
     if (Object.prototype.hasOwnProperty.call(message, "name")) throw new Error("random_event_message_name_forbidden");
     if (message.toolCalls === undefined) continue;
     if (!Array.isArray(message.toolCalls)) throw new Error("invalid_random_event_tool_calls");

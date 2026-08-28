@@ -164,7 +164,7 @@ export function renderInitiatedBehaviorsScript(): string {
         const randomized = $("behaviorConfigType").value === "randomized";
         $("behaviorPromptLayerList").innerHTML = renderLayerDocument(behaviorConfigLayerDocument, {
           editorId: "behavior",
-          roles: randomized ? ["assistant"] : ["user", "assistant", "tool"],
+          roles: randomized ? ["user", "assistant"] : ["user", "assistant", "tool"],
           showName: !randomized
         }) || '<p class="muted">No prompt messages yet.</p>';
         bindLayerDocument(behaviorConfigLayerDocument, {

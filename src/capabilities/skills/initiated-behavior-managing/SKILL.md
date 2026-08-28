@@ -37,6 +37,7 @@ Alice的主动行为本质为一段llm提示词, 这些提示词为JSON格式, �
 ```
 
 - 文件名必须是 `<id>.json`，ID 只能包含字母、数字、下划线和连字符
+- `role` 允许使用 `user` 或 `assistant`
 - `weight` 与 `priority` 必须是有限数字。影响着Alice使用发起该行为的概率
 - `messages` 为llm loop发起时拼接的信息, 即提示词的主体
 - 提示词支持工具，每个调用必须持久化非空 `id`：

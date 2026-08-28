@@ -129,7 +129,9 @@ function validateAdminPromptLayer(value: unknown): asserts value is AgentInitiat
 
 function validateRandomEventMessages(profile: AgentInitiatedBehaviorPromptProfile): void {
   for (const message of profile.messages) {
-    if (message.role !== "assistant") throw new HttpJsonError(400, "random_event_message_role_assistant_required");
+    if (message.role !== "assistant" && message.role !== "user") {
+      throw new HttpJsonError(400, "random_event_message_role_user_or_assistant_required");
+    }
     if (Object.prototype.hasOwnProperty.call(message, "name")) throw new HttpJsonError(400, "random_event_message_name_forbidden");
   }
 }

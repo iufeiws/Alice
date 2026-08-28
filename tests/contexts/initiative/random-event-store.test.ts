@@ -30,7 +30,7 @@ test("random event store rejects invalid definitions and symbolic links", () => 
   const store = createJsonRandomEventStore(root);
   assert.throws(() => store.save(definition("../escape")), /invalid_random_event_id/);
   assert.throws(() => store.save({ ...definition("bad"), meta: { ...definition("bad").meta, weight: Number.NaN } }), /weight/);
-  assert.throws(() => store.save({ ...definition("bad"), messages: [{ ...definition("x").messages[0], role: "user" as any }] }), /message_role/);
+  assert.equal(store.save({ ...definition("user_message"), messages: [{ ...definition("x").messages[0], role: "user" as const }] }).messages[0].role, "user");
   assert.throws(() => store.save({ ...definition("bad"), messages: [{ ...definition("x").messages[0], name: "Alice" }] } as any), /message_name/);
   assert.throws(() => store.save({ ...definition("bad"), messages: [{ ...definition("x").messages[0], role: "tool_request" as any }] }), /message_role/);
   assert.throws(() => store.save({ ...definition("bad"), messages: [{ ...definition("x").messages[0], role: "assistant", toolCalls: [{ id: "", type: "function", function: { name: "Chat", arguments: "{}" } }] }] }), /tool_call/);

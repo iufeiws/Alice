@@ -5,6 +5,8 @@ import type { WeChatConfig } from "../../../channels/wechat/src/types.js";
 import { parseBashSandboxMounts, validateBashSandboxConfig, type BashSandboxConfig, type BashSandboxMountConfig } from "../../../contexts/bash-sandbox/src/index.js";
 import { readPiWorkerConfig, type PiWorkerConfig } from "../../../contexts/pi-worker/src/index.js";
 
+const childProcess = await import("node:child_process");
+const fs = await import("node:fs");
 const path = await import("node:path");
 
 export type LLMConfig = {
@@ -378,17 +380,110 @@ function withDefaultMounts(mounts: BashSandboxMountConfig[], installedSkillsRoot
     containerPath: path.posix.dirname(skillsDir),
     readOnly: false
   };
-  const codebaseMounts: BashSandboxMountConfig[] = [
-    { id: "codebase_src", hostPath: "src", containerPath: `${workspaceRoot}/codebase/src`, readOnly: false },
-    { id: "codebase_memory_files", hostPath: "memory-files", containerPath: `${workspaceRoot}/codebase/memory-files`, readOnly: false },
-    { id: "codebase_tests", hostPath: "tests", containerPath: `${workspaceRoot}/codebase/tests`, readOnly: false },
-    { id: "codebase_scripts", hostPath: "scripts", containerPath: `${workspaceRoot}/codebase/scripts`, readOnly: false },
-    { id: "codebase_docs", hostPath: "docs", containerPath: `${workspaceRoot}/codebase/docs`, readOnly: false }
-  ];
+  const codebaseMounts = createCodebaseMounts(path.posix.join(workspaceRoot, "codebase"));
   const defaultContainerPaths = new Set([agentMount, ...codebaseMounts].map((mount) => mount.containerPath));
   const optional = mounts.filter((mount) => !defaultContainerPaths.has(mount.containerPath));
   if (!mounts.some((mount) => mount.containerPath === "/assets")) {
     optional.unshift({ id: "assets", hostPath: "assets", containerPath: "/assets", readOnly: true });
   }
   return [agentMount, ...codebaseMounts, ...optional];
+}
+
+function createCodebaseMounts(containerRoot: string): BashSandboxMountConfig[] {
+  const repositoryRoot = gitRepositoryRoot();
+  const memoryFilesRoot = path.resolve(repositoryRoot, "memory-files");
+  const visiblePaths = gitVisibleFiles(repositoryRoot).filter((relativePath) => relativePath !== ".gitignore" && !isMemoryFilesPath(relativePath));
+  const ignoredPaths = gitIgnoredPaths(repositoryRoot);
+  const mounts = createMinimalVisibleMounts({ repositoryRoot, containerRoot, visiblePaths, ignoredPaths });
+  if (fs.existsSync(memoryFilesRoot)) {
+    mounts.push({
+      id: "codebase_memory_files",
+      hostPath: memoryFilesRoot,
+      containerPath: path.posix.join(containerRoot, "memory-files"),
+      readOnly: false
+    });
+  }
+  return mounts;
+}
+
+function createMinimalVisibleMounts(input: {
+  repositoryRoot: string;
+  containerRoot: string;
+  visiblePaths: string[];
+  ignoredPaths: string[];
+}): BashSandboxMountConfig[] {
+  const mounts: BashSandboxMountConfig[] = [];
+  visit("");
+  return mounts;
+
+  function visit(relativeDirectory: string): void {
+    const childNames = new Set<string>();
+    const prefix = relativeDirectory ? `${relativeDirectory}/` : "";
+    for (const visiblePath of input.visiblePaths) {
+      if (!visiblePath.startsWith(prefix)) continue;
+      const remainder = visiblePath.slice(prefix.length);
+      const childName = remainder.split("/", 1)[0];
+      if (childName) childNames.add(childName);
+    }
+    for (const childName of [...childNames].sort()) {
+      const relativePath = prefix + childName;
+      const hostPath = path.resolve(input.repositoryRoot, relativePath);
+      if (!fs.existsSync(hostPath)) continue;
+      const isDirectory = fs.statSync(hostPath).isDirectory();
+      if (isDirectory && hasIgnoredDescendant(relativePath, input.ignoredPaths)) {
+        visit(relativePath);
+        continue;
+      }
+      mounts.push({
+        id: `codebase_${isDirectory ? "dir" : "file"}:${relativePath}`,
+        hostPath,
+        containerPath: path.posix.join(input.containerRoot, relativePath),
+        readOnly: false
+      });
+    }
+  }
+}
+
+function gitRepositoryRoot(): string {
+  const result = childProcess.spawnSync("git", ["rev-parse", "--show-toplevel"], {
+    cwd: process.cwd(),
+    encoding: "utf8"
+  });
+  if (result.status !== 0) {
+    throw new Error(result.stderr?.toString() || result.error?.message || "failed to resolve git repository root");
+  }
+  const root = result.stdout?.toString().trim();
+  if (!root) throw new Error("git repository root is empty");
+  return path.resolve(root);
+}
+
+function gitVisibleFiles(repositoryRoot: string): string[] {
+  const result = childProcess.spawnSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
+    cwd: repositoryRoot,
+    encoding: "buffer"
+  });
+  if (result.status !== 0) {
+    throw new Error(result.stderr?.toString() || result.error?.message || "failed to list git-visible files");
+  }
+  return result.stdout?.toString("utf8").split("\0").filter(Boolean) ?? [];
+}
+
+function gitIgnoredPaths(repositoryRoot: string): string[] {
+  const result = childProcess.spawnSync("git", ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"], {
+    cwd: repositoryRoot,
+    encoding: "buffer"
+  });
+  if (result.status !== 0) {
+    throw new Error(result.stderr?.toString() || result.error?.message || "failed to list git-ignored paths");
+  }
+  return result.stdout?.toString("utf8").split("\0").filter(Boolean).map((entry) => entry.replace(/\/$/, "")) ?? [];
+}
+
+function hasIgnoredDescendant(relativePath: string, ignoredPaths: string[]): boolean {
+  const prefix = `${relativePath}/`;
+  return ignoredPaths.some((ignoredPath) => ignoredPath === relativePath || ignoredPath.startsWith(prefix));
+}
+
+function isMemoryFilesPath(relativePath: string): boolean {
+  return relativePath === "memory-files" || relativePath.startsWith("memory-files/");
 }

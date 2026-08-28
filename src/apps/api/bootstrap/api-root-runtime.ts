@@ -14,7 +14,7 @@ import { createHostShortMemoryFile, createShortMemoryWorker } from "../../../con
 import { createPiLLMRelay, type PiRelayCapability } from "../../../contexts/llm-gateway/src/pi-llm-relay.js";
 import { createPiPresetSnapshot } from "../../../contexts/llm-gateway/src/pi-preset-adapter.js";
 import { createPiWorkerRuntime, createPiWorkerHttpClient, type PiWorkerHealth } from "../../../contexts/pi-worker/src/index.js";
-import { ensureDockerSandboxContainer } from "../../../contexts/bash-sandbox/src/index.js";
+import { ensureDockerPiWorkerProcess, ensureDockerSandboxContainer, stopDockerSandboxContainer } from "../../../contexts/bash-sandbox/src/index.js";
 const path = await import("node:path");
 const crypto = await import("node:crypto");
 
@@ -211,11 +211,15 @@ export function createApiRootRuntime() {
     appendMessageLog: foundation.appendMessageLog,
     processRestartContinuationStore,
     piRelay,
-    piWorkerRuntime
+    piWorkerRuntime,
+    stopSandboxContainer: () => stopDockerSandboxContainer(foundation.config.bashSandbox)
   });
 
   return {
-    start: () => apiServerStackRuntime.start()
+    async start() {
+      await ensureDockerSandboxContainer(foundation.config.bashSandbox);
+      await apiServerStackRuntime.start();
+    }
   };
 
   function piPresetSnapshot() {
@@ -260,7 +264,7 @@ export function createApiRootRuntime() {
       && credentialCurrent
       && relayGrantedAt
       && Date.now() - relayGrantedAt < PI_RELAY_AUTHORIZATION_TTL_MS) return;
-    await ensureDockerSandboxContainer(foundation.config.bashSandbox);
+    await ensureDockerPiWorkerProcess(foundation.config.bashSandbox);
     const relayHostname = foundation.config.bashSandbox.piWorker?.relayHostname ?? "172.17.0.1";
     await piWorkerClient.configure({
       relayUrl: `http://${relayHostname}:${foundation.config.piWorkerConfig.relayPort}/v1`,

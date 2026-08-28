@@ -12,11 +12,19 @@ const WRAPPER_CONTAINER_DIR = "/sandbox/bin";
 const WRAPPER_HOST_DIR = path.resolve("src/contexts/bash-sandbox/wrappers");
 const PI_WORKER_RUNTIME_CONTAINER_DIR = "/sandbox/pi-worker";
 const PI_WORKER_RUNTIME_HOST_DIR = path.resolve("src/contexts/pi-worker/runtime");
-// v2: worker 以 --no-use-env-proxy 启动, 直连宿主 relay, 避免容器内
+// v3: sandbox 容器始终以 sleep 作为常驻进程, Pi worker 由独立的懒启动入口拉起。
+// worker 以 --no-use-env-proxy 启动, 直连宿主 relay, 避免容器内
 // HTTP_PROXY(host.docker.internal:7890 -> mihomo) 劫持 host↔容器本地流量。
-const PI_WORKER_CONTAINER_REVISION = "pi-worker-runtime-v2";
+const PI_WORKER_CONTAINER_REVISION = "pi-worker-runtime-v3";
 const ALICE_CONTAINER_USER_REVISION = "alice-user-v1";
+const SANDBOX_LAYOUT_REVISION = "mount-cleanup-state-v1";
 const CONTAINER_MOUNT_KEY_LABEL = "com.alice.sandbox.mount-key";
+
+type MountCleanupState = {
+  mountKey: string;
+  containerId?: string;
+  state: "clean" | "dirty";
+};
 
 export type DockerExecutorResult = {
   stdout: string;
@@ -44,6 +52,39 @@ export type DockerExecutor = {
 
 export async function ensureDockerSandboxContainer(config: BashSandboxConfig): Promise<void> {
   await ensureContainer(config);
+}
+
+export async function stopDockerSandboxContainer(config: BashSandboxConfig): Promise<void> {
+  const nextMountKey = mountKeyDigest(config);
+  const inspect = await inspectContainer(config);
+  if (!inspect) {
+    await cleanupStaleCodebaseMountPointsWithOwnershipRepair(config);
+    writeMountCleanupState(config, { mountKey: nextMountKey, state: "clean" });
+    return;
+  }
+  if (inspect.running) {
+    const stop = await execFile("docker", ["stop", config.containerName], 30_000, 4096);
+    if (stop.exitCode !== 0) throw new Error(stop.stderr || "failed to stop bash sandbox container");
+  }
+  await cleanupStaleCodebaseMountPointsWithOwnershipRepair(config);
+  writeMountCleanupState(config, { mountKey: nextMountKey, containerId: inspect.containerId, state: "clean" });
+}
+
+export async function ensureDockerPiWorkerProcess(config: BashSandboxConfig): Promise<void> {
+  if (!config.piWorker?.enabled) throw new Error("pi worker is not enabled for the sandbox container");
+  const stateDir = `${config.tmpDir.replace(/\/+$/, "") || "/tmp"}/alice-pi-worker`;
+  const script = [
+    "set -eu",
+    "mkdir -p \"$1\"",
+    "if test -s \"$1/worker.pid\" && kill -0 \"$(cat \"$1/worker.pid\")\" 2>/dev/null; then exit 0; fi",
+    "if mkdir \"$1/starting\" 2>/dev/null; then",
+    "  trap 'rmdir \"$1/starting\"' EXIT",
+    "  nohup sh -lc 'export NODE_PATH=\"$(npm root -g)\"; exec node --no-use-env-proxy /sandbox/pi-worker/worker.mjs' >\"$1/worker.log\" 2>&1 &",
+    "  echo $! >\"$1/worker.pid\"",
+    "fi"
+  ].join("\n");
+  const result = await execFile("docker", ["exec", config.containerName, "sh", "-c", script, "alice-pi-worker-launch", stateDir], 10_000, 4096);
+  if (result.exitCode !== 0) throw new Error(result.stderr || "failed to start pi worker in sandbox container");
 }
 
 export async function recreateDockerSandboxContainer(config: BashSandboxConfig): Promise<void> {
@@ -147,22 +188,41 @@ async function ensureContainer(config: BashSandboxConfig): Promise<string> {
   const agentMount = config.mounts.find((mount) => mount.id === "agent");
   if (agentMount) fs.mkdirSync(agentMount.hostPath, { recursive: true });
   const nextMountKey = containerMountKey(config);
-  const inspect = await execFile("docker", ["inspect", "-f", `{{.State.Running}}|{{index .Config.Labels "${CONTAINER_MOUNT_KEY_LABEL}"}}`, config.containerName], 10_000, 4096);
-  const [running, savedMountKey] = inspect.stdout.trim().split("|");
-  const matchesMountKey = savedMountKey === mountKeyDigest(config);
-  if (inspect.exitCode === 0 && running === "true" && matchesMountKey) return nextMountKey;
-  if (inspect.exitCode === 0) {
-    if (matchesMountKey) {
-      const start = await execFile("docker", ["start", config.containerName], 10_000, 4096);
-      if (start.exitCode !== 0) throw new Error(start.stderr || "failed to start bash sandbox container");
-      return nextMountKey;
-    }
+  const nextMountKeyDigest = mountKeyDigest(config);
+  const inspect = await inspectContainer(config);
+  const matchesMountKey = inspect?.savedMountKey === nextMountKeyDigest;
+  if (inspect?.running && matchesMountKey) {
+    writeMountCleanupState(config, { mountKey: nextMountKeyDigest, containerId: inspect.containerId, state: "dirty" });
+    return nextMountKey;
+  }
+  if (inspect?.running) {
     const remove = await execFile("docker", ["rm", "-f", config.containerName], 10_000, 4096);
     if (remove.exitCode !== 0) throw new Error(remove.stderr || "failed to recreate bash sandbox container");
+    await cleanupBeforeContainerStart(config, nextMountKeyDigest, inspect.containerId);
+  } else {
+    await cleanupBeforeContainerStart(config, nextMountKeyDigest, inspect?.containerId);
+    if (inspect) {
+      if (matchesMountKey) {
+        const start = await execFile("docker", ["start", config.containerName], 10_000, 4096);
+        if (start.exitCode !== 0) throw new Error(start.stderr || "failed to start bash sandbox container");
+        writeMountCleanupState(config, { mountKey: nextMountKeyDigest, containerId: inspect.containerId, state: "dirty" });
+        return nextMountKey;
+      }
+      const remove = await execFile("docker", ["rm", "-f", config.containerName], 10_000, 4096);
+      if (remove.exitCode !== 0) throw new Error(remove.stderr || "failed to recreate bash sandbox container");
+    }
   }
   const create = await execFile("docker", createContainerArgs(config, image), 30_000, 8192);
   if (create.exitCode !== 0) throw new Error(create.stderr || "failed to create bash sandbox container");
+  writeMountCleanupState(config, { mountKey: nextMountKeyDigest, containerId: create.stdout.trim() || undefined, state: "dirty" });
   return nextMountKey;
+}
+
+async function inspectContainer(config: BashSandboxConfig): Promise<{ running: boolean; savedMountKey: string; containerId?: string } | undefined> {
+  const inspect = await execFile("docker", ["inspect", "-f", `{{.State.Running}}|{{index .Config.Labels "${CONTAINER_MOUNT_KEY_LABEL}"}}|{{.Id}}`, config.containerName], 10_000, 4096);
+  if (inspect.exitCode !== 0) return undefined;
+  const [running, savedMountKey, containerId] = inspect.stdout.trim().split("|");
+  return { running: running === "true", savedMountKey, containerId: containerId || undefined };
 }
 
 async function ensureSandboxImage(config: BashSandboxConfig): Promise<string> {
@@ -243,16 +303,7 @@ function createContainerArgs(config: BashSandboxConfig, image: string): string[]
   }
   for (const mount of config.mounts) args.push("-v", `${mount.hostPath}:${mount.containerPath}:${mount.readOnly ? "ro" : "rw"}`);
   for (const mount of config.skillMounts) args.push("-v", `${mount.hostPath}:${mount.containerPath}:${mount.readOnly ? "ro" : "rw"}`);
-  if (config.piWorker?.enabled) {
-    args.push(
-      image,
-      "sh",
-      "-lc",
-      "export NODE_PATH=\"$(npm root -g)\"; exec node --no-use-env-proxy /sandbox/pi-worker/worker.mjs"
-    );
-  } else {
-    args.push(image, "sleep", "infinity");
-  }
+  args.push(image, "sleep", "infinity");
   return args;
 }
 
@@ -301,12 +352,105 @@ function formatTruncatedStream(stream: "stdout" | "stderr", filePath: string, by
 
 function containerMountKey(config: BashSandboxConfig): string {
   return JSON.stringify({
+    layoutRevision: SANDBOX_LAYOUT_REVISION,
     image: config.image,
     skills: config.skillMounts.map((mount) => [mount.hostPath, mount.containerPath, mount.readOnly]),
     mounts: config.mounts.map((mount) => [mount.hostPath, mount.containerPath, mount.readOnly]),
     wrappers: fs.existsSync(WRAPPER_HOST_DIR) ? WRAPPER_HOST_DIR : undefined,
     piWorker: config.piWorker ? [PI_WORKER_CONTAINER_REVISION, config.piWorker.hostDir, config.piWorker.containerDir, config.piWorker.port, config.piWorker.maxConcurrency, config.piWorker.maxQueueSize, config.piWorker.taskTimeoutSeconds, config.piWorker.timezone, fs.existsSync(PI_WORKER_RUNTIME_HOST_DIR) ? PI_WORKER_RUNTIME_HOST_DIR : undefined] : undefined
   });
+}
+
+function cleanupStaleCodebaseMountPoints(config: BashSandboxConfig): void {
+  const containerCodebaseRoot = path.posix.join(config.workspaceDir.replace(/\/+$/, ""), "codebase");
+  const hostCodebaseRoot = path.join(config.hostWorkspaceDir, "codebase");
+  if (!fs.existsSync(hostCodebaseRoot)) return;
+  const retainedContainerPaths = new Set<string>([containerCodebaseRoot]);
+  for (const mount of [...config.mounts, ...config.skillMounts]) {
+    if (mount.containerPath !== containerCodebaseRoot && !mount.containerPath.startsWith(`${containerCodebaseRoot}/`)) continue;
+    let current = mount.containerPath;
+    for (;;) {
+      retainedContainerPaths.add(current);
+      if (current === containerCodebaseRoot) break;
+      current = path.posix.dirname(current);
+    }
+  }
+  visit(hostCodebaseRoot, containerCodebaseRoot);
+
+  function visit(hostPath: string, containerPath: string): void {
+    const stat = fs.lstatSync(hostPath);
+    if (stat.isSymbolicLink()) return;
+    if (!stat.isDirectory()) {
+      if (stat.isFile() && stat.size === 0 && !retainedContainerPaths.has(containerPath)) fs.unlinkSync(hostPath);
+      return;
+    }
+    for (const entry of fs.readdirSync(hostPath)) {
+      visit(path.join(hostPath, entry), path.posix.join(containerPath, entry));
+    }
+    if (hostPath !== hostCodebaseRoot && !retainedContainerPaths.has(containerPath) && fs.readdirSync(hostPath).length === 0) {
+      fs.rmdirSync(hostPath);
+    }
+  }
+}
+
+async function cleanupBeforeContainerStart(config: BashSandboxConfig, mountKey: string, containerId?: string): Promise<void> {
+  const state = readMountCleanupState(config);
+  if (state?.state === "clean" && state.mountKey === mountKey && state.containerId === containerId) return;
+  await cleanupStaleCodebaseMountPointsWithOwnershipRepair(config);
+  writeMountCleanupState(config, { mountKey, containerId, state: "clean" });
+}
+
+async function cleanupStaleCodebaseMountPointsWithOwnershipRepair(config: BashSandboxConfig): Promise<void> {
+  try {
+    cleanupStaleCodebaseMountPoints(config);
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? (error as { code?: unknown }).code : undefined;
+    if (code !== "EACCES" && code !== "EPERM") throw error;
+    await repairCodebaseMountPointOwnership(config);
+    cleanupStaleCodebaseMountPoints(config);
+  }
+}
+
+async function repairCodebaseMountPointOwnership(config: BashSandboxConfig): Promise<void> {
+  const hostCodebaseRoot = path.join(config.hostWorkspaceDir, "codebase");
+  if (!fs.existsSync(hostCodebaseRoot)) return;
+  const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
+  const gid = typeof process.getgid === "function" ? process.getgid() : undefined;
+  if (uid === undefined || gid === undefined) throw new Error("cannot repair sandbox mount point ownership without host uid/gid");
+  const result = await execFile("docker", [
+    "run", "--rm", "--network", "none", "--user", "0",
+    "-v", `${config.hostWorkspaceDir}:/workspace:rw`,
+    aliceUserImageName(config.image),
+    "chown", "-hR", `${uid}:${gid}`, "/workspace/codebase"
+  ], 30_000, 4096);
+  if (result.exitCode !== 0) throw new Error(result.stderr || "failed to repair sandbox codebase mount point ownership");
+}
+
+function mountCleanupStatePath(config: BashSandboxConfig): string {
+  return path.join(path.dirname(config.hostWorkspaceDir), `${path.basename(config.hostWorkspaceDir)}.codebase-mount-cleanup.json`);
+}
+
+function readMountCleanupState(config: BashSandboxConfig): MountCleanupState | undefined {
+  const statePath = mountCleanupStatePath(config);
+  if (!fs.existsSync(statePath)) return undefined;
+  try {
+    const value = JSON.parse(fs.readFileSync(statePath, "utf8")) as Partial<MountCleanupState>;
+    if ((value.state !== "clean" && value.state !== "dirty") || typeof value.mountKey !== "string") return undefined;
+    if (value.containerId !== undefined && typeof value.containerId !== "string") return undefined;
+    return { mountKey: value.mountKey, containerId: value.containerId, state: value.state };
+  } catch {
+    return undefined;
+  }
+}
+
+function writeMountCleanupState(config: BashSandboxConfig, state: MountCleanupState): void {
+  const statePath = mountCleanupStatePath(config);
+  const current = readMountCleanupState(config);
+  if (current?.mountKey === state.mountKey && current.containerId === state.containerId && current.state === state.state) return;
+  fs.mkdirSync(path.dirname(statePath), { recursive: true });
+  const temporaryPath = `${statePath}.${process.pid}.tmp`;
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(state)}\n`, "utf8");
+  fs.renameSync(temporaryPath, statePath);
 }
 
 function mountKeyDigest(config: BashSandboxConfig): string {

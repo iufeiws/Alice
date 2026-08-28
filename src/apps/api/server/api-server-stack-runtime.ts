@@ -31,6 +31,7 @@ export function createApiServerStackRuntime(input: {
   processRestartContinuationStore?: any;
   piRelay?: any;
   piWorkerRuntime?: any;
+  stopSandboxContainer?(): Promise<void>;
 }) {
   const apiCommunicationRuntime = createApiCommunicationRuntime({
     config: input.config,
@@ -108,6 +109,7 @@ export function createApiServerStackRuntime(input: {
     },
     piRelay: input.piRelay,
     piWorkerRuntime: input.piWorkerRuntime,
+    stopSandboxContainer: input.stopSandboxContainer,
     refreshToolRegistry: input.apiToolingRuntime.refreshToolRegistry
   });
 

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createDockerBashExecutor } from "../../../src/contexts/bash-sandbox/src/index.js";
+import { createDockerBashExecutor, ensureDockerPiWorkerProcess, ensureDockerSandboxContainer, stopDockerSandboxContainer } from "../../../src/contexts/bash-sandbox/src/index.js";
 import { testConfig, tmpDir } from "./bash-sandbox-helpers.js";
 
 const childProcess = await import("node:child_process");
@@ -33,6 +33,7 @@ test("docker executor runs with configured sandbox contract", async () => {
   assert.match(runCall, /-w \/home\/alice/);
   assert.match(runCall, /\/sandbox\/bin:ro/);
   assert.match(runCall, /\/assets-host:\/assets:ro/);
+  assert.match(runCall, /\/codebase\/README\.md:\/home\/alice\/codebase\/README\.md:rw/);
   assert.match(runCall, /:\/home\/alice\/\.agents:rw/);
   assert.ok(runCall.indexOf(":/home/alice/.agents:rw") < runCall.indexOf(":/home/alice/.agents/skills/demo:ro"));
   assert.equal(result.stdout.trim(), "docker-ok");
@@ -48,16 +49,156 @@ test("docker executor uses a configured tmp bind mount instead of tmpfs", async 
   assert.doesNotMatch(runCall, /--tmpfs \/tmp/);
 });
 
-test("docker executor starts the Pi worker from the existing wrapper mount", async () => {
+test("sandbox container starts independently from the Pi worker", async () => {
   const { calls } = await runWithFakeDocker(undefined, true);
   const runCall = calls.find((call) => call.startsWith("run ")) ?? "";
   assert.match(runCall, /alice-bash-sandbox:/);
   assert.match(runCall, /PI_TASK_TIMEOUT_SECONDS=21600/);
-  assert.match(runCall, /export NODE_PATH=/);
-  assert.match(runCall, /node --no-use-env-proxy \/sandbox\/pi-worker\/worker\.mjs/);
+  assert.match(runCall, /sleep infinity$/);
+  assert.doesNotMatch(runCall, /worker\.mjs/);
 });
 
-async function runWithFakeDocker(onStdout?: (delta: string) => void, withPiWorker = false, mountTmp = false) {
+test("Pi worker is started lazily inside the existing sandbox container", async () => {
+  const root = tmpDir("fake-docker-pi-worker");
+  const bin = path.join(root, "bin");
+  const log = path.join(root, "docker.log");
+  fs.mkdirSync(bin, { recursive: true });
+  const docker = path.join(bin, "docker");
+  fs.writeFileSync(docker, `#!/bin/sh\necho "$@" >> "${log}"\nexit 0\n`);
+  fs.chmodSync(docker, 0o755);
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${previousPath ?? ""}`;
+  try {
+    const config = testConfig({
+      piWorker: { enabled: true, hostDir: path.join(root, "pi-sessions"), containerDir: "/home/alice/.pi-sessions", port: 8790 }
+    });
+    await ensureDockerPiWorkerProcess(config);
+    const call = fs.readFileSync(log, "utf8");
+    assert.match(call, /^exec test-bash-sandbox sh -c /);
+    assert.match(call, /worker\.mjs/);
+  } finally {
+    process.env.PATH = previousPath;
+  }
+});
+
+test("container creation removes only stale empty codebase mount points", async () => {
+  const stalePaths: { emptyFile?: string; emptyDirectory?: string; retainedMount?: string; nonEmptyFile?: string } = {};
+  await runWithFakeDocker(undefined, false, false, ({ config }) => {
+    const codebaseRoot = path.join(config.hostWorkspaceDir, "codebase");
+    stalePaths.emptyFile = path.join(codebaseRoot, ".gitignore");
+    stalePaths.emptyDirectory = path.join(codebaseRoot, ".vscode");
+    stalePaths.retainedMount = path.join(codebaseRoot, "README.md");
+    stalePaths.nonEmptyFile = path.join(codebaseRoot, "local-note.txt");
+    fs.mkdirSync(stalePaths.emptyDirectory, { recursive: true });
+    fs.writeFileSync(stalePaths.emptyFile, "");
+    fs.writeFileSync(path.join(stalePaths.emptyDirectory, "settings.json"), "");
+    fs.writeFileSync(stalePaths.retainedMount, "");
+    fs.writeFileSync(stalePaths.nonEmptyFile, "keep");
+  });
+  assert.equal(fs.existsSync(stalePaths.emptyFile!), false);
+  assert.equal(fs.existsSync(stalePaths.emptyDirectory!), false);
+  assert.equal(fs.existsSync(stalePaths.retainedMount!), true);
+  assert.equal(fs.readFileSync(stalePaths.nonEmptyFile!, "utf8"), "keep");
+});
+
+test("container startup repairs Docker-owned staging paths before stale cleanup", async () => {
+  const root = tmpDir("fake-docker-owned-mount-point");
+  const bin = path.join(root, "bin");
+  const workspace = path.join(root, "workspace");
+  const staleDirectory = path.join(workspace, "codebase", ".vscode");
+  fs.mkdirSync(staleDirectory, { recursive: true });
+  fs.writeFileSync(path.join(staleDirectory, "settings.json"), "");
+  fs.chmodSync(staleDirectory, 0o555);
+  fs.mkdirSync(bin, { recursive: true });
+  const docker = path.join(bin, "docker");
+  fs.writeFileSync(docker, `#!/bin/sh
+if [ "$1 $2" = "image inspect" ]; then exit 0; fi
+if [ "$1" = "inspect" ]; then exit 1; fi
+if [ "$1 $2" = "run --rm" ]; then chmod 755 "${staleDirectory}"; exit 0; fi
+if [ "$1" = "run" ]; then printf 'container-owned-test\n'; exit 0; fi
+exit 64
+`);
+  fs.chmodSync(docker, 0o755);
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${previousPath ?? ""}`;
+  try {
+    await ensureDockerSandboxContainer(testConfig({ hostWorkspaceDir: workspace, hostCacheDir: path.join(root, "cache") }));
+    assert.equal(fs.existsSync(staleDirectory), false);
+  } finally {
+    if (fs.existsSync(staleDirectory)) fs.chmodSync(staleDirectory, 0o755);
+    process.env.PATH = previousPath;
+  }
+});
+
+test("sandbox cleanup state compensates an unclean stop and records a clean managed stop", async () => {
+  const root = tmpDir("fake-docker-cleanup-state");
+  const bin = path.join(root, "bin");
+  const dockerStatePath = path.join(root, "docker.state");
+  const dockerLabelPath = path.join(root, "docker.label");
+  fs.mkdirSync(bin, { recursive: true });
+  const docker = path.join(bin, "docker");
+  fs.writeFileSync(docker, `#!/bin/sh
+if [ "$1 $2" = "image inspect" ]; then exit 0; fi
+if [ "$1" = "inspect" ]; then
+  if [ ! -f "${dockerStatePath}" ]; then exit 1; fi
+  state="$(cat "${dockerStatePath}")"
+  label="$(cat "${dockerLabelPath}")"
+  if [ "$state" = "running" ]; then running=true; else running=false; fi
+  printf '%s|%s|container-1\n' "$running" "$label"
+  exit 0
+fi
+if [ "$1" = "run" ]; then
+  previous=
+  for argument in "$@"; do
+    if [ "$previous" = "--label" ]; then printf '%s' "\${argument#*=}" > "${dockerLabelPath}"; fi
+    previous="$argument"
+  done
+  printf running > "${dockerStatePath}"
+  printf 'container-1\n'
+  exit 0
+fi
+if [ "$1" = "start" ]; then printf running > "${dockerStatePath}"; exit 0; fi
+if [ "$1" = "stop" ]; then printf stopped > "${dockerStatePath}"; exit 0; fi
+if [ "$1" = "rm" ]; then rm -f "${dockerStatePath}" "${dockerLabelPath}"; exit 0; fi
+exit 64
+`);
+  fs.chmodSync(docker, 0o755);
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${previousPath ?? ""}`;
+  try {
+    const config = testConfig({
+      hostWorkspaceDir: path.join(root, "workspace"),
+      hostCacheDir: path.join(root, "cache")
+    });
+    await ensureDockerSandboxContainer(config);
+    const cleanupStatePath = path.join(root, "workspace.codebase-mount-cleanup.json");
+    assert.equal(JSON.parse(fs.readFileSync(cleanupStatePath, "utf8")).state, "dirty");
+
+    const staleDirectory = path.join(config.hostWorkspaceDir, "codebase", ".vscode");
+    fs.mkdirSync(staleDirectory, { recursive: true });
+    fs.writeFileSync(path.join(staleDirectory, "settings.json"), "");
+    fs.writeFileSync(dockerStatePath, "stopped");
+    await ensureDockerSandboxContainer(config);
+    assert.equal(fs.existsSync(staleDirectory), false);
+    assert.equal(JSON.parse(fs.readFileSync(cleanupStatePath, "utf8")).state, "dirty");
+
+    const staleFile = path.join(config.hostWorkspaceDir, "codebase", ".gitignore");
+    fs.writeFileSync(staleFile, "");
+    await stopDockerSandboxContainer(config);
+    assert.equal(fs.existsSync(staleFile), false);
+    assert.equal(JSON.parse(fs.readFileSync(cleanupStatePath, "utf8")).state, "clean");
+    assert.equal(fs.readFileSync(dockerStatePath, "utf8"), "stopped");
+  } finally {
+    process.env.PATH = previousPath;
+  }
+});
+
+async function runWithFakeDocker(
+  onStdout?: (delta: string) => void,
+  withPiWorker = false,
+  mountTmp = false,
+  prepareWorkspace?: (input: { config: ReturnType<typeof testConfig> }) => void
+) {
   const root = tmpDir("fake-docker");
   const bin = path.join(root, "bin");
   const log = path.join(root, "docker.log");
@@ -118,9 +259,11 @@ exit 64
       mounts: [
         { id: "agent", hostPath: path.join(root, "agent"), containerPath: "/home/alice/.agents", readOnly: false },
         { id: "assets", hostPath: path.join(root, "assets-host"), containerPath: "/assets", readOnly: true },
+        { id: "codebase_file:README.md", hostPath: path.join(root, "codebase", "README.md"), containerPath: "/home/alice/codebase/README.md", readOnly: false },
         ...(mountTmp ? [{ id: "tmp", hostPath: path.join(root, "tmp"), containerPath: "/tmp", readOnly: false }] : [])
       ]
     });
+    prepareWorkspace?.({ config });
     let streamedBeforeCommandFinished = false;
     const result = await createDockerBashExecutor(config).execute({
       command: "echo ok",

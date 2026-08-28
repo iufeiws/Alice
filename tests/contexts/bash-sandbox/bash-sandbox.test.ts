@@ -52,16 +52,32 @@ test("config mounts installed skills read-write at the sandbox home", () => {
   ]);
 });
 
-test("config mounts the project codebase read-write inside the sandbox", () => {
+test("config mounts the minimal git-visible project tree and the complete memory-files directory", () => {
   const config = loadConfig({});
+  const codebaseMounts = config.bashSandbox.mounts.filter((mount) => mount.containerPath.startsWith("/home/alice/codebase/"));
 
-  assert.deepEqual(config.bashSandbox.mounts.filter((mount) => mount.containerPath.startsWith("/home/alice/codebase/")), [
-    { id: "codebase_src", hostPath: fs.realpathSync("src"), containerPath: "/home/alice/codebase/src", readOnly: false },
-    { id: "codebase_memory_files", hostPath: fs.realpathSync("memory-files"), containerPath: "/home/alice/codebase/memory-files", readOnly: false },
-    { id: "codebase_tests", hostPath: fs.realpathSync("tests"), containerPath: "/home/alice/codebase/tests", readOnly: false },
-    { id: "codebase_scripts", hostPath: fs.realpathSync("scripts"), containerPath: "/home/alice/codebase/scripts", readOnly: false },
-    { id: "codebase_docs", hostPath: fs.realpathSync("docs"), containerPath: "/home/alice/codebase/docs", readOnly: false }
+  assert.equal(codebaseMounts.some((mount) => mount.containerPath === "/home/alice/codebase/README.md" && mount.hostPath === fs.realpathSync("README.md") && !mount.readOnly), true);
+  assert.equal(codebaseMounts.some((mount) => mount.containerPath === "/home/alice/codebase/src" && mount.hostPath === fs.realpathSync("src") && !mount.readOnly), true);
+  assert.equal(codebaseMounts.some((mount) => mount.containerPath === "/home/alice/codebase/.gitignore"), false);
+  assert.equal(codebaseMounts.some((mount) => mount.containerPath === "/home/alice/codebase/.vscode"), false);
+  assert.equal(codebaseMounts.some((mount) => mount.containerPath === "/home/alice/codebase/.env"), false);
+  assert.equal(codebaseMounts.some((mount) => mount.containerPath === "/home/alice/codebase/tests"), false);
+  assert.equal(codebaseMounts.some((mount) => mount.containerPath.includes("__pycache__")), false);
+  assert.deepEqual(codebaseMounts.filter((mount) => mount.containerPath === "/home/alice/codebase/memory-files"), [
+    { id: "codebase_memory_files", hostPath: fs.realpathSync("memory-files"), containerPath: "/home/alice/codebase/memory-files", readOnly: false }
   ]);
+  assert.equal(codebaseMounts.length < 100, true);
+});
+
+test("config includes an untracked file that is not ignored", () => {
+  const relativePath = `.alice-codebase-visible-${process.pid}`;
+  fs.writeFileSync(relativePath, "visible\n", "utf8");
+  try {
+    const config = loadConfig({});
+    assert.equal(config.bashSandbox.mounts.some((mount) => mount.containerPath === `/home/alice/codebase/${relativePath}` && mount.hostPath === fs.realpathSync(relativePath)), true);
+  } finally {
+    fs.rmSync(relativePath, { force: true });
+  }
 });
 
 test("config rejects sensitive host paths", () => {

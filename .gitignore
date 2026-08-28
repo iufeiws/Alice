@@ -2,6 +2,7 @@ node_modules/
 dist/
 __pycache__/
 *.pyc
+.vscode/
 .tmp-tests/
 .kagent/
 .conda-moss/
@@ -10,10 +11,12 @@ open-source-tools/*
 !open-source-tools/AGENTS.md
 data/
 config/*
+!config/AGENTS.md
+!config/README.md
 logs/
-assets/**
-!assets/**/
-!assets/**/[Rr][Ee][Aa][Dd][Mm][Ee]*
+assets/*
+!assets/AGENTS.md
+!assets/README.md
 memory-files/indexes/
 memory-files/llm-sessions/
 memory-files/llm-sessions_old/
@@ -30,11 +33,9 @@ prompt/*
 .DS_Store
 npm-debug.log*
 pnpm-debug.log*
-assets/generated/*
 .sandbox/*
 .agents/*
 .agents/skills/anchor-skill/
-assets/*
 ref/*
 
 # ZCode CLI local state

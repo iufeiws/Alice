@@ -20,6 +20,7 @@ export function createApiLifecycleRuntime(input: {
   registerChannels(): void;
   piRelay?: { start(): Promise<unknown>; stop?(): Promise<void> };
   piWorkerRuntime?: { start(): Promise<void>; stop(): Promise<void> };
+  stopSandboxContainer?(): Promise<void>;
   refreshToolRegistry?(): unknown;
 }) {
   input.registerChannels();
@@ -43,6 +44,7 @@ export function createApiLifecycleRuntime(input: {
       await input.messageRuntime.flushAll();
       await input.chatAgent.stop();
       await input.piWorkerRuntime?.stop();
+      await input.stopSandboxContainer?.();
       if (input.piRelay?.stop) await input.piRelay.stop();
     },
     releaseLock: () => input.serviceLock.release()

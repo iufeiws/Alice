@@ -198,13 +198,14 @@ async function ensureBaseImage(config: BashSandboxConfig): Promise<void> {
 }
 
 function createContainerArgs(config: BashSandboxConfig, image: string): string[] {
+  const tmpfsArgs = hasContainerMount(config, config.tmpDir) ? [] : ["--tmpfs", config.tmpDir];
   const args = [
     "run",
     "-d",
     "--name", config.containerName,
     "--network", config.network === "none" ? "none" : "bridge",
     "--read-only",
-    "--tmpfs", config.tmpDir,
+    ...tmpfsArgs,
     "--label", `${CONTAINER_MOUNT_KEY_LABEL}=${mountKeyDigest(config)}`,
     "--user", "alice",
     "-e", `HOME=${config.workspaceDir}`,
@@ -253,6 +254,10 @@ function createContainerArgs(config: BashSandboxConfig, image: string): string[]
     args.push(image, "sleep", "infinity");
   }
   return args;
+}
+
+function hasContainerMount(config: BashSandboxConfig, containerPath: string): boolean {
+  return [...config.mounts, ...config.skillMounts].some((mount) => mount.containerPath === containerPath);
 }
 
 function aliceUserImageName(baseImage: string): string {

@@ -27,6 +27,7 @@ test("docker executor runs with configured sandbox contract", async () => {
   assert.match(runCall, /PATH=\/sandbox\/bin:/);
   assert.match(runCall, /--user alice/);
   assert.match(runCall, /--label com\.alice\.sandbox\.mount-key=/);
+  assert.match(runCall, /--tmpfs \/tmp/);
   assert.match(runCall, /HOME=\/home\/alice/);
   assert.match(runCall, /BASH_ENV=\/home\/alice\/\.bashrc/);
   assert.match(runCall, /-w \/home\/alice/);
@@ -39,6 +40,14 @@ test("docker executor runs with configured sandbox contract", async () => {
   assert.equal(result.streamedBeforeCommandFinished, true);
 });
 
+test("docker executor uses a configured tmp bind mount instead of tmpfs", async () => {
+  const { calls } = await runWithFakeDocker(undefined, false, true);
+  const runCall = calls.find((call) => call.startsWith("run ")) ?? "";
+
+  assert.match(runCall, /:\/tmp:rw/);
+  assert.doesNotMatch(runCall, /--tmpfs \/tmp/);
+});
+
 test("docker executor starts the Pi worker from the existing wrapper mount", async () => {
   const { calls } = await runWithFakeDocker(undefined, true);
   const runCall = calls.find((call) => call.startsWith("run ")) ?? "";
@@ -48,7 +57,7 @@ test("docker executor starts the Pi worker from the existing wrapper mount", asy
   assert.match(runCall, /node --no-use-env-proxy \/sandbox\/pi-worker\/worker\.mjs/);
 });
 
-async function runWithFakeDocker(onStdout?: (delta: string) => void, withPiWorker = false) {
+async function runWithFakeDocker(onStdout?: (delta: string) => void, withPiWorker = false, mountTmp = false) {
   const root = tmpDir("fake-docker");
   const bin = path.join(root, "bin");
   const log = path.join(root, "docker.log");
@@ -108,7 +117,8 @@ exit 64
       } : {}),
       mounts: [
         { id: "agent", hostPath: path.join(root, "agent"), containerPath: "/home/alice/.agents", readOnly: false },
-        { id: "assets", hostPath: path.join(root, "assets-host"), containerPath: "/assets", readOnly: true }
+        { id: "assets", hostPath: path.join(root, "assets-host"), containerPath: "/assets", readOnly: true },
+        ...(mountTmp ? [{ id: "tmp", hostPath: path.join(root, "tmp"), containerPath: "/tmp", readOnly: false }] : [])
       ]
     });
     let streamedBeforeCommandFinished = false;

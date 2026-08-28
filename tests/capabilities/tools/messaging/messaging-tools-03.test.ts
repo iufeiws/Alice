@@ -253,6 +253,15 @@ test("send_chat sends multiline markdown-like message as single markdown when co
   assert.equal(sent[0].content.kind === "markdown" ? sent[0].content.markdown : "", "## 计划\n- 买水\n- 充电");
 });
 
+test("send_chat maps messages with more than three lines to markdown when config enabled", async () => {
+  const content = "第一行\n第二行\n第三行\n第四行";
+  const { result, sent } = await sendFeishuMarkdownLike("messaging-send-more-than-three-lines", true, content);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(sent.map((output) => output.content.kind), ["markdown"]);
+  assert.equal(sent[0].content.kind === "markdown" ? sent[0].content.markdown : "", content);
+});
+
 test("send_chat with config enabled still splits plain text messages", async () => {
   const { sent } = await sendFeishuMarkdownLike("messaging-send-markdown-like-plain", true, "one\n\ntwo");
 

@@ -317,7 +317,6 @@ export function createFeishuClient(config: FeishuConfig, accountId: string, deps
         }
       }, time);
       if (!message.messageId) throw new Error("Feishu agent run card message create did not return message_id");
-      deps.log?.("info", `[${tag}] created agent run card ${cardId} for ${input.receiveIdType}:${input.receiveId}`);
       return {
         messageId: message.messageId,
         cardId
@@ -342,7 +341,6 @@ export function createFeishuClient(config: FeishuConfig, accountId: string, deps
           uuid: `agent_run_blocks_${input.cardId}_${input.sequence}`
         }
       });
-      deps.log?.("info", `[${tag}] batch updated agent run card ${input.cardId} blocks=${Object.keys(input.blocks).join(",")} sequence=${input.sequence}`);
     },
     async setAgentRunCardStreaming(input) {
       assertStarted(client);
@@ -356,7 +354,6 @@ export function createFeishuClient(config: FeishuConfig, accountId: string, deps
           uuid: `agent_run_streaming_${input.cardId}_${input.sequence}`
         }
       });
-      deps.log?.("info", `[${tag}] set agent run card ${input.cardId} streaming=${input.enabled} sequence=${input.sequence}`);
     },
     async resolveAgentRunCardId(input) {
       assertStarted(client);

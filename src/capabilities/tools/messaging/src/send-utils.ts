@@ -89,7 +89,7 @@ export function renderSendPart(
   config?: Pick<MessagingPluginConfig, "mapMarkdownLikeToMarkdown">
 ): { type: SendType; content: string } {
   if (type === "message" && target.plugin === "feishu") {
-    if (senderName === "core" || (config?.mapMarkdownLikeToMarkdown && contentLooksLikeMarkdown(content))) {
+    if (senderName === "core" || (config?.mapMarkdownLikeToMarkdown && (contentLooksLikeMarkdown(content) || content.split(/\r?\n/).length > 3))) {
       return { type: "markdown", content };
     }
   }

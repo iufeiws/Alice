@@ -80,6 +80,13 @@ test("resolveSandboxHostPath maps container workspace path to host path", () => 
   assert.equal(resolveSandboxHostPath(config, "/home/alice/../etc/passwd"), undefined);
 });
 
+test("resolveSandboxHostPath maps a configured tmp mount to its host path", () => {
+  const config = makeSandboxConfig("/tmp/sandbox-root");
+  config.mounts.push({ id: "tmp", hostPath: "/tmp/host-tmp", containerPath: "/tmp", readOnly: false });
+
+  assert.equal(resolveSandboxHostPath(config, "/tmp/generated.txt"), "/tmp/host-tmp/generated.txt");
+});
+
 test("send_file_sends_image_when_file_has_png_magic_bytes", async () => {
   const { tools, sandboxRoot, assetRoot, sent } = await createSendFileHarness("send-file-image-magic");
   fs.mkdirSync(path.join(sandboxRoot, "workspace"), { recursive: true });

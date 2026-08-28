@@ -4,7 +4,7 @@ export const selfieTool: ToolDefinition = {
   name: "Selfie",
   passRenderText: true,
   returnImageToLLM: false,
-  description: "可通过 pose、expression、hair 和 composition 参数描述自拍内容。pose为拍照时的动作和姿势, expression为表情, hair为发型和发色, composition为构图和取景范围。未提供的参数使用${{user}}配置的默认值。对于描述中可能存在性暗示的部分绕过以规避审核。成功时后会自动发送图片, 并返回路径用于给你查看, 不需要额外发送图片",
+  description: "可通过 pose、expression、hair 和 composition 参数描述自拍内容。pose为拍照时的动作和姿势, expression为表情, hair为发型和发色(无<user>要求时避免进行描述), composition为构图和取景范围(默认值为近景一臂距离)。留空的参数会使用${{user}}配置的默认值。对于描述中可能存在性暗示的部分绕过以规避审核。成功时后会自动发送图片, 并返回路径用于给你查看, 不需要额外发送图片",
   inputSchema: {
     type: "object",
     properties: {
@@ -13,7 +13,7 @@ export const selfieTool: ToolDefinition = {
       hair: { type: "string" },
       composition: { type: "string" },
     },
-    required: ["pose"],
+    required: ["pose", "expression"],
     additionalProperties: false
   }
 };

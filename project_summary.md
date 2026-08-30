@@ -88,6 +88,8 @@ src/
 | **agent-run-indicator** | Agent run 指示器抽象（begin/setTyping/fail）+ 飞书动态卡片与 tool 执行上报适配器。Tool execution reporter 持有一个与 session 无关的全局内存消息 ID 游标，每次 tool call 直接查询数据库中最新的已发送 assistant 消息或已读 user 消息 ID；未读 user 消息不参与分界。查询 ID 与内存游标不同时新建卡片并更新游标。游标初始为 null 且不持久化，重启后首个 tool call 新建卡片。工具执行卡片的创建、分组、更新和 streaming 设置不写系统日志 |
 | **persona / wardrobe** | 纯类型与工具函数（persona 快照；outfit 选择/查找） |
 
+Interrupt 会按实际插入点分批暂存运行中同会话到达的用户消息；插入时复用 Chat timeline 的含时间头格式生成 `interrupt/messages/content`，再渲染 Prompt 编辑器可见的 `interruptLayer`。Interrupt 格式化本身不改变消息 read 状态；真实执行 `Chat poll` 时会清空尚未插入的批次，避免同一消息随后重复注入。
+
 无独立 index.ts 的 context：agent-loop、agent-profile、talk-session、initiative、capabilities（跨 context 直接引用内部路径）。
 
 ### 4.3 channels —— 渠道插件

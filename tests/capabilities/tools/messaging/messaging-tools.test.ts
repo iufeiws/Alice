@@ -167,7 +167,7 @@ test("check_chat range scope filters with from and to", async () => {
   assert.equal(result.ok, true);
 });
 
-async function pollDefaultUnreadMessages(name: string) {
+async function pollDefaultUnreadMessages(name: string, onMessagesPolled?: (sessionId: string) => void) {
   const store = createAliceStore(path.join(makeTempDir(name), "alice.sqlite"));
   const baseTime = Date.now();
   store.upsertInboundMessage({
@@ -210,6 +210,7 @@ async function pollDefaultUnreadMessages(name: string) {
     outputRouter: { async send() {} },
     getUserName: () => "小王",
     getSleepCocoonEnteredAt: () => new Date(baseTime - 1000).toISOString(),
+    onMessagesPolled,
     getDefaultTarget: () => ({ plugin: "feishu", sessionId: "session-1" })
   });
 
@@ -222,6 +223,13 @@ test("check_chat defaults to unread new messages", async () => {
   const { recent } = await pollDefaultUnreadMessages("messaging-view");
 
   assert.equal(recent.ok, true);
+});
+
+test("check_chat clears the pending interrupt batch for the polled session", async () => {
+  const sessions: string[] = [];
+  await pollDefaultUnreadMessages("messaging-view-clears-interrupt", (sessionId) => sessions.push(sessionId));
+
+  assert.deepEqual(sessions, ["session-1"]);
 });
 
 test("check_chat marks default unread messages as read", async () => {

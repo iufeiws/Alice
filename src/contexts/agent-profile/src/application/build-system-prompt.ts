@@ -119,7 +119,7 @@ export function defaultInterruptLayer(): PromptLayer {
       meta: { title: "Interrupt Layer", enabled: true },
       role: "user",
       name: "Alert",
-      content: "<Alert info=\"have a new message\" />"
+      content: "<new_message>\n${{interrupt/messages/content}}\n</new_message>"
     }]
   };
 }

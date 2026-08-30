@@ -48,12 +48,13 @@ test("promptProfileStore_validProfile_persistsLayerDocuments", () => {
 test("promptProfileStore_interruptLayer_persistsMessages", () => {
   const filePath = path.join(makeTempDir("prompt-store-interrupt"), "prompt-profile.json");
   const store = createPromptProfileStore(filePath);
-  const interrupt = { ...message("Interrupt", "user", "custom interrupt content"), name: "CustomName" };
+  const interrupt = { ...message("Interrupt", "user", "<new_message>\n${{interrupt/messages/content}}\n</new_message>"), name: "CustomName" };
   store.save({ ...store.get(), interruptLayer: layer(interrupt) });
 
   const reopened = createPromptProfileStore(filePath).get().interruptLayer!;
   assert.equal(reopened.messages[0].meta.title, "Interrupt");
   assert.equal(reopened.messages[0].name, "CustomName");
+  assert.equal(reopened.messages[0].content, "<new_message>\n${{interrupt/messages/content}}\n</new_message>");
 });
 
 test("promptProfileStore_deliveryReminderLayers_acceptOnlyUserMessages", () => {

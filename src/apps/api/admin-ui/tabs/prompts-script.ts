@@ -62,7 +62,7 @@ export function renderPromptsScript(): string {
               <p class="muted">Chat · wardrobe · selfie</p>
               \${!activeProfile.interruptLayer ? "" : \`
               <h2>Interrupt Layer</h2>
-              <p class="muted">Inserted after the next completed tool-result batch when a new user message arrives during a running loop.</p>
+              <p class="muted">Inserted after the next completed tool-result batch when new user messages arrive during a running loop. Use <code>&#36;{{interrupt/messages/content}}</code> for the unread batch rendered in Chat timeline format.</p>
               <div id="promptInterruptLayer">\${renderLayerDocument(activeProfile.interruptLayer, { editorId: "interrupt", roles: ["system", "user", "assistant"], showActions: false })}</div>
               \`}
               \${isTalk ? "" : \`

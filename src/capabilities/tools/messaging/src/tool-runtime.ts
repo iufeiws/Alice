@@ -51,6 +51,7 @@ export function createToolRuntime(input: {
   shortMemoryStore: Pick<ShortMemoryStore, "listLatest">;
   randomEventStore: any;
   getApprovalService(): any;
+  onMessagesPolled?(sessionId: string): void;
   appendLog: AppendLog;
   appendMessageLog: AppendMessageLog;
   piWorkerRuntime?: PiWorkerRuntime;
@@ -77,6 +78,7 @@ export function createToolRuntime(input: {
     getDefaultTarget() {
       return input.getDefaultTarget();
     },
+    onMessagesPolled: input.onMessagesPolled,
     resolveOutputTarget,
     appendMessageLog: input.appendMessageLog,
     appendLog: input.appendLog

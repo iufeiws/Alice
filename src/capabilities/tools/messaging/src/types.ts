@@ -47,6 +47,7 @@ export type MessagingToolsDeps = {
   }>;
   getSleepCocoonEnteredAt?(): string | undefined;
   getLatestShortMemoryCreatedAtUtc?(): string | undefined;
+  onMessagesPolled?(sessionId: string): void;
   appendMessageLog?(input: {
     direction: "inbound" | "outbound";
     plugin: string;

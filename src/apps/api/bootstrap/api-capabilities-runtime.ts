@@ -35,6 +35,7 @@ export function createApiCapabilitiesRuntime(input: {
   memoryStore: any;
   randomEventStore: any;
   getApprovalService(): any;
+  onMessagesPolled?(sessionId: string): void;
   piWorkerRuntime?: PiWorkerRuntime;
 }) {
   let getLLMRequestToolDefinition: (name: string) => any = () => undefined;
@@ -109,6 +110,7 @@ export function createApiCapabilitiesRuntime(input: {
     shortMemoryStore: input.shortMemoryStore,
     randomEventStore: input.randomEventStore,
     getApprovalService: input.getApprovalService,
+    onMessagesPolled: input.onMessagesPolled,
     agentState: input.agentState,
     getDefaultTarget: input.getDefaultTarget,
     getGoogleStreetView: input.getGoogleStreetView,

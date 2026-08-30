@@ -114,7 +114,8 @@ export type AgentLoopRunSpec = {
 
 export type AgentLoopRuntime = {
   getActiveMainLLMSession(): ActiveMainLLMSessionState | undefined;
-  noteInboundUserMessageInterrupt(sessionId: string): void;
+  noteInboundUserMessageInterrupt(sessionId: string, message: unknown): void;
+  clearPendingUserMessageInterrupts(sessionId: string): void;
   setLLMSessionRuntime(runtime: LLMSessionRuntimePort | undefined): void;
   ensureCurrentLLMSession(time: string, agentId?: AgentLoopKind): { id: number | string };
   createTalkLLMSession(time: string): { id: number | string };
@@ -158,7 +159,12 @@ const EMPTY_AGENT_LOOP_RESULT: AgentFunctionCallLoopResult = {
   toolCallCount: 0
 };
 
-export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): AgentLoopRuntime {
+export function createAgentLoopRuntime(
+  input: Partial<AgentLoopRunners> = {},
+  options: {
+    formatInboundUserMessageInterrupts?(messages: unknown[]): string;
+  } = {}
+): AgentLoopRuntime {
   let activeMainLLMSession: ActiveMainLLMSessionState | undefined;
   // §7.1/§10: 统一的 Main Agent 运行占用(running / clearing 互斥, idle 为空闲)。
   let activity: MainAgentActivity = { phase: "idle" };
@@ -184,16 +190,21 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
   let abortController: AbortController | undefined;
   let runners: Partial<AgentLoopRunners> = { ...input };
   let llmSessionRuntime: LLMSessionRuntimePort | undefined;
-  const pendingUserMessageInterrupts = new Set<string>();
+  const pendingUserMessageInterrupts = new Map<string, unknown[]>();
 
   return {
     getActiveMainLLMSession() {
       return activeMainLLMSession ? { ...activeMainLLMSession } : undefined;
     },
-    noteInboundUserMessageInterrupt(sessionId) {
+    noteInboundUserMessageInterrupt(sessionId, message) {
       if (!activeMainLLMSession || activeMainLLMSession.phase !== "running") return;
       if (String(activeMainLLMSession.id) !== sessionId) return;
-      pendingUserMessageInterrupts.add(sessionId);
+      const pending = pendingUserMessageInterrupts.get(sessionId) ?? [];
+      pending.push(message);
+      pendingUserMessageInterrupts.set(sessionId, pending);
+    },
+    clearPendingUserMessageInterrupts(sessionId) {
+      pendingUserMessageInterrupts.delete(sessionId);
     },
     setLLMSessionRuntime(runtime) {
       llmSessionRuntime = runtime;
@@ -391,13 +402,20 @@ export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): A
           ...spec.runtimeInterrupts,
           hasPendingUserMessage() {
             const sessionId = String(request.sessionId);
-            return pendingUserMessageInterrupts.has(sessionId)
+            return (pendingUserMessageInterrupts.get(sessionId)?.length ?? 0) > 0
               || spec.runtimeInterrupts?.hasPendingUserMessage() === true;
           },
-          consumePendingUserMessage() {
+          consumePendingUserMessageContent() {
             const sessionId = String(request.sessionId);
-            return pendingUserMessageInterrupts.delete(sessionId)
-              || spec.runtimeInterrupts?.consumePendingUserMessage() === true;
+            const pending = pendingUserMessageInterrupts.get(sessionId) ?? [];
+            if (pending.length > 0) {
+              if (!options.formatInboundUserMessageInterrupts) {
+                throw new Error("inbound_user_message_interrupt_formatter_required");
+              }
+              pendingUserMessageInterrupts.delete(sessionId);
+              return options.formatInboundUserMessageInterrupts(pending);
+            }
+            return spec.runtimeInterrupts?.consumePendingUserMessageContent?.();
           }
         }
       });

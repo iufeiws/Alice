@@ -50,6 +50,9 @@ export function createApiToolingRuntime(input: {
     memoryStore: input.apiContextRuntime.memoryStore,
     randomEventStore: input.apiContextRuntime.randomEventStore,
     getApprovalService: input.getApprovalService,
+    onMessagesPolled(sessionId) {
+      input.agentLoopRuntime.clearPendingUserMessageInterrupts(sessionId);
+    },
     piWorkerRuntime: input.piWorkerRuntime
   });
   const apiSupportRuntime = createApiSupportRuntime({

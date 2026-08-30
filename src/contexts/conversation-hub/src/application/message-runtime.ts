@@ -361,7 +361,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     }
     const receivedAt = event.meta.receivedAt;
     const receivedAtUtc = event.meta.receivedAtUtc;
-    deps.store.upsertInboundMessage({
+    const storedMessage = deps.store.upsertInboundMessage({
       plugin: event.source.plugin,
       externalMessageId: event.source.rawMessageId ?? event.id,
       conversationId: event.externalSession.sessionId,
@@ -382,7 +382,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       receivedAtUtc
     });
     if (shouldProcessInboundWithCore(event)) {
-      agentLoopRuntime.noteInboundUserMessageInterrupt(event.externalSession.sessionId);
+      agentLoopRuntime.noteInboundUserMessageInterrupt(event.externalSession.sessionId, storedMessage);
     }
     latestSessionEvents.set(event.externalSession.sessionId, event);
     // §11.2: 每次事件入库都同步恢复 store 中已有的 pending 会话标记,
@@ -842,7 +842,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     // of the user-facing send status.
     if (!message.coreProcessedAt) {
       deps.agentState?.noteInboundMessage();
-      agentLoopRuntime.noteInboundUserMessageInterrupt(input.conversationId);
+      agentLoopRuntime.noteInboundUserMessageInterrupt(input.conversationId, message);
       markPending(input.conversationId);
     }
     deps.appendMessageLog({

@@ -92,11 +92,14 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
   async function viewMessages(call: ToolCall): Promise<ToolResult> {
     const target = resolveTarget(call);
     if (!target) return toolError(call, messagingToolText.noCurrentSession);
-    return viewMessagesForScope(call.id, resolveViewScope(call.input.scope ?? call.input.__scope), {
-      readonly: call.input.__preview === true,
+    const readonly = call.input.__preview === true;
+    const result = viewMessagesForScope(call.id, resolveViewScope(call.input.scope ?? call.input.__scope), {
+      readonly,
       from: optionalStringValue(call.input.from),
       to: optionalStringValue(call.input.to)
     });
+    if (!readonly && result.ok) deps.onMessagesPolled?.(target.sessionId);
+    return result;
   }
 
   function viewMessagesForScope(

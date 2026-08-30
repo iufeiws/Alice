@@ -169,7 +169,7 @@ export type LLMToolLoopInput = {
   promptProfile?: PromptProfile;
   runtimeInterrupts?: {
     hasPendingUserMessage(): boolean;
-    consumePendingUserMessage(): boolean;
+    consumePendingUserMessageContent(): string | undefined;
   };
   buildYieldResumeMessages?(input: {
     round: number;
@@ -442,14 +442,18 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
       const resumeMessages = input.runtimeInterrupts?.hasPendingUserMessage() === true
         ? await Promise.resolve(input.buildYieldResumeMessages?.({ round, messages, result }) ?? [])
         : [];
-      if (resumeMessages.length > 0 && input.runtimeInterrupts?.consumePendingUserMessage() === true) {
+      const interruptMessages = resumeMessages.length > 0
+        ? consumePendingUserMessageInterruptMessages(input, request)
+        : [];
+      if (resumeMessages.length > 0 && interruptMessages.length > 0) {
         replyRound = -1;
         replyToolCallCount = 0;
         reachedToolCallLimit = false;
         previousAssistantMessageSignature = undefined;
         messages = [
           ...messages,
-          ...cloneLLMMessages(resumeMessages)
+          ...cloneLLMMessages(resumeMessages),
+          ...cloneLLMMessages(interruptMessages)
         ];
         await input.onMessagesChanged?.({
           round,
@@ -518,8 +522,10 @@ function consumePendingUserMessageInterruptMessages(input: LLMToolLoopInput, req
   if (messages.length === 0) return [];
   if (!request.toolVariables) throw new Error("prompt_context_runtime_required");
   if (input.runtimeInterrupts?.hasPendingUserMessage() !== true) return [];
-  if (input.runtimeInterrupts.consumePendingUserMessage() !== true) return [];
-  return messages.map((message) => promptMessageToMessage(message, request.toolVariables!));
+  const content = input.runtimeInterrupts.consumePendingUserMessageContent();
+  if (content === undefined) return [];
+  const renderer = request.toolVariables.withVariables({ "interrupt/messages/content": content });
+  return messages.map((message) => promptMessageToMessage(message, renderer));
 }
 
 function isAssistantMessageTransformResult(value: LLMToolLoopAssistantMessageTransform | undefined): value is Extract<LLMToolLoopAssistantMessageTransform, { message: LLMMessage }> {

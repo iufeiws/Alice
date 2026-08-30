@@ -142,7 +142,7 @@
           "enabled": true
         },
         "role": "user",
-        "content": "<Alert info=\"have a new user message\" />",
+        "content": "<new_message>\n${{interrupt/messages/content}}\n</new_message>",
         "name": "Alert"
       }
     ]

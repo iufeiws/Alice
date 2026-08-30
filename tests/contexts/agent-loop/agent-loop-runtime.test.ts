@@ -76,7 +76,7 @@ test("agent loop runtime rejects overlapping runs", async () => {
 });
 
 test("agent loop runtime appends pending interrupt after completed tool result batch", async () => {
-  const runtime = createAgentLoopRuntime();
+  const runtime = createInterruptRuntime();
   const requests: any[][] = [];
   let releaseTool: (() => void) | undefined;
   let markToolStarted: (() => void) | undefined;
@@ -113,8 +113,9 @@ test("agent loop runtime appends pending interrupt after completed tool result b
     event: textEvent("session-1")
   });
   await toolStarted;
-  runtime.noteInboundUserMessageInterrupt("other-session");
-  runtime.noteInboundUserMessageInterrupt("session-1");
+  runtime.noteInboundUserMessageInterrupt("other-session", { content: "ignored" });
+  runtime.noteInboundUserMessageInterrupt("session-1", { content: "M1" });
+  runtime.noteInboundUserMessageInterrupt("session-1", { content: "M2" });
   releaseTool?.();
   const result = await run;
 
@@ -122,16 +123,17 @@ test("agent loop runtime appends pending interrupt after completed tool result b
   assert.equal(requests[1].at(-2).role, "tool");
   assert.equal(requests[1].at(-2).toolCallId, "call_1");
   assert.equal(requests[1].at(-1).role, "user");
+  assert.equal(requests[1].at(-1).content, "<new_message>\n[2026-06-12 08:00:00]\nuser:M1\nuser:M2\n</new_message>");
 });
 
 test("pending inbound starts a fresh function-call loop budget after a single output", async () => {
-  const runtime = createAgentLoopRuntime();
+  const runtime = createInterruptRuntime();
   const requests: any[][] = [];
   registerToolPlugins("agent-loop-runtime-interrupt-budget", [{
     id: "interrupt-budget-test",
     listTools: () => [{ name: "test_tool", description: "test", inputSchema: { type: "object" } }],
     async execute(call) {
-      if (call.id === "call_2") runtime.noteInboundUserMessageInterrupt("session-budget");
+      if (call.id === "call_2") runtime.noteInboundUserMessageInterrupt("session-budget", { content: "M3" });
       return { callId: call.id, ok: true, output: "tool ok" };
     }
   }]);
@@ -181,11 +183,69 @@ test("pending inbound starts a fresh function-call loop budget after a single ou
 
   assert.equal(requests.length, 4);
   assert.equal(requests[2].at(-1).role, "user");
-  assert.equal(requests[2].at(-1).name, "Alert");
+  assert.equal(requests[2].at(-1).content, "<new_message>\n[2026-06-12 08:00:00]\nuser:M3\n</new_message>");
+});
+
+test("pending inbound batches are consumed at each interrupt insertion point", async () => {
+  const runtime = createInterruptRuntime();
+  const requests: any[][] = [];
+  registerToolPlugins("agent-loop-runtime-interrupt-batches", [{
+    id: "interrupt-batches-test",
+    listTools: () => [{ name: "test_tool", description: "test", inputSchema: { type: "object" } }],
+    async execute(call) {
+      if (call.id === "call_1") {
+        runtime.noteInboundUserMessageInterrupt("session-batches", { content: "M1" });
+        runtime.noteInboundUserMessageInterrupt("session-batches", { content: "M2" });
+      }
+      if (call.id === "call_2") {
+        runtime.noteInboundUserMessageInterrupt("session-batches", { content: "M3" });
+      }
+      return { callId: call.id, ok: true, output: "tool ok" };
+    }
+  }]);
+  runtime.setRunners({
+    prepareChat() {
+      return {
+        prepare() {
+          return {
+            ...interruptTestSpec(requests, "agent-loop-runtime-interrupt-batches", false),
+            async sendRequest({ round }: { round: number }) {
+              if (round < 2) {
+                return {
+                  message: {
+                    role: "assistant" as const,
+                    content: "",
+                    toolCalls: [{
+                      id: `call_${round + 1}`,
+                      type: "function" as const,
+                      function: { name: "test_tool", arguments: "{}" }
+                    }]
+                  },
+                  finishReason: "tool_calls"
+                };
+              }
+              return { message: { role: "assistant" as const, content: "finished" }, finishReason: "stop" };
+            }
+          };
+        },
+        complete: () => []
+      };
+    }
+  });
+
+  await runtime.requestRun({
+    kind: "chat",
+    sessionId: "session-batches",
+    reason: "test",
+    event: textEvent("session-batches")
+  });
+
+  assert.equal(requests[1].at(-1).content, "<new_message>\n[2026-06-12 08:00:00]\nuser:M1\nuser:M2\n</new_message>");
+  assert.equal(requests[2].at(-1).content, "<new_message>\n[2026-06-12 08:00:00]\nuser:M3\n</new_message>");
 });
 
 test("agent loop runtime resumes yield directly when a user message arrives during yield", async () => {
-  const runtime = createAgentLoopRuntime();
+  const runtime = createInterruptRuntime();
   const requests: any[][] = [];
   let loopStopReason: string | undefined;
   let resumeCalls = 0;
@@ -193,7 +253,7 @@ test("agent loop runtime resumes yield directly when a user message arrives duri
     id: "yield-test",
     listTools: () => [{ name: "Yield", description: "wait", inputSchema: { type: "object" } }],
     async execute(call) {
-      runtime.noteInboundUserMessageInterrupt("session-yield");
+      runtime.noteInboundUserMessageInterrupt("session-yield", { content: "yield message" });
       return { callId: call.id, ok: true, output: "yield", meta: { yieldReturn: true } };
     }
   }]);
@@ -228,19 +288,20 @@ test("agent loop runtime resumes yield directly when a user message arrives duri
   assert.equal(loopStopReason, "completed");
   assert.equal(resumeCalls, 1);
   assert.equal(requests.length, 2);
-  assert.equal(requests[1].at(-1).role, "tool");
-  assert.equal(requests[1].at(-1).toolCallId, "call_1");
-  assert.equal(requests[1].some((message) => message.role === "user" && message.name === "Alert"), false);
+  assert.equal(requests[1].at(-2).role, "tool");
+  assert.equal(requests[1].at(-2).toolCallId, "call_1");
+  assert.equal(requests[1].at(-1).content, "<new_message>\n[2026-06-12 08:00:00]\nuser:yield message\n</new_message>");
+  assert.equal(requests[1].at(-1).name, "Alert");
 });
 
 test("pending inbound starts a fresh function-call loop budget after Yield", async () => {
-  const runtime = createAgentLoopRuntime();
+  const runtime = createInterruptRuntime();
   const requests: any[][] = [];
   registerToolPlugins("agent-loop-runtime-yield-budget", [{
     id: "yield-budget-test",
     listTools: () => [{ name: "Yield", description: "wait", inputSchema: { type: "object" } }],
     async execute(call) {
-      runtime.noteInboundUserMessageInterrupt("session-yield-budget");
+      runtime.noteInboundUserMessageInterrupt("session-yield-budget", { content: "yield budget message" });
       return { callId: call.id, ok: true, output: "yield", meta: { yieldReturn: true } };
     }
   }]);
@@ -269,9 +330,10 @@ test("pending inbound starts a fresh function-call loop budget after Yield", asy
   });
 
   assert.equal(requests.length, 2);
-  assert.equal(requests[1].at(-1).role, "tool");
-  assert.equal(requests[1].at(-1).name, "Yield");
-  assert.equal(requests[1].some((message) => message.role === "user" && message.name === "Alert"), false);
+  assert.equal(requests[1].at(-2).role, "tool");
+  assert.equal(requests[1].at(-2).name, "Yield");
+  assert.equal(requests[1].at(-1).role, "user");
+  assert.equal(requests[1].at(-1).name, "Alert");
 });
 
 test("agent loop runtime executes prepared chat runs through the function-call loop", async () => {
@@ -383,7 +445,7 @@ function interruptTestSpec(requests: any[][], toolRegistryName: string, yieldRet
           meta: { title: "Interrupt Layer", enabled: true },
           role: "user" as const,
           name: "Alert",
-          content: "<Alert info=\"have a new message\" />"
+          content: "<new_message>\n${{interrupt/messages/content}}\n</new_message>"
         }]
       }
     },
@@ -415,4 +477,13 @@ function interruptTestSpec(requests: any[][], toolRegistryName: string, yieldRet
     },
     toolRegistryName
   };
+}
+
+function createInterruptRuntime() {
+  return createAgentLoopRuntime({}, {
+    formatInboundUserMessageInterrupts(messages) {
+      const lines = messages.map((message) => `user:${(message as { content: string }).content}`);
+      return ["[2026-06-12 08:00:00]", ...lines].join("\n");
+    }
+  });
 }

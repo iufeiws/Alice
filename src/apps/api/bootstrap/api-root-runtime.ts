@@ -7,6 +7,8 @@ import { updateEnvFile } from "../server/env-file.js";
 import { createApiAgentStackRuntime } from "./api-agent-stack-runtime.js";
 import { createApiControlRuntime } from "./api-control-runtime.js";
 import { createAgentLoopRuntime } from "../../../contexts/agent-loop/src/runtime/agent-loop-runtime.js";
+import type { StoredConversationMessage } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
+import { formatCheckChatMessages } from "../../../capabilities/tools/messaging/src/index.js";
 import { createJsonProcessRestartContinuationStore } from "../../../contexts/agent-loop/src/adapters/json-process-restart-continuation-store.js";
 import { createSessionClearCoordinator } from "../../../contexts/llm-session/src/application/session-clear-coordinator.js";
 import { createShortMemoryStore } from "../../../contexts/memory/src/short-memory-store.js";
@@ -20,8 +22,15 @@ const crypto = await import("node:crypto");
 
 export function createApiRootRuntime() {
   const apiRuntimeState = createApiRuntimeState();
-  const agentLoopRuntime = createAgentLoopRuntime();
   const foundation = createApiFoundationRuntime();
+  const agentLoopRuntime = createAgentLoopRuntime({}, {
+    formatInboundUserMessageInterrupts(messages) {
+      return formatCheckChatMessages(messages as StoredConversationMessage[], {
+        timeZone: foundation.currentTime.timeZone,
+        userName: foundation.config.project.username
+      });
+    }
+  });
   let refreshDefaultToolRegistry: (() => void) | undefined;
   const processRestartContinuationStore = createJsonProcessRestartContinuationStore(
     path.join(foundation.config.memoryFiles.root, "agent-loop", "process-restart-continuation.json")

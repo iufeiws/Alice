@@ -12,7 +12,7 @@
         "enabled": true
       },
       "role": "user",
-      "content": "<system_reminder>\n这是一次随机间隔的唤醒, 用于触发随机主动行为\n看看有什么可以做的, 或者找找${{user}}进行互动(任何你能想到的, 但避免重复过去的行为), 也可以什么也不做\n</system_reminder>"
+      "content": "<system_reminder>\n这是一次随机间隔的唤醒, 用于触发随机主动行为或继续会话\n看看刚刚的互动是否已经结束, 是否需要继续? 或者找找${{user}}进行互动(任何你能想到的, 但避免重复过去的行为), 也可以什么也不做\n</system_reminder>"
     }
   ]
 }

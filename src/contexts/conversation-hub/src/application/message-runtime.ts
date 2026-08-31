@@ -136,7 +136,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   // §7.1: 无论 runtime 由调用方注入还是本 runtime 自建, 都把 chat/talk 的 prepare 跑者
   // 接到本 runtime 的 deps(测试注入裸 runtime 时同样可用; 生产值与 root 注入一致)。
   agentLoopRuntime.setRunners({
-    prepareChat: ({ event, agentLoopRunSeq }) => deps.chatAgent.prepareEventRun(event, { agentLoopRunSeq }),
+    prepareChat: ({ event, agentLoopRunSeq, appendSessionContextAfterFailedRequest }) => deps.chatAgent.prepareEventRun(event, {
+      agentLoopRunSeq,
+      appendSessionContextAfterFailedRequest
+    }),
     prepareTalk: ({ sessionId, signal, agentLoopRunSeq }) => deps.talkRuntime?.prepareReadyAgentLoopSession?.(sessionId, { signal, agentLoopRunSeq })
   });
   const heartbeat = createAgentHeartbeatRuntime({
@@ -484,13 +487,17 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     }
   }
 
-  async function runGeneratedSession(event: AgentEvent, label: string): Promise<boolean> {
+  async function runGeneratedSession(
+    event: AgentEvent,
+    label: string,
+    options: { appendSessionContextAfterFailedRequest?: boolean } = {}
+  ): Promise<boolean> {
     if (processingSessions.has(event.externalSession.sessionId)) return false;
     processingSessions.add(event.externalSession.sessionId);
     try {
       await setTypingIndicator({ ...event.source, sessionId: event.externalSession.sessionId, typing: true });
       deps.appendLog("info", `${label} session started: ${event.externalSession.sessionId}`);
-      const outputs = await runChatEvent(event, label);
+      const outputs = await runChatEvent(event, label, options);
       const outboundMessages = outputs.map((output) => deps.store.insertOutboundMessage({
         plugin: output.target.plugin,
         conversationId: output.target.sessionId,
@@ -554,7 +561,26 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     if (!event || snapshot?.state !== "waiting" || !snapshot.nextTransitionAt) return false;
     if (parseZonedIso(snapshot.nextTransitionAt, time.timeZone).getTime() > now().getTime()) return false;
     if (!canRunHeartbeat()) return true;
-    await runGeneratedSession(event, "failed agent retry");
+    const sessionId = event.externalSession.sessionId;
+    const pending = deps.store.listUnprocessedCoreMessagesForConversation(sessionId, Number.MAX_SAFE_INTEGER);
+    const failedPendingIds = new Set(pendingMessageIds(event));
+    const hasNewPendingMessages = pending.some((message) => !failedPendingIds.has(message.id));
+    const retryEvent = hasNewPendingMessages
+      ? buildAgentEventFromMessageLog({
+          sessionId,
+          pending,
+          latestEvent: latestSessionEvents.get(sessionId) ?? event,
+          allSessionLogs: deps.store.listMessagesForConversation(sessionId, 30)
+        })
+      : event;
+    const recovered = await runGeneratedSession(retryEvent, "failed agent retry", {
+      appendSessionContextAfterFailedRequest: hasNewPendingMessages
+    });
+    if (recovered && pending.length > 0) {
+      const processedAt = time.now().iso;
+      deps.store.markMessagesCoreProcessed(pending.map((message) => message.id), processedAt, createId("failed_retry"));
+      deps.agentState?.noteInboundProcessed?.();
+    }
     return true;
   }
 
@@ -567,14 +593,19 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     return result.started;
   }
 
-  async function runChatEvent(event: AgentEvent, reason: string): Promise<AgentOutput[]> {
+  async function runChatEvent(
+    event: AgentEvent,
+    reason: string,
+    options: { appendSessionContextAfterFailedRequest?: boolean } = {}
+  ): Promise<AgentOutput[]> {
     let result;
     try {
       result = await agentLoopRuntime.requestRun({
         kind: "chat",
         sessionId: event.externalSession.sessionId,
         reason,
-        event
+        event,
+        appendSessionContextAfterFailedRequest: options.appendSessionContextAfterFailedRequest
       });
     } catch (error) {
       failedAgentSessionEvent = event;
@@ -626,12 +657,18 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       allSessionLogs: deps.store.listMessagesForConversation(sessionId, 30)
     });
     deps.appendLog("info", `chat session processing from message log: ${sessionId} pending=${pending.length}`);
+    const continuesFailedSession = failedAgentSessionEvent?.externalSession.sessionId === sessionId;
+    const failedPendingIds = new Set(pendingMessageIds(failedAgentSessionEvent));
+    const hasNewPendingMessagesAfterFailure = continuesFailedSession
+      && pending.some((message) => !failedPendingIds.has(message.id));
 
     await setTypingIndicator(typingTargetFromPending(sessionId, pending, agentEvent, true));
     try {
       let outputs: AgentOutput[];
       try {
-        outputs = await runChatEvent(agentEvent, "dirty_session");
+        outputs = await runChatEvent(agentEvent, "dirty_session", {
+          appendSessionContextAfterFailedRequest: hasNewPendingMessagesAfterFailure
+        });
       } catch (error) {
         if (isAgentLoopBusyError(error)) {
           deps.appendLog("warn", `chat session skipped: agent loop busy ${sessionId}`);
@@ -639,7 +676,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
         }
         const errorText = formatErrorNotice(error);
         await sendSystemNotice({ target: typingTargetFromPending(sessionId, pending, agentEvent, false), text: errorText });
-        markPendingCoreFailed(pending, error);
+        if (!continuesFailedSession) markPendingCoreFailed(pending, error);
         throw error;
       }
       const outboundMessages = outputs.map((output) => deps.store.insertOutboundMessage({
@@ -894,7 +931,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   }
 }
 
-function pendingMessageIds(event: AgentEvent): number[] {
+function pendingMessageIds(event: AgentEvent | undefined): number[] {
+  if (!event) return [];
   if (!event.meta.raw || typeof event.meta.raw !== "object") return [];
   const value = (event.meta.raw as { pendingIds?: unknown }).pendingIds;
   if (!Array.isArray(value)) return [];

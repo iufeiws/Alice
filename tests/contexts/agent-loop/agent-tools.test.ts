@@ -65,6 +65,61 @@ test("chat agent exposes platform-neutral tools", async () => {
   assert.equal(requests[0].tools?.[0].function.name, "Chat");
 });
 
+test("chat agent appends session context when a failed request is retried with new pending messages", async () => {
+  const requests: LLMChatInput[] = [];
+  const promptToolOutputs: string[] = [];
+  let attempts = 0;
+  const core = createChatAgent({
+    config: loadConfig({ LLM_MODEL: "test-model", LLM_STREAM_ENABLED: "false" }),
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-08-24T00:00:00.000Z")),
+    llm: {
+      async chat(input) {
+        requests.push(input);
+        attempts += 1;
+        if (attempts === 1) throw new Error("upstream stream aborted");
+        return { message: { role: "assistant", content: "recovered" } };
+      }
+    },
+    outputRouter: createOutputRouter(),
+    intentRouter: createIntentRouter(),
+    sessionResolver: createSessionResolver(),
+    policy: createAllowAllPolicy(),
+    getPromptProfile: () => ({
+      visibleTools: { feishu: true },
+      layers: [
+        { id: "static", title: "Static", role: "system", enabled: true, content: "system", order: 1 }
+      ],
+      appendLayers: [
+        {
+          id: "append_chat",
+          title: "Append chat",
+          role: "tool_request",
+          enabled: true,
+          content: "",
+          toolCalls: [{ toolName: "Chat", toolArguments: "{\"action\":\"poll\"}" }],
+          order: 1
+        }
+      ]
+    }),
+    tools: [{
+      id: "messaging",
+      listTools() {
+        return [{ name: "Chat", description: "view", inputSchema: { type: "object" } }];
+      },
+      async execute(call) {
+        promptToolOutputs.push(call.toolName);
+        return { callId: call.id, ok: true, output: "I1\nI2" };
+      }
+    }]
+  });
+
+  await assert.rejects(() => runPreparedChatEvent(core, textEvent()), /upstream stream aborted/);
+  await runPreparedChatEvent(core, textEvent(), { appendSessionContextAfterFailedRequest: true });
+
+  assert.deepEqual(promptToolOutputs, ["Chat"]);
+  assert.equal(requests[1].messages.some((message) => message.role === "tool" && message.content === "I1\nI2"), true);
+});
+
 test("chat agent resolves tool calls before final reply", async () => {
   const requests: LLMChatInput[] = [];
   const toolCalls: ToolCall[] = [];

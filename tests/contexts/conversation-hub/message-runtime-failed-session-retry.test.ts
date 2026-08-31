@@ -125,3 +125,64 @@ test("failed retry keeps the flag and postpones the next waiting state switch", 
   assert.deepEqual(clearReasons, []);
   await runtime.flushAll();
 });
+
+test("failed retry appends newly pending messages once and marks them processed after recovery", async () => {
+  let current = new Date("2026-08-24T00:00:00.000Z");
+  const agentState = createAgentStateController({
+    store: memoryStore(),
+    now: () => current,
+    random: () => 0
+  });
+  const store = createAliceStore(path.join(makeTempDir("failed-session-new-pending"), "alice.sqlite"));
+  const retryPendingIds: number[][] = [];
+  const appendAfterFailureFlags: Array<boolean | undefined> = [];
+  let attempts = 0;
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 0,
+    startHeartbeatPaused: true,
+    now: () => current,
+    agentState,
+    clearLLMSession() {},
+    store,
+    chatAgent: {
+      async prepareEventRun(event, options) {
+        attempts += 1;
+        appendAfterFailureFlags.push(options?.appendSessionContextAfterFailedRequest);
+        const raw = event.meta.raw as { pendingIds?: number[] } | undefined;
+        retryPendingIds.push(raw?.pendingIds ?? []);
+        agentState.restartInactivityTimer();
+        if (attempts <= 2) throw new Error("upstream stream aborted");
+        return [textOutput(event.externalSession.sessionId, "retry succeeded")];
+      }
+    },
+    outputRouter: { async sendAll() {} },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: current.toISOString(), ...input });
+    }
+  });
+
+  await runtime.ingestEvent(textEvent("session-1", "om_r", "R"));
+  await runtime.processNow();
+  await runtime.ingestEvent(textEvent("session-1", "om_i1", "I1"));
+  await runtime.ingestEvent(textEvent("session-1", "om_i2", "I2"));
+  const pendingBeforeRetry = store.listUnprocessedCoreMessagesForConversation("session-1", 10);
+  assert.deepEqual(pendingBeforeRetry.map((message) => message.contentText), ["I1", "I2"]);
+
+  await runtime.processNow();
+
+  assert.deepEqual(retryPendingIds[1], pendingBeforeRetry.map((message) => message.id));
+  assert.equal(appendAfterFailureFlags[1], true, "首次重试必须追加失败后到达的 I1/I2");
+  assert.deepEqual(
+    store.listUnprocessedCoreMessagesForConversation("session-1", 10).map((message) => message.contentText),
+    ["I1", "I2"],
+    "重试再次失败时 I1/I2 必须保持 pending"
+  );
+
+  await runtime.processNow();
+
+  assert.deepEqual(retryPendingIds[2], pendingBeforeRetry.map((message) => message.id));
+  assert.equal(appendAfterFailureFlags[2], false, "相同失败 request 再次重试时不得重复追加 I1/I2");
+  assert.deepEqual(store.listUnprocessedCoreMessagesForConversation("session-1", 10), []);
+  await runtime.flushAll();
+});

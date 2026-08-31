@@ -78,7 +78,7 @@ export type MessageRuntimeDeps = {
     updateMessageReaction(input: UpdateMessageReactionInput): boolean;
   };
   chatAgent: {
-    prepareEventRun(event: AgentEvent, options?: { agentLoopRunSeq?: number }): Promise<PreparedAgentLoopRun | AgentOutput[]> | PreparedAgentLoopRun | AgentOutput[];
+    prepareEventRun(event: AgentEvent, options?: { agentLoopRunSeq?: number; appendSessionContextAfterFailedRequest?: boolean }): Promise<PreparedAgentLoopRun | AgentOutput[]> | PreparedAgentLoopRun | AgentOutput[];
   };
   agentState?: Pick<
     AgentStateController,

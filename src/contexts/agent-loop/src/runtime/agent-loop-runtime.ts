@@ -77,6 +77,7 @@ export type AgentLoopChatRunRequest = {
   sessionId: string;
   reason: string;
   event: AgentEvent;
+  appendSessionContextAfterFailedRequest?: boolean;
 };
 
 export type AgentLoopTalkRunRequest = {
@@ -101,7 +102,7 @@ export type PreparedAgentLoopRun = {
 };
 
 export type AgentLoopRunners = {
-  prepareChat(input: { event: AgentEvent; sessionId: string; reason: string; signal: AbortSignal; agentLoopRunSeq: number }): Promise<PreparedAgentLoopRun | AgentOutput[]> | PreparedAgentLoopRun | AgentOutput[];
+  prepareChat(input: { event: AgentEvent; sessionId: string; reason: string; signal: AbortSignal; agentLoopRunSeq: number; appendSessionContextAfterFailedRequest?: boolean }): Promise<PreparedAgentLoopRun | AgentOutput[]> | PreparedAgentLoopRun | AgentOutput[];
   prepareTalk(input: { sessionId: number; reason: string; signal: AbortSignal; agentLoopRunSeq: number }): Promise<PreparedAgentLoopRun | void> | PreparedAgentLoopRun | void;
 };
 
@@ -370,7 +371,8 @@ export function createAgentLoopRuntime(
         sessionId: request.sessionId,
         reason: request.reason,
         signal,
-        agentLoopRunSeq
+        agentLoopRunSeq,
+        appendSessionContextAfterFailedRequest: request.appendSessionContextAfterFailedRequest
       }), request);
     }
     if (!runners.prepareTalk) throw new Error("agent_loop_talk_runner_unavailable");
@@ -416,6 +418,10 @@ export function createAgentLoopRuntime(
               return options.formatInboundUserMessageInterrupts(pending);
             }
             return spec.runtimeInterrupts?.consumePendingUserMessageContent?.();
+          },
+          discardPendingUserMessage() {
+            pendingUserMessageInterrupts.delete(String(request.sessionId));
+            spec.runtimeInterrupts?.discardPendingUserMessage?.();
           }
         }
       });

@@ -244,7 +244,7 @@ test("pending inbound batches are consumed at each interrupt insertion point", a
   assert.equal(requests[2].at(-1).content, "<new_message>\n[2026-06-12 08:00:00]\nuser:M3\n</new_message>");
 });
 
-test("agent loop runtime resumes yield directly when a user message arrives during yield", async () => {
+test("agent loop runtime resumes yield from Chat poll after the poll clears the interrupt", async () => {
   const runtime = createInterruptRuntime();
   const requests: any[][] = [];
   let loopStopReason: string | undefined;
@@ -265,6 +265,7 @@ test("agent loop runtime resumes yield directly when a user message arrives duri
             ...interruptTestSpec(requests, "agent-loop-runtime-yield-interrupt", true),
             buildYieldResumeMessages() {
               resumeCalls += 1;
+              runtime.clearPendingUserMessageInterrupts("session-yield");
               return [{ role: "tool" as const, name: "Yield", toolCallId: "call_1", content: "resume" }];
             }
           };
@@ -288,13 +289,12 @@ test("agent loop runtime resumes yield directly when a user message arrives duri
   assert.equal(loopStopReason, "completed");
   assert.equal(resumeCalls, 1);
   assert.equal(requests.length, 2);
-  assert.equal(requests[1].at(-2).role, "tool");
-  assert.equal(requests[1].at(-2).toolCallId, "call_1");
-  assert.equal(requests[1].at(-1).content, "<new_message>\n[2026-06-12 08:00:00]\nuser:yield message\n</new_message>");
-  assert.equal(requests[1].at(-1).name, "Alert");
+  assert.equal(requests[1].at(-1).role, "tool");
+  assert.equal(requests[1].at(-1).toolCallId, "call_1");
+  assert.equal(requests[1].some((message) => message.role === "user" && message.name === "Alert"), false);
 });
 
-test("pending inbound starts a fresh function-call loop budget after Yield", async () => {
+test("Yield discards its pending interrupt and starts a fresh function-call loop budget", async () => {
   const runtime = createInterruptRuntime();
   const requests: any[][] = [];
   registerToolPlugins("agent-loop-runtime-yield-budget", [{
@@ -330,10 +330,9 @@ test("pending inbound starts a fresh function-call loop budget after Yield", asy
   });
 
   assert.equal(requests.length, 2);
-  assert.equal(requests[1].at(-2).role, "tool");
-  assert.equal(requests[1].at(-2).name, "Yield");
-  assert.equal(requests[1].at(-1).role, "user");
-  assert.equal(requests[1].at(-1).name, "Alert");
+  assert.equal(requests[1].at(-1).role, "tool");
+  assert.equal(requests[1].at(-1).name, "Yield");
+  assert.equal(requests[1].some((message) => message.role === "user" && message.name === "Alert"), false);
 });
 
 test("agent loop runtime executes prepared chat runs through the function-call loop", async () => {

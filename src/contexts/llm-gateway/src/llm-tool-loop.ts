@@ -170,6 +170,7 @@ export type LLMToolLoopInput = {
   runtimeInterrupts?: {
     hasPendingUserMessage(): boolean;
     consumePendingUserMessageContent(): string | undefined;
+    discardPendingUserMessage(): void;
   };
   buildYieldResumeMessages?(input: {
     round: number;
@@ -442,18 +443,17 @@ export async function runLLMToolLoop(input: LLMToolLoopInput): Promise<LLMToolLo
       const resumeMessages = input.runtimeInterrupts?.hasPendingUserMessage() === true
         ? await Promise.resolve(input.buildYieldResumeMessages?.({ round, messages, result }) ?? [])
         : [];
-      const interruptMessages = resumeMessages.length > 0
-        ? consumePendingUserMessageInterruptMessages(input, request)
-        : [];
-      if (resumeMessages.length > 0 && interruptMessages.length > 0) {
+      if (resumeMessages.length > 0) {
+        // Yield 的恢复消息已经包含 Chat poll 结果；同一批 Interrupt 若再渲染为
+        // <new_message> 会重复。即使 poll 已先清空批次，也必须仅凭恢复消息继续 loop。
+        input.runtimeInterrupts?.discardPendingUserMessage();
         replyRound = -1;
         replyToolCallCount = 0;
         reachedToolCallLimit = false;
         previousAssistantMessageSignature = undefined;
         messages = [
           ...messages,
-          ...cloneLLMMessages(resumeMessages),
-          ...cloneLLMMessages(interruptMessages)
+          ...cloneLLMMessages(resumeMessages)
         ];
         await input.onMessagesChanged?.({
           round,

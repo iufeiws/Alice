@@ -120,8 +120,12 @@ function normalizeTestPromptProfile(profile: PromptProfile | Record<string, any>
   };
 }
 
-export async function runPreparedChatEvent(core: TestChatAgent, event: AgentEvent): Promise<AgentOutput[]> {
-  const prepared = await core.prepareEventRun(event);
+export async function runPreparedChatEvent(
+  core: TestChatAgent,
+  event: AgentEvent,
+  options?: Parameters<TestChatAgent["prepareEventRun"]>[1]
+): Promise<AgentOutput[]> {
+  const prepared = await core.prepareEventRun(event, options);
   if (Array.isArray(prepared)) return prepared;
   try {
     const spec = await Promise.resolve(prepared.prepare ? prepared.prepare() : prepared.spec);

@@ -238,21 +238,25 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
     transformToolInput: (toolName, toolInput) => fixedPrefixToolInput(toolName, toolInput, session),
     async afterToolResult({ call, result, toolInput, toolResult, toolMessage, toolDefinition }): Promise<AgentFunctionCallToolExecution> {
       noteMessageDeliveryToolResult(messageDeliveryState, toolDefinition?.sendsMessage === true, toolResult.ok);
+      let effectiveToolResult = toolResult;
       if (shouldDeferYieldForMessageDelivery(call.function.name, toolInput, toolResult)
         && queueMessageDeliveryReminder(input, messageDeliveryState, "silentEnding")) {
-        input.setLastCompletedToolName(call.function.name);
-        return { message: toolMessage, control: {} };
+        const reminderError = takeMessageDeliveryReminderError(input, messageDeliveryState, "silentEnding");
+        if (reminderError !== undefined) {
+          effectiveToolResult = { callId: toolResult.callId, ok: false, error: reminderError };
+          toolMessage.content = `error: ${reminderError}`;
+        }
       }
-      const followup = buildToolFollowupLLMMessages(toolResult, llmCapabilities);
+      const followup = buildToolFollowupLLMMessages(effectiveToolResult, llmCapabilities);
       if (followup.toolNotices.length > 0) {
         toolMessage.content = [toolMessage.content, ...followup.toolNotices].filter(Boolean).join("\n");
       }
 
-      if (isWaitChatToolName(call.function.name) && toolResult.meta?.yieldReturn === true) {
+      if (isWaitChatToolName(call.function.name) && effectiveToolResult.meta?.yieldReturn === true) {
         const nowMs = input.time.now().epochMs;
-        const yieldSeconds = Number(toolResult.meta.yieldSeconds);
+        const yieldSeconds = Number(effectiveToolResult.meta.yieldSeconds);
         session.waitChatStartedAt = nowMs;
-        session.waitChatMode = toolResult.meta.yieldAction;
+        session.waitChatMode = effectiveToolResult.meta.yieldAction;
         session.waitChatUntil = Number.isFinite(yieldSeconds)
           ? nowMs + yieldSeconds * 1000
           : undefined;
@@ -261,23 +265,23 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
           externalSession: { ...input.event.externalSession }
         };
       }
-      if (toolResult.llmSessionClearReason === "yield_end") clearReason = "yield_end";
+      if (effectiveToolResult.llmSessionClearReason === "yield_end") clearReason = "yield_end";
       input.setLastCompletedToolName(call.function.name);
       const execution = resolveChatLoopToolControl({
         call,
         toolInput,
-        toolResult,
+        toolResult: effectiveToolResult,
         toolMessage,
         session,
         llmResult: result,
         nowMs: input.time.now().epochMs
       });
-      if (toolResult.clearFixedPrefix) input.onFixedPrefixCleared?.(session);
+      if (effectiveToolResult.clearFixedPrefix) input.onFixedPrefixCleared?.(session);
       if (execution.modeState) input.applyModeStateToNewSession(execution.modeState);
       // §7.1: session rebuild 路径(mode_transition 清除)必须完成后才继续下一轮 loop。
       let sessionRebuiltResult: unknown;
       if (execution.sessionRebuilt) sessionRebuiltResult = await input.onSessionRebuilt?.();
-      if (toolResult.appendAlbertMessage) {
+      if (effectiveToolResult.appendAlbertMessage) {
         if (!execution.sessionRebuilt || !isClearedSessionResult(sessionRebuiltResult)) {
           throw new Error("yield_clear_session_not_cleared");
         }
@@ -286,7 +290,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
           callId: call.id,
           requester: input.event.source,
           externalSession: input.event.externalSession,
-          contentText: toolResult.appendAlbertMessage.contentText
+          contentText: effectiveToolResult.appendAlbertMessage.contentText
         });
       }
       return followup.messages.length > 0
@@ -561,6 +565,18 @@ function takeMessageDeliveryReminderFollowup(
   setReminderInjected(state, kind);
   setReminderPending(state, kind, false);
   return { messages, continue: true };
+}
+
+function takeMessageDeliveryReminderError(
+  input: ChatAgentLoopInput,
+  state: MessageDeliveryReminderState,
+  kind: MessageDeliveryReminderKind
+): string | undefined {
+  const followup = takeMessageDeliveryReminderFollowup(input, state, kind);
+  if (!followup) return undefined;
+  return followup.messages
+    .map((message) => messageContentText(message.content))
+    .join("\n");
 }
 
 function takePendingMessageDeliveryReminderFollowup(

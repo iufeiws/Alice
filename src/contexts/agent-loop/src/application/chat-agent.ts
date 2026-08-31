@@ -153,7 +153,7 @@ export type ChatAgentDeps = {
 export interface ChatAgent {
   start(): Promise<void>;
   stop(): Promise<void>;
-  prepareEventRun(event: AgentEvent, options?: { agentLoopRunSeq?: number; signal?: AbortSignal }): Promise<PreparedAgentLoopRun | AgentOutput[]>;
+  prepareEventRun(event: AgentEvent, options?: { agentLoopRunSeq?: number; signal?: AbortSignal; appendSessionContextAfterFailedRequest?: boolean }): Promise<PreparedAgentLoopRun | AgentOutput[]>;
   getState(): AgentStateSnapshot | undefined;
   registerChannel(plugin: ChannelPlugin): void;
   clearLLMSession(reason: LLMSessionClearReason): Promise<SessionClearResult>;
@@ -465,7 +465,11 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
           }
           return;
         }
-        if (session.skipNextAppendLayers) return;
+        if (session.skipNextAppendLayers) {
+          if (!options.appendSessionContextAfterFailedRequest) return;
+          session.skipNextAppendLayers = undefined;
+          noteLLMSessionUpdated(session);
+        }
         // await_chat 定时超时且无新消息: 直接结束会话(yield_end), 不恢复 loop。
         if (session.waitChatMode === "await_chat" && agentInitiatedTriggerEventFromRaw(event.meta.raw) === "yield.timeout") {
           clearWaitState(session);

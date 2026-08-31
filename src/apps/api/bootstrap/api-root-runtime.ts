@@ -190,7 +190,11 @@ export function createApiRootRuntime() {
     appendAlbertMessage: (message) => apiServerStackRuntime.apiCommunicationRuntime.messageRuntime.appendAlbertMessage(message)
   });
   agentLoopRuntime.setRunners({
-    prepareChat: ({ event, signal, agentLoopRunSeq }) => apiAgentStackRuntime.chatAgent.prepareEventRun(event, { signal, agentLoopRunSeq }),
+    prepareChat: ({ event, signal, agentLoopRunSeq, appendSessionContextAfterFailedRequest }) => apiAgentStackRuntime.chatAgent.prepareEventRun(event, {
+      signal,
+      agentLoopRunSeq,
+      appendSessionContextAfterFailedRequest
+    }),
     prepareTalk: ({ sessionId, signal, agentLoopRunSeq }) => apiAgentStackRuntime.talkRuntime.prepareReadyAgentLoopSession(sessionId, { signal, agentLoopRunSeq }) as any
   });
   const apiServerStackRuntime = createApiServerStackRuntime({

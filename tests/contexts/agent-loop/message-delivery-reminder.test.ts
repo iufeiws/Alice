@@ -178,7 +178,7 @@ test("restored continuation state keeps the reminder deduplicated", async () => 
 });
 
 for (const action of ["finish", "await_chat"] as const) {
-  test(`Yield ${action} is deferred once for the user reminder`, async () => {
+  test(`Yield ${action} returns the reminder as a tool error once`, async () => {
     const seenRequests: Array<Array<{ role: string; content?: unknown }>> = [];
     const calls: ToolCall[] = [];
     const loop = createReminderLoop({
@@ -196,8 +196,13 @@ for (const action of ["finish", "await_chat"] as const) {
     assert.equal(result.stopReason, "completed");
     assert.equal(result.invalidateSession, false);
     assert.equal(seenRequests.length, 2);
-    assert.equal(seenRequests[1].at(-1)?.content, silentEndingReminderContent);
-    assert.equal(result.messages.filter((message) => message.content === silentEndingReminderContent).length, 1);
+    assert.deepEqual(seenRequests[1].slice(-2).map(({ role, content }) => ({ role, content })), [
+      { role: "assistant", content: "" },
+      { role: "tool", content: `error: ${silentEndingReminderContent}` }
+    ]);
+    assert.equal(result.messages.some((message) =>
+      message.role === "user" && message.content === silentEndingReminderContent
+    ), false);
   });
 }
 

@@ -88,7 +88,7 @@ test("chat loop preserves assistant content without synthesizing a Chat tool cal
       ];
     },
     async execute(call) {
-      if (call.toolName === "Chat") sent.push(`${call.input.alice ?? ""}:${call.input.type ?? ""}:${call.input.content ?? ""}`);
+      if (call.toolName === "Chat") sent.push(`${call.input.speaker ?? ""}:${call.input.type ?? ""}:${call.input.content ?? ""}`);
       return { callId: call.id, ok: true, output: "ok" };
     }
   }];

@@ -158,6 +158,31 @@ test("SubAgent rejects legacy actions, mode, empty entry ids and extra fields", 
   await runtime.stop();
 });
 
+test("SubAgent invalid input errors identify the exact parameter problem", async () => {
+  const worker = fakeWorker();
+  const runtime = createPiWorkerRuntime({ worker, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
+  await runtime.start();
+  const tool = createSubAgentTool({ runtime });
+
+  await assert.rejects(
+    tool.execute({ id: "spawn-nickname", toolName: "SubAgent", input: { action: "spawn", message: "task", nickname: "test-alice" } }),
+    /invalid_subagent_input: spawn 不应提供参数 nickname/
+  );
+  await assert.rejects(
+    tool.execute({ id: "spawn-message", toolName: "SubAgent", input: { action: "spawn" } }),
+    /invalid_subagent_input: spawn 缺少必填参数 message/
+  );
+  await assert.rejects(
+    tool.execute({ id: "wait-timeout", toolName: "SubAgent", input: { action: "wait", nickname: "pikachu", timeoutSeconds: 0 } }),
+    /invalid_subagent_input: wait 的 timeoutSeconds 必须是大于 0 的有限数字/
+  );
+  await assert.rejects(
+    tool.execute({ id: "unknown-action", toolName: "SubAgent", input: { action: "start", message: "task" } }),
+    /invalid_subagent_input: 不支持的 action start/
+  );
+  await runtime.stop();
+});
+
 test("Pi image tool results become image follow-up attachments for multimodal Chat", async () => {
   const worker = fakeWorker();
   worker.executeTool = async () => ({ ok: true, content: [{ type: "text", text: "photo" }, { type: "image", data: "aGVsbG8=", mimeType: "image/png" }] });

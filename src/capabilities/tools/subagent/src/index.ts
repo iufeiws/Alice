@@ -155,7 +155,51 @@ function parseInput(call: ToolCall): SubAgentInput {
   if (action === "fork" && onlyKeys(input, ["action", "nickname", "entryId"]) && typeof input.nickname === "string" && input.nickname.trim() && (input.entryId === undefined || typeof input.entryId === "string" && input.entryId.trim())) {
     return { action, nickname: input.nickname, ...(typeof input.entryId === "string" ? { entryId: input.entryId } : {}) };
   }
-  throw new Error("invalid_subagent_input");
+  throw new Error(explainInvalidInput(input, action));
+}
+
+const allowedKeysByAction: Record<string, readonly string[]> = {
+  spawn: ["action", "message", "timeoutSeconds"],
+  messages: ["action", "nickname", "access"],
+  result: ["action", "nickname"],
+  send: ["action", "nickname", "message", "timeoutSeconds"],
+  status: ["action", "nickname"],
+  wait: ["action", "nickname", "timeoutSeconds"],
+  cancel: ["action", "nickname"],
+  fork: ["action", "nickname", "entryId"]
+};
+
+const requiredStringFieldsByAction: Record<string, readonly string[]> = {
+  spawn: ["message"],
+  messages: ["nickname", "access"],
+  result: ["nickname"],
+  send: ["nickname", "message"],
+  status: ["nickname"],
+  wait: ["nickname"],
+  cancel: ["nickname"],
+  fork: ["nickname"]
+};
+
+function explainInvalidInput(input: Record<string, unknown>, action: unknown): string {
+  if (typeof action !== "string" || !action) return "invalid_subagent_input: 缺少必填参数 action";
+  const allowedKeys = allowedKeysByAction[action];
+  if (!allowedKeys) return `invalid_subagent_input: 不支持的 action ${action}`;
+
+  const unexpectedKeys = Object.keys(input).filter((key) => !allowedKeys.includes(key));
+  if (unexpectedKeys.length > 0) return `invalid_subagent_input: ${action} 不应提供参数 ${unexpectedKeys.join(", ")}`;
+
+  for (const field of requiredStringFieldsByAction[action] ?? []) {
+    const value = input[field];
+    if (value === undefined) return `invalid_subagent_input: ${action} 缺少必填参数 ${field}`;
+    if (typeof value !== "string" || !value.trim()) return `invalid_subagent_input: ${action} 的 ${field} 必须是非空字符串`;
+  }
+  if (input.timeoutSeconds !== undefined && !validTimeout(input.timeoutSeconds)) {
+    return `invalid_subagent_input: ${action} 的 timeoutSeconds 必须是大于 0 的有限数字`;
+  }
+  if (input.entryId !== undefined && (typeof input.entryId !== "string" || !input.entryId.trim())) {
+    return `invalid_subagent_input: ${action} 的 entryId 必须是非空字符串`;
+  }
+  return `invalid_subagent_input: ${action} 的参数无效`;
 }
 
 function onlyKeys(input: Record<string, unknown>, allowed: string[]): boolean {

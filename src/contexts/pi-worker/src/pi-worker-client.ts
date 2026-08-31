@@ -13,8 +13,7 @@ export function createPiWorkerHttpClient(input: { baseURL: string; token?: strin
       return request<PiWorkerHealth>("/health", { method: "GET", signal });
     },
     executeTool(body) {
-      const errorCode = body.toolName === "bash" ? "shell_tool_request_failed" : "file_tool_request_failed";
-      return request<PiToolExecutionResult>("/tools/execute", { method: "POST", body, signal: body.signal }, errorCode);
+      return request<PiToolExecutionResult>("/tools/execute", { method: "POST", body, signal: body.signal }, toolRequestErrorMessage);
     },
     startInvocation(body) {
       return request<PiInvocation>("/invocations", { method: "POST", body, signal: body.signal });
@@ -54,7 +53,7 @@ export function createPiWorkerHttpClient(input: { baseURL: string; token?: strin
     }
   };
 
-  async function request<T>(path: string, init: { method: string; body?: unknown; signal?: AbortSignal }, errorCode = "pi_worker_request_failed"): Promise<T> {
+  async function request<T>(path: string, init: { method: string; body?: unknown; signal?: AbortSignal }, formatError: RequestErrorFormatter = defaultRequestErrorMessage): Promise<T> {
     const headers: Record<string, string> = { ...authHeaders };
     if (init.body !== undefined) headers["content-type"] = "application/json";
     const response = await fetchImpl(`${baseURL}${path}`, {
@@ -70,9 +69,22 @@ export function createPiWorkerHttpClient(input: { baseURL: string; token?: strin
     } catch {
       payload = text;
     }
-    if (!response.ok) throw new Error(`${errorCode}:${response.status}:${typeof payload === "string" ? payload : JSON.stringify(payload)}`);
+    if (!response.ok) throw new Error(formatError(payload, response.status));
     return payload as T;
   }
+}
+
+type RequestErrorFormatter = (payload: unknown, status: number) => string;
+
+function defaultRequestErrorMessage(payload: unknown, status: number): string {
+  return `pi_worker_request_failed:${status}:${typeof payload === "string" ? payload : JSON.stringify(payload)}`;
+}
+
+function toolRequestErrorMessage(payload: unknown, _status: number): string {
+  if (payload && typeof payload === "object" && typeof (payload as { error?: unknown }).error === "string") {
+    return (payload as { error: string }).error;
+  }
+  return typeof payload === "string" ? payload : JSON.stringify(payload) ?? String(payload);
 }
 
 function stripSignal(value: unknown): unknown {

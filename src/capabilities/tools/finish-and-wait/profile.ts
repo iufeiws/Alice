@@ -12,7 +12,7 @@ export const finishAndWaitTool: ToolDefinition = {
   suppressExecutionCard: true,
   // schedule 已禁用，不暴露给 LLM；保留原描述便于恢复时参考。
   // description: "等待回复或结束聊天。action=schedule 定时(秒)后再次返回, 中途有新消息时提前返回; action=await_chat 固定等待 15 分钟, 有新消息时提前返回, 超时无消息则结束; action=finish 直接结束",
-  description: "等待回复、清空上下文或结束聊天。action=clear 清空当前对话上下文并开启新一轮; action=await_chat 固定等待 15 分钟, 有新消息时提前返回, 超时无消息则结束; action=finish 直接结束",
+  description: "等待回复、清空上下文或结束聊天。action=clear 清空当前的工具调用和思考等上下文然后重新进入agent loop; action=await_chat 固定等待 15 分钟, 有新消息时提前返回, 超时无消息则结束; action=finish 直接结束",
   inputSchema: {
     type: "object",
     properties: {

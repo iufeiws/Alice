@@ -113,6 +113,13 @@ export type FeishuSendPlan =
       replyTo?: string;
     }
   | {
+      kind: "core-card";
+      receiveIdType: "chat_id" | "open_id";
+      receiveId: string;
+      markdown: string;
+      replyTo?: string;
+    }
+  | {
       kind: "image";
       receiveIdType: "chat_id" | "open_id";
       receiveId: string;

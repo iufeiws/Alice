@@ -1,4 +1,6 @@
 import type { ToolCall, ToolPlugin, ToolResult } from "../../../../contexts/tool-execution/src/index.js";
+import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
+import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import {
   defaultWorldWandererPluginConfigPath,
   pathEntryFromPano,
@@ -12,6 +14,7 @@ import type {
   WorldWandererState
 } from "../../../../contexts/world-wanderer/src/index.js";
 import type { GoogleStreetViewPanoGraphMetadataResponse, GoogleStreetViewPlugin } from "../../../../channels/google-streetview/src/index.js";
+import { sendImage, type PhotoSendDeps } from "../../photo/src/send-output.js";
 import { locationToolText, panoramaTool, panoramaToolName } from "../profile.js";
 
 export type LocationToolsDeps = {
@@ -19,6 +22,11 @@ export type LocationToolsDeps = {
   dbPath: string;
   getGoogleStreetView(): Pick<GoogleStreetViewPlugin, "getPanoGraphByCoordinates" | "getPanoGraphByPanoId" | "getStreetViewByCoordinates">;
   now(): string;
+  time?: CurrentTimeProvider;
+  store?: PhotoSendDeps["store"];
+  outputRouter?: PhotoSendDeps["outputRouter"];
+  resolveOutputTarget?: ToolOutputTargetResolver;
+  appendMessageLog?: PhotoSendDeps["appendMessageLog"];
 };
 
 export function createLocationTools(deps: LocationToolsDeps): ToolPlugin {
@@ -32,7 +40,7 @@ export function createLocationTools(deps: LocationToolsDeps): ToolPlugin {
       const config = readWorldWandererConfig(deps.configPath);
       if (!config.enabled) return toolError(call, locationToolText.unavailable);
       const action = call.input.action;
-      if (action !== "current" && action !== "teleport" && action !== "navigation") {
+      if (action !== "current" && action !== "send" && action !== "teleport" && action !== "navigation") {
         return toolError(call, locationToolText.invalidAction);
       }
       if (action === "teleport" || action === "navigation") {
@@ -46,7 +54,7 @@ export function createLocationTools(deps: LocationToolsDeps): ToolPlugin {
           ? executeTeleport(call, config, lat, lng)
           : executeNavigation(call, config, lat, lng);
       }
-      return executeCurrent(call, config);
+      return action === "send" ? executeSend(call, config) : executeCurrent(call, config);
     }
   };
 
@@ -69,6 +77,28 @@ export function createLocationTools(deps: LocationToolsDeps): ToolPlugin {
       ok: true,
       output: `${text}\n${streetView.imageRecognition.text}`
     };
+  }
+
+  async function executeSend(call: ToolCall, config: WorldWandererConfig): Promise<ToolResult> {
+    const target = deps.resolveOutputTarget?.(call);
+    if (!target) return toolError(call, locationToolText.noCurrentSession);
+    if (!deps.store || !deps.outputRouter || !deps.time) return toolError(call, locationToolText.sendUnavailable);
+
+    const state = readWorldWandererState(deps.dbPath, config);
+    const googleStreetView = deps.getGoogleStreetView();
+    const pano = state.panoId
+      ? await googleStreetView.getPanoGraphByPanoId({ panoId: state.panoId })
+      : await googleStreetView.getPanoGraphByCoordinates(state.location);
+    const streetView = await googleStreetView.getStreetViewByCoordinates({
+      lat: pano.location.lat,
+      lng: pano.location.lng
+    });
+    await sendImage({
+      store: deps.store,
+      outputRouter: deps.outputRouter,
+      appendMessageLog: deps.appendMessageLog
+    }, deps.time, target, streetView.assetId);
+    return { callId: call.id, ok: true, output: streetView.assetId };
   }
 
   async function executeTeleport(call: ToolCall, config: WorldWandererConfig, lat: number, lng: number): Promise<ToolResult> {

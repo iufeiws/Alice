@@ -24,6 +24,7 @@ export type FeishuClient = {
   stop(): Promise<void>;
   sendText(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; text: string }): Promise<FeishuSendResult>;
   sendMarkdown(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; markdown: string }): Promise<FeishuSendResult>;
+  sendCoreCard(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; markdown: string }): Promise<FeishuSendResult>;
   sendImage(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; assetId: string }): Promise<FeishuSendResult>;
   sendAudio(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; assetId: string; duration?: number; filename?: string }): Promise<FeishuSendResult>;
   sendFile(input: { receiveIdType: "chat_id" | "open_id"; receiveId: string; assetId: string; filename: string }): Promise<FeishuSendResult>;
@@ -150,6 +151,16 @@ export function createFeishuClient(config: FeishuConfig, accountId: string, deps
         content: buildMarkdownCard(input.markdown)
       }, time);
       deps.log?.("info", `[${tag}] sent markdown card to ${input.receiveIdType}:${input.receiveId}`);
+      return result;
+    },
+    async sendCoreCard(input) {
+      const result = await sendMessage(client, {
+        receiveIdType: input.receiveIdType,
+        receiveId: input.receiveId,
+        msgType: "interactive",
+        content: buildCoreMessageCard(input.markdown)
+      }, time);
+      deps.log?.("info", `[${tag}] sent core card to ${input.receiveIdType}:${input.receiveId}`);
       return result;
     },
     async sendImage(input) {
@@ -541,6 +552,47 @@ function buildMarkdownCard(markdown: string): Record<string, unknown> {
         content: markdown
       }
     ]
+  };
+}
+
+export function buildCoreMessageCard(markdown: string): Record<string, unknown> {
+  return {
+    schema: "2.0",
+    config: {
+      update_multi: true
+    },
+    body: {
+      direction: "vertical",
+      horizontal_spacing: "8px",
+      vertical_spacing: "8px",
+      horizontal_align: "left",
+      vertical_align: "top",
+      padding: "4px 12px 4px 12px",
+      elements: [
+        {
+          tag: "markdown",
+          content: cardMarkdownContent(markdown),
+          text_align: "left",
+          margin: "0px 0px 0px 0px"
+        }
+      ]
+    },
+    header: {
+      title: {
+        tag: "plain_text",
+        content: ""
+      },
+      subtitle: {
+        tag: "plain_text",
+        content: "core"
+      },
+      template: "grey",
+      icon: {
+        tag: "standard_icon",
+        token: "meeting-ai_filled"
+      },
+      padding: "0px 12px 0px 12px"
+    }
   };
 }
 

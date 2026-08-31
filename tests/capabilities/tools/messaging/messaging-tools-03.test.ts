@@ -157,7 +157,7 @@ test("send_chat can keep newline text in one send from messaging config", async 
 
   const result = await tools.execute({
     id: "call_send_no_split",
-    toolName: "Chat", input: { action: "send",  type: "message", content: "one\n\ntwo", alice: "shell" }
+    toolName: "Chat", input: { action: "send",  type: "message", content: "one\n\ntwo", speaker: "shell" }
   });
 
   assert.equal(result.ok, true);
@@ -184,7 +184,7 @@ async function sendFeishuCoreMarkdown(name: string) {
 
   const result = await tools.execute({
     id: "call_send_core",
-    toolName: "Chat", input: { action: "send",  content: "core text\nsecond", alice: "core" }
+    toolName: "Chat", input: { action: "send",  content: "core text\nsecond", speaker: "core" }
   });
 
   return { result, sent, store };
@@ -225,7 +225,7 @@ async function sendFeishuMarkdownLike(name: string, enabled: boolean, content: s
 
   const result = await tools.execute({
     id: "call_send_md_like",
-    toolName: "Chat", input: { action: "send",  type: "message", content, alice: "shell" }
+    toolName: "Chat", input: { action: "send",  type: "message", content, speaker: "shell" }
   });
 
   return { result, sent, store };
@@ -351,7 +351,7 @@ test("send_chat can disable consecutive-send limit from messaging config", async
 
   const result = await tools.execute({
     id: "call_send_no_wait_user",
-    toolName: "Chat", input: { action: "send",  type: "message", content: "should send", alice: "shell" }
+    toolName: "Chat", input: { action: "send",  type: "message", content: "should send", speaker: "shell" }
   });
 
   assert.equal(result.ok, true);

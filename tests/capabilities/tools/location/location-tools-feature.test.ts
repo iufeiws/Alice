@@ -1,6 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createLocationTools } from "../../../../src/capabilities/tools/location/src/index.js";
+import { createCurrentTimeProvider } from "../../../../src/platform/time/src/index.js";
+import { createToolOutputTargetResolver } from "../../../../src/contexts/capabilities/src/tool-output-target.js";
+import { createAliceStore } from "../../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
+import type { AgentOutput } from "../../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import {
   readWorldWandererConfig,
   readWorldWandererState,
@@ -55,7 +59,7 @@ test("Panorama schema uses an action enum with optional coordinates", () => {
   };
   assert.equal(inputSchema.type, "object");
   assert.equal(inputSchema.properties.action.type, "string");
-  assert.deepEqual(inputSchema.properties.action.enum, ["current", "teleport", "navigation"]);
+  assert.deepEqual(inputSchema.properties.action.enum, ["current", "send", "teleport", "navigation"]);
   assert.deepEqual(inputSchema.required, ["action"]);
   assert.equal(inputSchema.additionalProperties, false);
   assert.equal(inputSchema.properties.lat.type, "number");
@@ -65,6 +69,7 @@ test("Panorama schema uses an action enum with optional coordinates", () => {
   assert.equal(inputSchema.properties.lng.minimum, -180);
   assert.equal(inputSchema.properties.lng.maximum, 180);
   assert.equal(inputSchema.oneOf, undefined);
+  assert.equal(tools.listTools()[0].sendsMessage, undefined);
 });
 
 test("check_location is treated as an unknown tool", async () => {
@@ -178,6 +183,76 @@ test("Panorama current returns readable place text and requests image recognitio
   assert.equal(result.ok, true);
   assert.equal(result.output, "Ayasofya Meydani, Istanbul, Turkiye\nRecord date: 2020-08\nA public square with a large historic building.");
   assert.equal(result.llmFollowupAttachments, undefined);
+});
+
+test("Panorama send sends and persists the current pano image without counting the tool as a message sender", async () => {
+  const root = tmpDir();
+  const configPath = path.join(root, "config.json");
+  const dbPath = path.join(root, "alice.sqlite");
+  const store = createAliceStore(path.join(root, "messages.sqlite"));
+  const baseConfig = readWorldWandererConfig(configPath);
+  const streetViewInputs: Array<Record<string, unknown>> = [];
+  const sent: AgentOutput[] = [];
+  const target = { plugin: "feishu", channelId: "chat-1", sessionId: "session-1" };
+  const tools = createLocationTools({
+    configPath,
+    dbPath,
+    getGoogleStreetView: () => ({
+      async getPanoGraphByCoordinates() {
+        return locationPano();
+      },
+      async getPanoGraphByPanoId() {
+        return locationPano();
+      },
+      async getStreetViewByCoordinates(input) {
+        streetViewInputs.push(input);
+        return recognizedStreetView();
+      }
+    }),
+    now: () => nowIso,
+    time: createCurrentTimeProvider("UTC", () => new Date("2026-08-11T12:00:00.000Z")),
+    store,
+    outputRouter: {
+      async send(output) {
+        sent.push(output);
+        return { messageId: "om_pano_1" };
+      }
+    },
+    resolveOutputTarget: createToolOutputTargetResolver({ getDefaultTarget: () => target })
+  });
+
+  writeWorldWandererConfig(configPath, { ...baseConfig, enabled: true });
+  writeWorldWandererState(dbPath, {
+    location: { lat: 41.0089, lng: 28.9804 },
+    lastHeading: 90,
+    panoId: "hidden-pano",
+    pathStack: [{ time: "2026-06-18T00:00:00.000", panoId: "hidden-pano", lat: 41.0089, lng: 28.9804, lastHeading: 90 }]
+  });
+
+  const result = await tools.execute({ id: "call_location", toolName: "Panorama", input: { action: "send" } });
+
+  assert.deepEqual(streetViewInputs, [{ lat: 41.0089, lng: 28.9804 }]);
+  assert.equal(result.ok, true);
+  assert.equal(result.output, "plugin/google-streetview/hidden-pano.jpg");
+  assert.deepEqual(sent.map((output) => output.target), [{
+    plugin: "feishu",
+    accountId: undefined,
+    channelId: "chat-1",
+    userId: undefined,
+    sessionId: "session-1"
+  }]);
+  assert.deepEqual(sent.map((output) => output.content), [{
+    kind: "image",
+    assetId: "plugin/google-streetview/hidden-pano.jpg"
+  }]);
+  assert.deepEqual(store.listMessagesForConversation("session-1", 10).map((message) => ({
+    contentType: message.contentType,
+    contentText: message.contentText
+  })), [{
+    contentType: "image",
+    contentText: "plugin/google-streetview/hidden-pano.jpg"
+  }]);
+  assert.equal(tools.listTools()[0].sendsMessage, undefined);
 });
 
 test("Panorama teleport queries the nearest pano by input coordinates", async () => {

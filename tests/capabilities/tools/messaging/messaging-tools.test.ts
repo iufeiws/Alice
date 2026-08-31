@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createCurrentTimeProvider } from "../../../../src/platform/time/src/index.js";
 import { createMessagingTools } from "../../../../src/capabilities/tools/messaging/src/index.js";
+import { chatTool } from "../../../../src/capabilities/tools/messaging/profile.js";
 import { createFinishAndWaitTools } from "../../../../src/capabilities/tools/finish-and-wait/src/index.js";
 import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfiguredVoiceSynthesizer, createFallbackVoiceSynthesizer, createGenieTtsVoiceSynthesizer, createMimoTtsVoiceSynthesizer, createMossOnnxVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsPcmProgressTextMapper, createTtsPlugin, createTtsRemoteAwareVoiceSynthesizer, createTtsTranslationSynthesizer, resolveTtsText, splitTtsStreamParts, splitTtsTextChunks, synthesizeTtsRouted, ttsGenieOverrides, readTtsPluginConfig, type VoiceSynthesizer } from "../../../../src/channels/tts/src/index.js";
 import { createAliceStore } from "../../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
@@ -33,6 +34,14 @@ test("messagingTools_listTools_exposesChatOnly", async () => {
 
   const names = tools.listTools().map((tool) => tool.name);
   assert.equal(names.length, 1);
+});
+
+test("chatTool uses speaker as the send speaker parameter", () => {
+  const inputSchema = chatTool.inputSchema as {
+    properties: Record<string, { type?: string; enum?: string[] }>;
+  };
+  assert.deepEqual(inputSchema.properties.speaker, { type: "string", enum: ["core", "shell"] });
+  assert.equal(inputSchema.properties.alice, undefined);
 });
 
 test("finishAndWaitTools_schedule_returnsYieldMeta", async () => {

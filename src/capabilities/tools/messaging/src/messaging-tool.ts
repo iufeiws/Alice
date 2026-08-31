@@ -187,7 +187,7 @@ export function createMessagingTools(deps: MessagingToolsDeps): MessagingToolPlu
     const type = normalizeSendType(call.input.type);
     if (!type) return toolError(call, messagingToolText.unsupportedMessageType);
     const rawContent = stringValue(call.input.content);
-    const senderName = normalizeSenderName(call.input.alice ?? call.input.senderName ?? "shell");
+    const senderName = normalizeSenderName(call.input.speaker ?? call.input.senderName ?? "shell");
     const content = type === "message" || type === "voice"
       ? normalizeSendContent(rawContent)
       : rawContent;

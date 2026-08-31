@@ -160,6 +160,16 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
         return result;
       }
 
+      if (plan.kind === "core-card") {
+        result = await monitor.sendCoreCard({
+          receiveIdType: plan.receiveIdType,
+          receiveId: plan.receiveId,
+          markdown: plan.markdown
+        });
+        noteOutboundMessage(output.target.sessionId, result.messageId, output.target.accountId);
+        return result;
+      }
+
       if (plan.kind === "image") {
         result = await monitor.sendImage({
           receiveIdType: plan.receiveIdType,

@@ -183,7 +183,7 @@ test("tts passes configured voice language to Genie overrides", () => {
   assert.ok(overrides.modelDir);
 });
 
-async function sendFeishuVoiceMessage(name: string, alice?: string) {
+async function sendFeishuVoiceMessage(name: string, speaker?: string) {
   const dir = makeTempDir(name);
   const store = createAliceStore(path.join(dir, "alice.sqlite"));
   seedUserInbound(store, "feishu:dm:oc_1", "feishu");
@@ -215,7 +215,7 @@ async function sendFeishuVoiceMessage(name: string, alice?: string) {
 
   const result = await tools.execute({
     id: `call_${name}`,
-    toolName: "Chat", input: { action: "send",  type: "voice", content: "晚点见", ...(alice ? { alice } : {}) }
+    toolName: "Chat", input: { action: "send",  type: "voice", content: "晚点见", ...(speaker ? { speaker } : {}) }
   });
 
   return { generatedPath, logs, result, sent, store, ttsAlice };

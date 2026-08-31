@@ -214,7 +214,12 @@ export function createToolRuntime(input: {
     configPath: defaultWorldWandererPluginConfigPath,
     dbPath: path.join(input.config.memoryFiles?.root ?? "memory-files", "alice.sqlite"),
     getGoogleStreetView: input.getGoogleStreetView,
-    now: () => input.time.now().iso
+    now: () => input.time.now().iso,
+    time: input.time,
+    store: input.store,
+    outputRouter: input.outputRouter,
+    resolveOutputTarget,
+    appendMessageLog: input.appendMessageLog
   });
   const randomEventSandbox = createRandomEventSandboxRuntime({
     store: input.randomEventStore,

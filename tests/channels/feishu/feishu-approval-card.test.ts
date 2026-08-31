@@ -1,6 +1,38 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildFeishuApprovalCard, normalizeFeishuCardActionEvent, requireFeishuCardId, serializeFeishuApprovalCard } from "../../../src/channels/feishu/src/client.js";
+import { buildCoreMessageCard, buildFeishuApprovalCard, normalizeFeishuCardActionEvent, requireFeishuCardId, serializeFeishuApprovalCard } from "../../../src/channels/feishu/src/client.js";
+
+test("Feishu core card follows the supplied card DSL and injects raw Markdown", () => {
+  const markdown = "## 标题\n\n- **粗体**\n\n```ts\nconst value = 1;\n```";
+  const card = buildCoreMessageCard(markdown) as any;
+
+  assert.deepEqual(Object.keys(card).sort(), ["body", "config", "header", "schema"]);
+  assert.equal(card.schema, "2.0");
+  assert.deepEqual(card.config, { update_multi: true });
+  assert.deepEqual({ ...card.body, elements: undefined }, {
+    direction: "vertical",
+    horizontal_spacing: "8px",
+    vertical_spacing: "8px",
+    horizontal_align: "left",
+    vertical_align: "top",
+    padding: "4px 12px 4px 12px",
+    elements: undefined
+  });
+  assert.equal(card.body.elements.length, 1);
+  assert.deepEqual(card.body.elements[0], {
+    tag: "markdown",
+    content: markdown,
+    text_align: "left",
+    margin: "0px 0px 0px 0px"
+  });
+  assert.deepEqual(card.header, {
+    title: { tag: "plain_text", content: "" },
+    subtitle: { tag: "plain_text", content: "core" },
+    template: "grey",
+    icon: { tag: "standard_icon", token: "meeting-ai_filled" },
+    padding: "0px 12px 0px 12px"
+  });
+});
 
 test("Feishu approval card contains content, optional comment, and two decisions", () => {
   const card = buildFeishuApprovalCard({ requestId: "req_1", title: "审批标题", content: "**候选内容**" }) as any;

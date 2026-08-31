@@ -10,6 +10,7 @@ export function createFeishuMonitor(config: FeishuConfig, accountId: string, dep
     stop: () => client.stop(),
     sendText: client.sendText,
     sendMarkdown: client.sendMarkdown,
+    sendCoreCard: client.sendCoreCard,
     sendImage: client.sendImage,
     sendAudio: client.sendAudio,
     sendFile: client.sendFile,

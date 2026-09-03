@@ -5,6 +5,8 @@ import type { StoredMessageLog } from "../../../contexts/conversation-hub/src/ad
 
 export function createApiServerStackRuntime(input: {
   config: any;
+  credentialStore: any;
+  xaiOAuthService: any;
   logs: unknown[];
   messageLogs: unknown[];
   systemLogStore: any;
@@ -64,6 +66,8 @@ export function createApiServerStackRuntime(input: {
   input.agentRunIndicatorRuntime?.setDelegate(apiCommunicationRuntime.agentRunIndicator);
   const apiAdminRuntime = createApiAdminRuntime({
     config: input.config,
+    credentialStore: input.credentialStore,
+    xaiOAuthService: input.xaiOAuthService,
     logs: input.logs,
     messageLogs: input.messageLogs,
     llmRequestLogs: input.apiRuntimeState.llmRequestLogs,

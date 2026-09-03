@@ -92,8 +92,8 @@ export function photoPluginEntry(): AdminPluginRegistryEntry {
         ] },
         { key: "selfieImageApiRelayOutputCompression", label: "Output Compression", type: "number", group: "openai_relay", min: 0, max: 100, step: 1 },
         { key: "selfieImageApiRelayTimeoutMs", label: "Timeout Ms", type: "number", group: "openai_relay", min: 1000, step: 1000 },
-        { key: "selfieXaiImageApiKeySet", label: "API Key Set", type: "readonly", group: "xai" },
-        { key: "selfieXaiImageApiKey", label: "API Key", type: "password", group: "xai", description: "Leave blank to keep the current key." },
+        { key: "selfieXaiCredentialSet", label: "Credential Set", type: "readonly", group: "xai" },
+        { key: "selfieXaiCredentialId", label: "Credential", type: "select", group: "xai", options: [] },
         { key: "selfieXaiImageApiBaseURL", label: "Base URL", type: "text", group: "xai" },
         { key: "selfieXaiImageApiModel", label: "Model", type: "text", group: "xai" },
         { key: "selfieXaiImageApiAspectRatio", label: "Aspect Ratio", type: "text", group: "xai" },
@@ -139,7 +139,7 @@ export function photoPluginEntry(): AdminPluginRegistryEntry {
 
 
 function photoPluginSummary(context: AdminRoutesContext, config = readPhotoConfigForAdmin(context)): AdminPluginSummary {
-  const missingConfig = config.enabled && (config.selfieMode === "openai" || config.selfieMode === "openaiRelay" || config.selfieMode === "xai") && !selectedPhotoImageApiKey(config);
+  const missingConfig = config.enabled && (config.selfieMode === "openai" || config.selfieMode === "openaiRelay" || config.selfieMode === "xai") && !selectedPhotoImageCredential(config);
   return {
     id: "photo",
     name: "Photo",
@@ -196,6 +196,7 @@ function photoReferenceAssetPath(context: AdminRoutesContext, fileName: string):
 }
 
 function updatePhotoConfig(context: AdminRoutesContext, patch: Record<string, unknown>): { config: PhotoPluginConfig } | { error: string } {
+  if (Object.prototype.hasOwnProperty.call(patch, "selfieXaiImageApiKey")) return { error: "legacy_selfie_xai_api_key_not_allowed" };
   const current = readPhotoConfigForAdmin(context);
   const next: PhotoPluginConfig = {
     ...current,
@@ -228,7 +229,7 @@ function updatePhotoConfig(context: AdminRoutesContext, patch: Record<string, un
     selfieImageApiRelayOutputFormat: patch.selfieImageApiRelayOutputFormat === undefined ? current.selfieImageApiRelayOutputFormat : photoOutputFormatFromUnknown(patch.selfieImageApiRelayOutputFormat),
     selfieImageApiRelayOutputCompression: patch.selfieImageApiRelayOutputCompression === undefined ? current.selfieImageApiRelayOutputCompression : photoNumberFromUnknown(patch.selfieImageApiRelayOutputCompression),
     selfieImageApiRelayTimeoutMs: patch.selfieImageApiRelayTimeoutMs === undefined ? current.selfieImageApiRelayTimeoutMs : photoNumberFromUnknown(patch.selfieImageApiRelayTimeoutMs),
-    selfieXaiImageApiKey: patch.selfieXaiImageApiKey === undefined ? current.selfieXaiImageApiKey : secretStringFromUnknown(patch.selfieXaiImageApiKey, current.selfieXaiImageApiKey),
+    selfieXaiCredentialId: patch.selfieXaiCredentialId === undefined ? current.selfieXaiCredentialId : requiredString(patch.selfieXaiCredentialId).trim() || undefined,
     selfieXaiImageApiBaseURL: patch.selfieXaiImageApiBaseURL === undefined ? current.selfieXaiImageApiBaseURL : requiredString(patch.selfieXaiImageApiBaseURL).trim().replace(/\/+$/, ""),
     selfieXaiImageApiModel: patch.selfieXaiImageApiModel === undefined ? current.selfieXaiImageApiModel : requiredString(patch.selfieXaiImageApiModel).trim(),
     selfieXaiImageApiAspectRatio: patch.selfieXaiImageApiAspectRatio === undefined ? current.selfieXaiImageApiAspectRatio : requiredString(patch.selfieXaiImageApiAspectRatio).trim(),
@@ -247,6 +248,11 @@ function updatePhotoConfig(context: AdminRoutesContext, patch: Record<string, un
 
   const validationError = validatePhotoConfig(next);
   if (validationError) return { error: validationError };
+  if (next.selfieXaiCredentialId) {
+    const credential = context.credentialStore.get(next.selfieXaiCredentialId);
+    if (!credential || credential.provider !== "xai") return { error: "invalid_selfie_xai_credential" };
+    if (credential.kind === "oauth" && next.selfieXaiImageApiBaseURL !== "https://api.x.ai/v1") return { error: "xai_oauth_base_url_not_allowed" };
+  }
   writePhotoConfig(context, next);
   return { config: next };
 }
@@ -327,7 +333,7 @@ function photoConfigDefaultsForAdmin(context: AdminRoutesContext): Partial<Photo
     selfieImageApiRelayOutputFormat: photo.selfieImageApiRelayOutputFormat,
     selfieImageApiRelayOutputCompression: photo.selfieImageApiRelayOutputCompression,
     selfieImageApiRelayTimeoutMs: photo.selfieImageApiRelayTimeoutMs,
-    selfieXaiImageApiKey: photo.selfieXaiImageApiKey,
+    selfieXaiCredentialId: photo.selfieXaiCredentialId,
     selfieXaiImageApiBaseURL: photo.selfieXaiImageApiBaseURL,
     selfieXaiImageApiModel: photo.selfieXaiImageApiModel,
     selfieXaiImageApiAspectRatio: photo.selfieXaiImageApiAspectRatio,
@@ -393,9 +399,9 @@ function photoNumberFromUnknown(value: unknown): number {
 }
 
 
-function selectedPhotoImageApiKey(config: PhotoPluginConfig): string | undefined {
+function selectedPhotoImageCredential(config: PhotoPluginConfig): string | undefined {
   if (config.selfieMode === "openaiRelay") return config.selfieImageApiRelayKey;
-  if (config.selfieMode === "xai") return config.selfieXaiImageApiKey;
+  if (config.selfieMode === "xai") return config.selfieXaiCredentialId;
   return config.selfieImageApiKey;
 }
 

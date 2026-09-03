@@ -7,6 +7,7 @@ import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfigure
 import { createAliceStore } from "../../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentOutput } from "../../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import { testPromptRuntime } from "../../../helpers/prompt-runtime.js";
+import { testLLMApiPreset } from "../../../helpers/llm-api-preset.js";
 
 const fs = await import("node:fs");
 const fsp = await import("node:fs/promises");
@@ -97,11 +98,7 @@ test("tts stream never hard-cuts source text between punctuation boundaries", as
     }),
     promptRenderer: () => testPromptRuntime(),
     resolveApiPreset() {
-      return {
-        baseURL: "https://example.invalid/v1",
-        apiKey: "test-key",
-        model: "flash"
-      };
+      return testLLMApiPreset();
     }
   });
 

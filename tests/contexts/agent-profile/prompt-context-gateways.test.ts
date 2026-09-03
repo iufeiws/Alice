@@ -7,6 +7,7 @@ import { recognizeImageWithPlugin } from "../../../src/channels/image-recognitio
 import { createPhotoTools, type SelfieExecutorInput } from "../../../src/capabilities/tools/photo/src/index.js";
 import { createCurrentTimeProvider } from "../../../src/platform/time/src/index.js";
 import { testPromptRuntime } from "../../helpers/prompt-runtime.js";
+import { testLLMApiPreset } from "../../helpers/llm-api-preset.js";
 import {
   assetRootFromOutputDir,
   createTestStore,
@@ -52,7 +53,7 @@ test("TTS gateway resolves scoped prompt variables before its LLM request", asyn
   } as any, {
     baseSynthesizer: async () => ({ assetId: "unused", filePath: "unused" }),
     promptRenderer: runtime,
-    resolveApiPreset: () => ({ baseURL: "https://example.invalid/v1", model: "test" }),
+    resolveApiPreset: () => testLLMApiPreset({ model: "test" }),
     llmRequestSender: async (input) => {
       systemPrompt = input.messages[0]?.content ?? "";
       return { message: { role: "assistant", content: "こんにちは" } };

@@ -7,6 +7,7 @@ import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfigure
 import { createAliceStore } from "../../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentOutput } from "../../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import { testPromptRuntime } from "../../../helpers/prompt-runtime.js";
+import { testLLMApiPreset } from "../../../helpers/llm-api-preset.js";
 
 const fs = await import("node:fs");
 const fsp = await import("node:fs/promises");
@@ -241,14 +242,11 @@ test("tts plugin translates before tts while preserving original send_chat voice
       return { message: { role: "assistant", content: "また後で会いましょう" } };
     },
     resolveApiPreset() {
-      return {
-        baseURL: "https://example.invalid/v1",
-        apiKey: "test-key",
-        model: "flash",
+      return testLLMApiPreset({
         temperature: 0,
         timeoutMs: 1000,
         extraParams: {}
-      };
+      });
     },
     promptRenderer: () => testPromptRuntime(),
     llm: {

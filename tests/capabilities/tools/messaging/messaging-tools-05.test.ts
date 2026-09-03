@@ -7,6 +7,10 @@ import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfigure
 import { createAliceStore } from "../../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentOutput } from "../../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import { testPromptRuntime } from "../../../helpers/prompt-runtime.js";
+import { testLLMApiPreset } from "../../../helpers/llm-api-preset.js";
+import { createApiKeyAuthorization, setActiveCredentialRuntime } from "../../../../src/contexts/llm-gateway/src/index.js";
+
+setActiveCredentialRuntime({ resolveAuthorization: () => createApiKeyAuthorization("test-key") } as any);
 
 const fs = await import("node:fs");
 const fsp = await import("node:fs/promises");
@@ -205,20 +209,11 @@ test("tts plugin switch is read from plugin config at synthesis time", async () 
       fs.writeFileSync(filePath, text);
       return { assetId: `generated/tts/${synthesizedTexts.length}.wav`, filePath };
     },
-    llm: {
-      async chat() {
-        return { message: { role: "assistant", content: "日本語" } };
-      }
-    },
+    llmRequestSender: async () => ({ message: { role: "assistant", content: "日本語" } }),
     promptRenderer: () => testPromptRuntime(),
     resolveApiPreset(name) {
       assert.equal(name, "fixed-flash");
-      return {
-        name,
-        baseURL: "https://example.invalid/v1",
-        apiKey: "test-key",
-        model: "flash"
-      };
+      return testLLMApiPreset({ name });
     }
   });
 
@@ -273,8 +268,16 @@ function createOpenAiApiTtsFixture(name: string) {
       return {
         name,
         baseURL: "https://api.boson.ai/v1",
-        apiKey: "test-key",
-        model: "preset-model"
+        credentialId: "speech-credential",
+        protocol: "openai-chat-completions",
+        model: "preset-model",
+        temperature: 0.2,
+        timeoutMs: 60_000,
+        stream: false,
+        supportsImage: false,
+        supportsAudio: false,
+        extraParams: {},
+        followupExtraParams: {}
       };
     }
   });
@@ -300,6 +303,60 @@ test("openai-api tts sends non-stream pcm speech request with full text chunk", 
     voice: "default",
     response_format: "pcm"
   });
+});
+
+test("openai-api tts refreshes OAuth authorization after one 401", async () => {
+  const seenAuthorization: Array<string | null> = [];
+  let refreshCalls = 0;
+  setActiveCredentialRuntime({
+    resolveAuthorization: () => ({
+      async authorization() { return "Bearer expired"; },
+      async retryAfterUnauthorized({ rejectedAuthorization }: { rejectedAuthorization: string }) {
+        assert.equal(rejectedAuthorization, "Bearer expired");
+        refreshCalls += 1;
+        return "Bearer refreshed";
+      }
+    })
+  } as any);
+  try {
+    const synthesize = createOpenAiApiTtsVoiceSynthesizer(ttsConfig({
+      enabled: true,
+      translationEnabled: false,
+      prompt: "Read aloud.",
+      conversion: { provider: "openai-api", openaiApi: { apiPresetName: "speech" } }
+    }), {
+      resolveApiPreset: () => ({
+        name: "speech",
+        baseURL: "https://api.x.ai/v1",
+        credentialId: "oauth-xai",
+        protocol: "openai-chat-completions",
+        model: "speech-model",
+        temperature: 0.2,
+        timeoutMs: 60_000,
+        stream: false,
+        supportsImage: false,
+        supportsAudio: false,
+        extraParams: {},
+        followupExtraParams: {}
+      }),
+      fetch: async (_url, init) => {
+        const authorization = init?.headers instanceof Headers
+          ? init.headers.get("authorization")
+          : (init?.headers as Record<string, string>)?.authorization ?? null;
+        seenAuthorization.push(authorization);
+        return authorization === "Bearer expired"
+          ? new Response("unauthorized", { status: 401 })
+          : new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+      }
+    });
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of synthesize.streamAudio!({ text: "hello", time: createCurrentTimeProvider("UTC") })) chunks.push(chunk);
+    assert.deepEqual(seenAuthorization, ["Bearer expired", "Bearer refreshed"]);
+    assert.equal(refreshCalls, 1);
+    assert.equal(chunks.length, 1);
+  } finally {
+    setActiveCredentialRuntime({ resolveAuthorization: () => createApiKeyAuthorization("test-key") } as any);
+  }
 });
 
 test("openai-api tts stream returns one pcm chunk for the full text", async () => {

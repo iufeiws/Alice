@@ -10,6 +10,8 @@ export function renderPromptsScript(): string {
       let memoryPrompts = null;
       let lastMemoryPromptPreviewTarget = "persistent";
       let llmApiPresets = [];
+      let llmCredentials = [];
+      let xaiDevicePollTimer = null;
       let currentLLMApiPreset = null;
       let promptApiProfile = {};
       async function refreshPromptProfile() {

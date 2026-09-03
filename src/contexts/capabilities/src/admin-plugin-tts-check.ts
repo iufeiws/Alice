@@ -1,4 +1,5 @@
-import { createOpenAICompatibleClient, type LLMClient } from "../../llm-gateway/src/index.js";
+import { type LLMClient } from "../../llm-gateway/src/index.js";
+import { createLLMClientFromPreset } from "../../llm-gateway/src/llm-api-profile.js";
 import { createBailianTtsVoiceSynthesizer, createMimoTtsVoiceSynthesizer, createOpenAiApiTtsVoiceSynthesizer, createTtsRemoteAwareVoiceSynthesizer, selectedTtsPreset, translateTtsText, ttsGenieOverrides, type TtsLlmClient, type VoiceSynthesizer } from "../../../channels/tts/src/index.js";
 import { ttsAudioUrl } from "../../../channels/tts/src/admin-assets.js";
 import { readLLMApiPresets } from "../../llm-gateway/src/admin-presets.js";
@@ -19,22 +20,14 @@ export async function testTtsPlugin(context: AdminRoutesContext, input: Record<s
     if (!config.apiPresetName) return { error: "missing_api_preset" };
     const preset = readLLMApiPresets(context).find((entry) => entry.name === config.apiPresetName);
     if (!preset) return { error: "invalid_api_preset" };
-    if (!preset.baseURL || !preset.apiKey) return { error: "incomplete_api_preset" };
+    if (!preset.baseURL || !preset.credentialId) return { error: "incomplete_api_preset" };
     const translationStartedAt = Date.now();
     const translated = await translateTtsText(text, config, {
       baseSynthesizer: async () => {
         throw new Error("not used");
       },
       llmRequestSender: context.llmRequestSender ? (request) => context.llmRequestSender!({ ...request, client: request.client as any } as any) as any : undefined,
-      llm: createTextOnlyTtsLlmClient(createOpenAICompatibleClient({
-        baseURL: preset.baseURL,
-        apiKey: preset.apiKey,
-        model: preset.model,
-        temperature: preset.temperature,
-        timeoutMs: preset.timeoutMs,
-        useProxy: preset.useProxy === true,
-        extraParams: preset.extraParams
-      })),
+      llm: createTextOnlyTtsLlmClient(createLLMClientFromPreset(preset)!),
       resolveApiPreset(name) {
         return readLLMApiPresets(context).find((entry) => entry.name === name);
       },

@@ -73,7 +73,7 @@ SELFIE_IMAGE_API_TIMEOUT_MS=120000
 
 `openai` 使用 `SELFIE_IMAGE_API_KEY` 或 `OPENAI_API_KEY`，以及 `SELFIE_IMAGE_API_BASE_URL` 或 `OPENAI_BASE_URL`。
 `openaiRelay` 使用 `SELFIE_IMAGE_API_RELAY_KEY`、`SELFIE_IMAGE_API_RELAY_BASE_URL` 和 `SELFIE_IMAGE_API_RELAY_*` 构筑参数。
-`xai` 使用 `SELFIE_XAI_IMAGE_API_KEY`，默认 base URL 是 `https://api.x.ai/v1`；支持模型、宽高比、分辨率、质量和超时配置。
+`xai` 使用管理后台 Credentials 中选择的 xAI API Key 或 OAuth 凭据，默认 base URL 是 `https://api.x.ai/v1`；支持模型、宽高比、分辨率、质量和超时配置。
 
 认证优先使用 `SELFIE_IMAGE_API_KEY`，缺失时回退到 `OPENAI_API_KEY`。
 

@@ -33,6 +33,8 @@ export function createApiFoundationRuntime() {
     appendLog,
     appendMessageLog,
     config: bootstrap.config,
+    credentialStore: bootstrap.credentialStore,
+    xaiOAuthService: bootstrap.xaiOAuthService,
     readLLMApiPresets: bootstrap.readLLMApiPresets,
     resolvePromptApiPreset: bootstrap.resolvePromptApiPreset,
     serviceLock: bootstrap.serviceLock,

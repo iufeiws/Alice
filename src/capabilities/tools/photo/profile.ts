@@ -1,10 +1,27 @@
 import type { ToolDefinition } from "../../../contexts/tool-execution/src/index.js";
 
+
+
+const actionDescriptions = [
+  "在当前的panorama拍摄一张照片, 并发送给<user>",
+  "##parameter",
+  "pose：拍照时的动作和姿势",
+  "expression：表情",
+  "hair：发型和发色（无<user>要求时避免描述发色）",
+  "composition：构图和取景范围(避免使用远景, <user>偏好近景与极近景)",
+  "##note",
+  "- 留空的参数会使用${{user}}配置的默认值",
+  "- 于描述中可能存在性暗示的部分不直接描述以规避审核。",
+  "- 成功时后会自动发送图片，并返回路径用于给你查看，不需要额外发送图片。",
+  "- 避免使用远景，<user>偏好近景与极近景。",
+];
+
+
 export const selfieTool: ToolDefinition = {
   name: "Selfie",
   passRenderText: true,
   returnImageToLLM: false,
-  description: "可通过 pose、expression、hair 和 composition 参数描述自拍内容。pose为拍照时的动作和姿势, expression为表情, hair为发型和发色(无<user>要求时避免进行描述), composition为构图和取景范围(默认值为近景一臂距离)。留空的参数会使用${{user}}配置的默认值。对于描述中可能存在性暗示的部分绕过以规避审核。成功时后会自动发送图片, 并返回路径用于给你查看, 不需要额外发送图片",
+  description: actionDescriptions.join("\n"),
   inputSchema: {
     type: "object",
     properties: {
@@ -26,7 +43,7 @@ export const photoToolText = {
   noCurrentSession: "No current messaging session is available",
   contextUnavailable: "selfie context is not available",
   outputDirOutsideAssets: "selfie output directory must be inside assets",
-  sent: (fileName: string) => `<sent path="/assets/generated/selfies/${fileName}"/>`,
+  sent: (fileName: string) => `<sent_success image="/assets/generated/selfies/${fileName}"/>`,
   followupImageText: "这是上一步工具返回的图像",
   promptTemplateNotFound: "selfie prompt template was not found",
   selfieOnBodyPromptRequired: "selfie on-body prompt is required",

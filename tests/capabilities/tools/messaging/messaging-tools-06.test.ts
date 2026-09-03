@@ -7,6 +7,7 @@ import { collectTtsStreamText, createBailianTtsVoiceSynthesizer, createConfigure
 import { createAliceStore } from "../../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentOutput } from "../../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import { testPromptRuntime } from "../../../helpers/prompt-runtime.js";
+import { testLLMApiPreset } from "../../../helpers/llm-api-preset.js";
 import { setOpenAICallObserver } from "../../../../src/contexts/llm-gateway/src/llm-upstream-requester.js";
 
 const fs = await import("node:fs");
@@ -249,11 +250,7 @@ test("tts stream buffers input into takeable segments before translation and chu
     },
     promptRenderer: () => testPromptRuntime(),
     resolveApiPreset() {
-      return {
-        baseURL: "https://example.invalid/v1",
-        apiKey: "test-key",
-        model: "flash"
-      };
+      return testLLMApiPreset();
     }
   });
 
@@ -305,11 +302,7 @@ async function streamTranslatedTts(name: string) {
     },
     promptRenderer: () => testPromptRuntime(),
     resolveApiPreset() {
-      return {
-        baseURL: "https://example.invalid/v1",
-        apiKey: "test-key",
-        model: "flash"
-      };
+      return testLLMApiPreset();
     },
     appendLog: (_level, message) => logs.push(message)
   });
@@ -385,11 +378,7 @@ test("tts stream maps returned translated audio text back to source punctuation"
     }),
     promptRenderer: () => testPromptRuntime(),
     resolveApiPreset() {
-      return {
-        baseURL: "https://example.invalid/v1",
-        apiKey: "test-key",
-        model: "flash"
-      };
+      return testLLMApiPreset();
     }
   });
 
@@ -434,11 +423,7 @@ test("tts stream returns original text with symbol-length silence for symbol-onl
       return { message: { role: "assistant", content: "日本語" } };
     },
     resolveApiPreset() {
-      return {
-        baseURL: "https://example.invalid/v1",
-        apiKey: "test-key",
-        model: "flash"
-      };
+      return testLLMApiPreset();
     },
     appendLog: (_level, message) => logs.push(message)
   });

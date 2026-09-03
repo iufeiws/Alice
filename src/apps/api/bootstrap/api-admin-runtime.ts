@@ -4,6 +4,8 @@ import type { ApiRuntimeState } from "../server/api-lifecycle-runtime.js";
 
 export function createApiAdminRuntime(input: {
   config: any;
+  credentialStore: any;
+  xaiOAuthService: any;
   logs: unknown[];
   messageLogs: unknown[];
   llmRequestLogs: unknown[];
@@ -34,6 +36,8 @@ export function createApiAdminRuntime(input: {
   const runtimeState: ApiRuntimeState = { feishuStarted: false, wechatStarted: false };
   const requestHandler = createAdminRequestHandlerRuntime({
     config: input.config,
+    credentialStore: input.credentialStore,
+    xaiOAuthService: input.xaiOAuthService,
     logs: input.logs,
     messageLogs: input.messageLogs,
     llmRequestLogs: input.llmRequestLogs,

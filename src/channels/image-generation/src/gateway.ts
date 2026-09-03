@@ -20,6 +20,7 @@ export type ImageGenerationProviderInput = {
   referenceImagePrompt: string;
   timeoutMs: number;
   apiKey?: string;
+  credentialId?: string;
   apiBaseURL: string;
   apiEndpoint: "edits" | "relayEdits" | "xaiEdits";
   apiModel: string;
@@ -81,7 +82,7 @@ export function imageGenerationProviderForMode(mode: SelfieGenerationMode): Imag
 export async function runPhotoGateway(input: PhotoGatewayInput): Promise<PhotoGatewayResult> {
   const provider = input.provider ?? input.config.selfieMode;
   const imageApiSettings = selectedImageApiSettings({ ...input.config, selfieMode: provider });
-  if (!input.executor && provider !== "codex" && !imageApiSettings.key) throw new Error("missing_photo_image_api_key");
+  if (!input.executor && provider !== "codex" && !imageApiSettings.key && !imageApiSettings.credentialId) throw new Error("missing_photo_image_api_credential");
   const fileName = `${input.fileBaseName}.${extensionForOutputFormat(imageApiSettings.outputFormat)}`;
   const timeoutMs = provider === "codex" ? input.config.selfieCodexTimeoutMs : imageApiSettings.timeoutMs;
   const result = await runImageGenerationProvider({
@@ -95,6 +96,7 @@ export async function runPhotoGateway(input: PhotoGatewayInput): Promise<PhotoGa
     referenceImagePrompt: input.referenceImagePrompt ?? "",
     timeoutMs,
     apiKey: imageApiSettings.key,
+    credentialId: imageApiSettings.credentialId,
     apiBaseURL: imageApiSettings.baseURL,
     apiEndpoint: imageApiSettings.endpoint,
     apiModel: imageApiSettings.model,

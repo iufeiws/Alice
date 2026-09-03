@@ -1,4 +1,5 @@
 import { Agent } from "undici";
+import type { RequestAuthorization } from "./request-authorization.js";
 
 /**
  * Raw OpenAI-compatible upstream transport owned by the LLM gateway.
@@ -50,12 +51,11 @@ export type OpenAIUpstreamRequest = {
   (input: OpenAIUpstreamRequestInput): Promise<OpenAIUpstreamAttempt>;
 };
 
-const openAIRetryAttempts = 2;
 const openAIRetryDelayMs = 2_000;
 
 export function createOpenAIUpstreamRequester(config: {
   baseURL: string;
-  apiKey?: string;
+  authorization?: RequestAuthorization;
   timeoutMs?: number;
   /** When false (the default), bypass the process-wide outbound proxy. */
   useProxy?: boolean;
@@ -63,11 +63,19 @@ export function createOpenAIUpstreamRequester(config: {
 }): OpenAIUpstreamRequest {
   const fetchImpl = config.fetchImpl ?? fetch;
   const baseURL = config.baseURL.replace(/\/+$/, "");
+  const authorization = config.authorization;
   const dispatcher = config.useProxy === true ? undefined : newDirectDispatcher();
   return async function requestUpstream<T>(
     input: OpenAIUpstreamRequestInput & { consume?(response: Response): Promise<T> }
   ): Promise<T | OpenAIUpstreamAttempt> {
-    for (let attempt = 1; attempt <= openAIRetryAttempts; attempt += 1) {
+    let transportRetries = 0;
+    let authorizationRetries = 0;
+    let forcedAuthorization: string | undefined;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const target = new URL(`${baseURL}${input.path}`);
+      const authorizationValue = forcedAuthorization ?? await authorization?.authorization(target);
+      forcedAuthorization = undefined;
+      if (input.signal?.aborted) throw input.signal.reason ?? new DOMException("The operation was aborted", "AbortError");
       const controller = new AbortController();
       const abort = () => controller.abort();
       if (input.signal?.aborted) controller.abort();
@@ -83,30 +91,43 @@ export function createOpenAIUpstreamRequester(config: {
         signal: controller.signal,
         headers: {
           "content-type": "application/json",
-          ...(config.apiKey ? { authorization: `Bearer ${config.apiKey}` } : {}),
-          ...(input.init.headers ?? {})
+          ...(input.init.headers ?? {}),
+          ...(authorizationValue ? { authorization: authorizationValue } : {})
         }
       };
       if (dispatcher) requestInit.dispatcher = dispatcher;
 
       let response: Response;
       try {
-        response = await fetchImpl(`${baseURL}${input.path}`, requestInit);
+        response = await fetchImpl(target.toString(), requestInit);
       } catch (error) {
         cleanup();
-        if (attempt >= openAIRetryAttempts || input.signal?.aborted) throw error;
+        if (transportRetries >= 1 || input.signal?.aborted) throw error;
+        transportRetries += 1;
         await sleep(openAIRetryDelayMs, input.signal);
         continue;
       }
 
-      if (attempt < openAIRetryAttempts && isRetryableOpenAIStatus(response.status) && !input.signal?.aborted) {
+      if (response.status === 401 && authorization && authorizationValue && authorizationRetries < 1 && !input.signal?.aborted) {
+        const refreshed = await authorization.retryAfterUnauthorized({ target, rejectedAuthorization: authorizationValue });
+        if (refreshed) {
+          authorizationRetries += 1;
+          forcedAuthorization = refreshed;
+          cleanup();
+          await cancelResponseBody(response);
+          continue;
+        }
+      }
+
+      if (transportRetries < 1 && isRetryableOpenAIStatus(response.status) && !input.signal?.aborted) {
+        transportRetries += 1;
         cleanup();
         await cancelResponseBody(response);
         await sleep(openAIRetryDelayMs, input.signal);
         continue;
       }
 
-      if (openAICallObserver && response.ok && input.path === "/chat/completions") {
+      if (openAICallObserver && response.ok && (input.path === "/chat/completions" || input.path === "/responses")) {
         try {
           response = observeOpenAICallResponse(response, {
             baseURL,
@@ -128,7 +149,8 @@ export function createOpenAIUpstreamRequester(config: {
         cleanup();
         await cancelResponseBody(response);
         controller.abort();
-        if (attempt >= openAIRetryAttempts || input.signal?.aborted || !response.ok) throw error;
+        if (transportRetries >= 1 || input.signal?.aborted || !response.ok) throw error;
+        transportRetries += 1;
         await sleep(openAIRetryDelayMs, input.signal);
       }
     }
@@ -192,7 +214,7 @@ async function observeCall(chunks: Uint8Array[], call: Pick<OpenAICallEvent, "ba
     ...call,
     responseModel: stringValue(raw.model),
     responseId: stringValue(raw.id),
-    finishReason: stringValue(firstChoice?.finish_reason),
+    finishReason: stringValue(firstChoice?.finish_reason) ?? responsesFinishReason(raw),
     usage: normalizeOpenAIUsage(rawUsage),
     rawUsage
   });
@@ -220,10 +242,20 @@ function observedSseResult(text: string): Record<string, unknown> {
     if (typeof chunk.model === "string") result.model = chunk.model;
     const usage = objectValue(chunk.usage);
     if (usage) result.usage = usage;
+    if (chunk.type === "response.completed" || chunk.type === "response.failed" || chunk.type === "response.incomplete") {
+      const response = objectValue(chunk.response);
+      if (response) Object.assign(result, response);
+    }
     const firstChoice = Array.isArray(chunk.choices) ? objectValue(chunk.choices[0]) : undefined;
     if (typeof firstChoice?.finish_reason === "string") result.choices = [{ finish_reason: firstChoice.finish_reason }];
   }
   return result;
+}
+
+function responsesFinishReason(raw: Record<string, unknown>): string | undefined {
+  const status = stringValue(raw.status);
+  if (status === "completed") return "stop";
+  return stringValue(objectValue(raw.incomplete_details)?.reason) ?? status;
 }
 
 function requestModel(body: BodyInit | null | undefined): string | undefined {

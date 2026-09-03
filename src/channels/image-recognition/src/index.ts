@@ -1,5 +1,6 @@
 import type { LLMClient } from "../../../contexts/llm-gateway/src/index.js";
 import type { LLMRequestSender } from "../../../contexts/llm-gateway/src/llm-tool-loop.js";
+import type { LLMApiPreset } from "../../../contexts/llm-gateway/src/llm-api-preset.js";
 import type { PromptContextRuntime } from "../../../contexts/prompt-context/src/index.js";
 
 const fs = await import("node:fs");
@@ -13,18 +14,7 @@ export function defaultImageRecognitionExtraParams(): Record<string, unknown> {
   };
 }
 
-export type ImageRecognitionApiPreset = {
-  name?: string;
-  baseURL: string;
-  apiKey?: string;
-  model: string;
-  temperature?: number;
-  timeoutMs?: number;
-  useProxy?: boolean;
-  stream?: boolean;
-  extraParams?: Record<string, unknown>;
-  followupExtraParams?: Record<string, unknown>;
-};
+export type ImageRecognitionApiPreset = LLMApiPreset;
 
 export type ImageRecognitionConfig = {
   enabled: boolean;

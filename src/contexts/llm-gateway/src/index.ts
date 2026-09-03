@@ -6,6 +6,7 @@ import {
   type LLMMessageSanitizationOptions
 } from "./llm-message-sanitization.js";
 import { createOpenAIUpstreamRequester, normalizeOpenAIUsage } from "./llm-upstream-requester.js";
+import { createApiKeyAuthorization, type RequestAuthorization } from "./request-authorization.js";
 
 export type LLMRole = "system" | "user" | "assistant" | "tool";
 
@@ -19,6 +20,11 @@ export * from "./llm-upstream-requester.js";
 export * from "./token-usage-runtime.js";
 export * from "./pi-preset-adapter.js";
 export * from "./pi-llm-relay.js";
+export * from "./request-authorization.js";
+export * from "./credential-store.js";
+export * from "./credential-runtime.js";
+export * from "./xai-oauth-service.js";
+export * from "./openai-responses-client.js";
 
 export type LLMContentPart =
   | { type: "text"; text: string }
@@ -65,6 +71,8 @@ export type LLMToolSpec = {
 };
 
 export type LLMChatInput = {
+  protocol?: "openai-chat-completions" | "openai-responses";
+  stream?: boolean;
   messages: LLMMessage[];
   model?: string;
   temperature?: number;
@@ -118,7 +126,8 @@ export type MutableLLMClient = LLMClient & {
 
 export type OpenAICompatibleConfig = {
   baseURL: string;
-  apiKey: string;
+  apiKey?: string;
+  authorization?: RequestAuthorization;
   model: string;
   temperature?: number;
   timeoutMs?: number;
@@ -197,7 +206,7 @@ export function createOpenAICompatibleClient(config: OpenAICompatibleConfig): LL
   const baseURL = config.baseURL.replace(/\/+$/, "");
   const requestUpstream = createOpenAIUpstreamRequester({
     baseURL,
-    apiKey: config.apiKey,
+    authorization: config.authorization ?? (config.apiKey ? createApiKeyAuthorization(config.apiKey) : undefined),
     timeoutMs: config.timeoutMs,
     useProxy: config.useProxy
   });

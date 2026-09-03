@@ -40,9 +40,14 @@ export function renderMemoryScript(): string {
       }
 
       async function refreshLLMApiPresets() {
-        const payload = await fetch("/admin/api/config/llm-presets").then((res) => res.json());
+        const [payload, credentialPayload] = await Promise.all([
+          fetch("/admin/api/config/llm-presets").then((res) => res.json()),
+          fetch("/admin/api/credentials").then((res) => res.json())
+        ]);
         llmApiPresets = payload.presets || [];
+        llmCredentials = credentialPayload.credentials || [];
         currentLLMApiPreset = payload.active;
+        renderCredentialControls();
         renderLLMApiPresetControls();
         if (payload.active) {
           applyLLMApiPresetToForm(payload.active);
@@ -64,8 +69,19 @@ export function renderMemoryScript(): string {
 
       function renderLLMApiPresetOptions(selected = "") {
         return ['<option value="" ' + (!selected ? "selected" : "") + '>Choose API preset</option>']
-          .concat(llmApiPresets.map((preset) => \`<option value="\${escapeAttr(preset.name)}" \${selected === preset.name ? "selected" : ""}>\${escapeHtml(preset.name)}\${preset.apiKeySet ? "" : " (no key)"}</option>\`))
+          .concat(llmApiPresets.map((preset) => \`<option value="\${escapeAttr(preset.name)}" \${selected === preset.name ? "selected" : ""}>\${escapeHtml(preset.name)}</option>\`))
           .join("");
+      }
+
+      function renderCredentialControls() {
+        const select = $("credentialId");
+        if (select) {
+          const selected = select.value;
+          select.innerHTML = ['<option value="">Choose credential</option>']
+            .concat(llmCredentials.map((credential) => \`<option value="\${escapeAttr(credential.id)}">\${escapeHtml(credential.label)} · \${escapeHtml(credential.kind)} · \${escapeHtml(credential.provider)}</option>\`))
+            .join("");
+          if (llmCredentials.some((credential) => credential.id === selected)) select.value = selected;
+        }
       }
 
       function selectedLLMApiPreset(selectId = "llmPresetSelect") {
@@ -77,6 +93,8 @@ export function renderMemoryScript(): string {
         const body = {
           baseURL: $("baseURL").value,
           model: $("model").value,
+          protocol: $("protocol").value,
+          credentialId: $("credentialId").value,
           temperature: $("temperature").value,
           maxTokens: $("maxTokens").value,
           timeoutMs: $("timeoutMs").value,
@@ -87,18 +105,19 @@ export function renderMemoryScript(): string {
           extraParams: $("extraParams").value,
           followupExtraParams: $("followupExtraParams").value
         };
-        if ($("apiKey").value) body.apiKey = $("apiKey").value;
         return body;
       }
 
       function bindLLMApiPresetFormDirtyTracking() {
-        ["llmPresetName", "baseURL", "model", "apiKey", "temperature", "maxTokens", "timeoutMs", "extraParams", "followupExtraParams"].forEach((id) => {
+        ["llmPresetName", "baseURL", "model", "temperature", "maxTokens", "timeoutMs", "extraParams", "followupExtraParams"].forEach((id) => {
           $(id)?.addEventListener("input", () => markLLMApiPreset("dirty"));
         });
         $("streamEnabled")?.addEventListener("change", () => markLLMApiPreset("dirty"));
         $("useProxy")?.addEventListener("change", () => markLLMApiPreset("dirty"));
         $("supportsImage")?.addEventListener("change", () => markLLMApiPreset("dirty"));
         $("supportsAudio")?.addEventListener("change", () => markLLMApiPreset("dirty"));
+        $("protocol")?.addEventListener("change", () => markLLMApiPreset("dirty"));
+        $("credentialId")?.addEventListener("change", () => markLLMApiPreset("dirty"));
       }
 
       function markLLMApiPreset(state) {
@@ -110,6 +129,8 @@ export function renderMemoryScript(): string {
       function applyLLMApiPresetToForm(preset) {
         $("baseURL").value = preset.baseURL || "";
         $("model").value = preset.model || "";
+        $("protocol").value = preset.protocol || "openai-chat-completions";
+        $("credentialId").value = preset.credentialId || "";
         $("temperature").value = String(preset.temperature ?? "");
         $("maxTokens").value = String(preset.maxTokens ?? "");
         $("timeoutMs").value = String(preset.timeoutMs ?? "");
@@ -120,13 +141,14 @@ export function renderMemoryScript(): string {
         $("extraParams").value = JSON.stringify(preset.extraParams || {}, null, 2);
         $("followupExtraParams").value = JSON.stringify(preset.followupExtraParams || {}, null, 2);
         $("llmPresetName").value = preset.name || "";
-        $("apiKey").value = "";
         markLLMApiPreset("");
       }
 
       function clearLLMApiForm() {
         $("baseURL").value = "";
         $("model").value = "";
+        $("protocol").value = "openai-chat-completions";
+        $("credentialId").value = llmCredentials[0]?.id || "";
         $("temperature").value = "0.2";
         $("maxTokens").value = "";
         $("timeoutMs").value = "60000";
@@ -137,7 +159,6 @@ export function renderMemoryScript(): string {
         $("extraParams").value = "{}";
         $("followupExtraParams").value = "{}";
         $("llmPresetName").value = "";
-        $("apiKey").value = "";
         markLLMApiPreset("");
       }
 
@@ -145,6 +166,7 @@ export function renderMemoryScript(): string {
         const name = $("llmPresetName").value.trim() || $("llmPresetSelect").value;
         if (!name) return "Preset name required. API settings are saved only as named presets.";
         if (!$("model").value.trim()) return "Model is required.";
+        if (!$("credentialId").value) return "Credential is required.";
         const baseURL = $("baseURL").value.trim();
         if (baseURL) {
           try {

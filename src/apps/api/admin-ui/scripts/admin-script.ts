@@ -13,6 +13,7 @@ import { renderAdminTerminalScript } from "../terminal-script.js";
 import { renderGenericPluginConfigScript } from "../plugins/generic-config-script.js";
 import { renderPhotoPluginScript } from "../plugins/photo-script.js";
 import { renderTtsPluginScript } from "../plugins/tts-script.js";
+import { renderCredentialsPluginScript } from "../plugins/credentials-script.js";
 import { renderWorldWandererPluginScript } from "../plugins/world-wanderer-script.js";
 import { renderDomScript } from "../shared/dom-script.js";
 import { renderImageUploadScript } from "../shared/image-upload-script.js";
@@ -27,6 +28,7 @@ ${renderGenericPluginConfigScript()}
 ${renderWorldWandererPluginScript()}
 ${renderPhotoPluginScript()}
 ${renderTtsPluginScript()}
+${renderCredentialsPluginScript()}
 ${renderInitiatedBehaviorsScript()}
 ${renderAdminTerminalScript()}
 ${renderTokenUsageScript()}
@@ -141,6 +143,11 @@ ${renderPromptsScript()}
       $("pluginBack").addEventListener("click", closePluginConfig);
       $("pluginSearch").addEventListener("input", refreshPlugins);
       $("pluginGrid").addEventListener("click", async (event) => {
+        const credentialButton = event.target.closest("[data-credential-management]");
+        if (credentialButton) {
+          await openCredentialManagement();
+          return;
+        }
         const configButton = event.target.closest("[data-plugin-config]");
         if (configButton && !configButton.disabled) {
           await openPluginConfig(configButton.dataset.pluginConfig);

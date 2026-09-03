@@ -12,7 +12,12 @@ import { defaultBailianTtsEndpoint, defaultMimoTtsBaseURL, defaultMimoTtsModel, 
 import { parseJsonObject, stringValue } from "./internal.js";
 import { writeAscii } from "./audio-utils.js";
 import { recordTtsApiUsage } from "./usage.js";
-import { createOpenAIUpstreamRequester } from "../../../contexts/llm-gateway/src/index.js";
+import {
+  createApiKeyAuthorization,
+  createOpenAIUpstreamRequester,
+  resolveCredentialAuthorization,
+  type RequestAuthorization
+} from "../../../contexts/llm-gateway/src/index.js";
 
 export function createTtsConversionSynthesizer(
   conversion: TtsConversionProvider,
@@ -67,10 +72,11 @@ export function createOpenAiApiTtsVoiceSynthesizer(
 
 type OpenAiApiTtsSettings = {
   baseURL: string;
-  apiKey: string;
+  authorization: RequestAuthorization;
   model: string;
   voice: string;
   timeoutMs: number;
+  useProxy: boolean;
   sampleRate: number;
   channels: number;
   extraParams: Record<string, unknown>;
@@ -80,16 +86,22 @@ function resolveOpenAiApiTtsSettings(config: TtsPluginConfig, deps: Pick<TtsPlug
   const conversion = selectedTtsPreset(config).openaiApi ?? {};
   const preset = conversion.apiPresetName ? deps.resolveApiPreset?.(conversion.apiPresetName) : undefined;
   const env = deps.env ?? process.env;
-  const apiKey = conversion.apiKey || (conversion.apiKeyEnv ? env[conversion.apiKeyEnv] : undefined) || preset?.apiKey || (preset?.apiKeyEnv ? env[preset.apiKeyEnv] : undefined);
+  const apiKey = conversion.apiKey || (conversion.apiKeyEnv ? env[conversion.apiKeyEnv] : undefined);
   const baseURL = normalizeOpenAiApiSpeechBaseURL(conversion.baseURL || preset?.baseURL || "");
   if (!baseURL) throw new Error("OpenAI-API TTS conversion requires baseURL or API preset");
-  if (!apiKey) throw new Error("OpenAI-API TTS conversion requires API key or API preset");
+  const authorization = apiKey
+    ? createApiKeyAuthorization(apiKey)
+    : preset?.credentialId
+      ? resolveCredentialAuthorization(preset.credentialId)
+      : undefined;
+  if (!authorization) throw new Error("OpenAI-API TTS conversion requires API key or credential-aware API preset");
   return {
     baseURL,
-    apiKey,
+    authorization,
     model: conversion.model || preset?.model || "higgs-audio-v3-tts",
     voice: conversion.voice || "default",
     timeoutMs: conversion.timeoutMs ?? preset?.timeoutMs ?? 60_000,
+    useProxy: preset?.useProxy === true,
     sampleRate: conversion.sampleRate ?? 32_000,
     channels: conversion.channels ?? 1,
     extraParams: {
@@ -127,8 +139,13 @@ async function* requestOpenAiApiTtsAudioStream(
   options: { stream?: boolean } = { stream: true }
 ): AsyncIterable<Uint8Array> {
   const fetchImpl = deps.fetch ?? fetch;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(new Error("openai_api_tts_timeout")), settings.timeoutMs);
+  const requester = createOpenAIUpstreamRequester({
+    baseURL: settings.baseURL,
+    authorization: settings.authorization,
+    timeoutMs: settings.timeoutMs,
+    useProxy: settings.useProxy,
+    fetchImpl
+  });
   const body = {
     ...settings.extraParams,
     input: text,
@@ -138,16 +155,14 @@ async function* requestOpenAiApiTtsAudioStream(
     ...(options.stream === false ? {} : { stream: true })
   };
   deps.appendLog?.("info", `tts OpenAI-API speech start: chars=${Array.from(text).length} stream=${options.stream === false ? "false" : "true"}`);
-  try {
-    const response = await fetchImpl(`${settings.baseURL}/audio/speech`, {
+  const { response, cleanup } = await requester({
+    path: "/audio/speech",
+    init: {
       method: "POST",
-      headers: {
-        "authorization": `Bearer ${settings.apiKey}`,
-        "content-type": "application/json"
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal
-    });
+      body: JSON.stringify(body)
+    }
+  });
+  try {
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
       throw new Error(`OpenAI-API TTS HTTP ${response.status}: ${errorText.slice(0, 500)}`);
@@ -168,7 +183,7 @@ async function* requestOpenAiApiTtsAudioStream(
       reader.releaseLock();
     }
   } finally {
-    clearTimeout(timeout);
+    cleanup();
   }
 }
 

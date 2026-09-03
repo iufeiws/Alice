@@ -61,7 +61,7 @@ test("sleepInduction_closedBoundaryWindow_recordsCurrentTimestampBeforeQuery", a
         return { message: { role: "assistant", content: "done" } };
       }
     },
-    config: memoryConfig(),
+    config: { ...memoryConfig(), apiKey: undefined },
     nowIso: () => "2026-05-24T06:00:00.000Z",
     timezone: "Asia/Shanghai",
     log() {}

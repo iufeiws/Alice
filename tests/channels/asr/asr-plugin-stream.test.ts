@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createApiKeyAuthorization, setActiveCredentialRuntime } from "../../../src/contexts/llm-gateway/src/index.js";
+
+setActiveCredentialRuntime({ resolveAuthorization: () => createApiKeyAuthorization("secret") } as any);
 import { createAsrInboundStreamSession, createAsrPlugin, type AsrPluginConfig } from "../../../src/channels/asr/src/index.js";
 import { FakeWebSocket, jsonResponse, writeAsrConfigFixture } from "./asr-plugin-helpers.js";
 
@@ -31,7 +34,7 @@ test("inboundStream_chunksAndEnd_transcribesFinalAudio", async () => {
       return {
         name: "openai",
         baseURL: "https://api.openai.com/v1",
-        apiKey: "secret",
+        credentialId: "test-credential",
         model: "whisper-1",
         timeoutMs: 60_000,
         temperature: 0.2,
@@ -97,7 +100,7 @@ test("pluginInboundStream_pluginDeps_reusesConfiguredDeps", async () => {
       return {
         name,
         baseURL: "https://api.example.com/v1",
-        apiKey: "secret",
+        credentialId: "test-credential",
         model: "stream-model"
       };
     },
@@ -149,7 +152,7 @@ test("pseudoStream_longPause_returnsStablePartials", async () => {
       return {
         name: "openai",
         baseURL: "https://api.openai.com/v1",
-        apiKey: "secret",
+        credentialId: "test-credential",
         model: "whisper-1",
         timeoutMs: 60_000,
         temperature: 0.2,
@@ -226,7 +229,7 @@ test("openaiCompatiblePseudoStream_pcm16_wrapsChunksAsWav", async () => {
       return {
         name: "openai",
         baseURL: "https://api.openai.com/v1",
-        apiKey: "secret",
+        credentialId: "test-credential",
         model: "whisper-1",
         timeoutMs: 60_000,
         stream: false,

@@ -28,8 +28,8 @@ export async function runSleepMemoryInduction(deps: MemorySummaryDeps): Promise<
     deps.log("info", "sleep Memorize skipped: disabled");
     return false;
   }
-  if (!deps.llm || !deps.config.apiKey) {
-    deps.log("warn", "sleep Memorize skipped: missing Memorize API preset or API key");
+  if (!deps.llm) {
+    deps.log("warn", "sleep Memorize skipped: missing Memorize API preset");
     return false;
   }
 
@@ -107,8 +107,8 @@ export async function runMemoryInductionForMessages(
   if (!deps.config.enabled) {
     return { ok: false, startedAt, windowStartAt: deps.windowStartAt, windowEndAt: deps.windowEndAt, messageCount: deps.messages.length, results: [] };
   }
-  if (!deps.llm || !deps.config.apiKey) {
-    const error = "missing Memorize API preset or API key";
+  if (!deps.llm) {
+    const error = "missing Memorize API preset";
     deps.log("warn", `Memorize skipped: ${error}`);
     return {
       ok: false,

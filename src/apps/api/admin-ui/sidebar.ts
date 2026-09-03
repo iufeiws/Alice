@@ -29,8 +29,13 @@ export function renderAdminSidebar(): string {
               <input id="baseURL" name="baseURL" autocomplete="off" />
               <label for="model">Model</label>
               <input id="model" name="model" autocomplete="off" />
-              <label for="apiKey">API Key</label>
-              <input id="apiKey" name="apiKey" type="password" placeholder="Leave blank to keep unchanged" autocomplete="new-password" />
+              <label for="protocol">Protocol</label>
+              <select id="protocol" name="protocol">
+                <option value="openai-chat-completions">OpenAI Chat Completions</option>
+                <option value="openai-responses">OpenAI Responses</option>
+              </select>
+              <label for="credentialId">Credential</label>
+              <select id="credentialId" name="credentialId"></select>
               <label for="temperature">Temperature</label>
               <input id="temperature" name="temperature" inputmode="decimal" />
               <label for="maxTokens">Max Tokens (optional)</label>

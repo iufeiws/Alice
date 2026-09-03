@@ -15,6 +15,7 @@ import { getAdminTools, getMemoryAdminRuntime, getVisiblePromptTools, isMemoryTa
 import { restartToolName } from "../../../capabilities/tools/restart/profile.js";
 import { createInitiatedBehavior, deleteInitiatedBehavior, patchInitiatedBehavior, writeInitiatedBehaviors } from "../../../contexts/initiative/src/application/admin-runtime.js";
 import type { AdminRouteServices, AdminRuntimeContext as AdminRoutesContext } from "./admin-route-context.js";
+import { handleCredentialAdminApi } from "../../../contexts/llm-gateway/src/credential-admin-runtime.js";
 
 export function createAdminRouteServices(context: AdminRoutesContext): AdminRouteServices {
   return {
@@ -24,6 +25,7 @@ export function createAdminRouteServices(context: AdminRoutesContext): AdminRout
 }
 
 export async function handleAdminApiServiceRoute(context: AdminRoutesContext, request: any, response: any): Promise<void> {
+  if (await handleCredentialAdminApi(context, request, response)) return;
   if (request.method === "GET" && request.url === "/plugins/webrtc-voice/call") {
     writeHtml(response, 200, renderWebRtcVoiceCallPage());
     return;

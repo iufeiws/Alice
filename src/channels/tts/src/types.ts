@@ -1,5 +1,6 @@
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 import type { PromptContextRuntime } from "../../../contexts/prompt-context/src/index.js";
+import type { LLMApiPreset } from "../../../contexts/llm-gateway/src/llm-api-preset.js";
 
 export type TTSConfig = {
   backend?: "genie-tts" | "moss-onnx";
@@ -68,17 +69,7 @@ export type FallbackVoiceSynthesizerDeps = {
   appendLog?(level: "info" | "warn" | "error", message: string): void;
 };
 
-export type TtsApiPreset = {
-  name?: string;
-  baseURL: string;
-  apiKey?: string;
-  apiKeyEnv?: string;
-  model: string;
-  temperature?: number;
-  timeoutMs?: number;
-  useProxy?: boolean;
-  extraParams?: Record<string, unknown>;
-};
+export type TtsApiPreset = LLMApiPreset;
 
 export type TtsPluginConfig = {
   enabled: boolean;

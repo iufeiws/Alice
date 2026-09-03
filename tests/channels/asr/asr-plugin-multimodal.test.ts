@@ -8,7 +8,7 @@ function multimodalPreset(name = "mimo") {
   return {
     name,
     baseURL: "https://api.example.test/v1",
-    apiKey: "secret",
+    credentialId: "test-credential",
     model: "mimo-v2.5",
     temperature: 0.2,
     timeoutMs: 120_000,

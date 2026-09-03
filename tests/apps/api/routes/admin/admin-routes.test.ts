@@ -38,6 +38,61 @@ test("voice call app page renders outside the plugin page", async () => {
   assert.equal(response.statusCode, 200);
 });
 
+test("credential admin responses never expose API key payloads", async () => {
+  const root = makeTempDir("admin-credential-secret");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
+  const records: any[] = [];
+  const context = baseContext(root, memoryStore, promptStore);
+  context.credentialStore = {
+    ...context.credentialStore,
+    list: () => records.map(({ payload: _payload, ...record }) => record),
+    upsert: (value: any) => {
+      const record = { ...value, status: "connected" };
+      records.push(record);
+      const { payload: _payload, ...publicRecord } = record;
+      return publicRecord;
+    }
+  };
+  const handler = createAdminHandler(context);
+  const created = createResponse();
+  await handler(createRequest("POST", "/admin/api/credentials/api-key", {
+    id: "openai-main",
+    label: "OpenAI Main",
+    provider: "openai-compatible",
+    apiKey: "sk-never-return-this"
+  }), created);
+  const listed = createResponse();
+  await handler(createRequest("GET", "/admin/api/credentials", {}), listed);
+
+  assert.equal(created.statusCode, 200);
+  assert.equal(listed.statusCode, 200);
+  assert.doesNotMatch(created.body, /sk-never-return-this|apiKey/);
+  assert.doesNotMatch(listed.body, /sk-never-return-this|apiKey/);
+});
+
+test("credential deletion returns references instead of deleting an in-use credential", async () => {
+  const root = makeTempDir("admin-credential-reference");
+  const memoryStore = createMarkdownMemoryStore(root);
+  const promptStore = createMemoryInductionPromptStore(promptStoragePath(root, "memorize-prompts.json"));
+  writePreset(root, "main");
+  let deleted = false;
+  const context = baseContext(root, memoryStore, promptStore);
+  context.credentialStore = {
+    ...context.credentialStore,
+    delete: () => { deleted = true; return true; }
+  };
+  const handler = createAdminHandler(context);
+  const response = createResponse();
+  await handler(createRequest("DELETE", "/admin/api/credentials/test-credential", {}), response);
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 409);
+  assert.equal(body.error, "credential_in_use");
+  assert.deepEqual(body.references, ["llm-preset:main"]);
+  assert.equal(deleted, false);
+});
+
 test("voice call app config defines frontend and signaling routes", async () => {
   const root = makeTempDir("voice-call-config");
   const memoryStore = createMarkdownMemoryStore(root);
@@ -92,6 +147,7 @@ test("llm api preset save stores extra params as part of the preset", async () =
   const response = createResponse();
   await handler(createRequest("PUT", "/admin/api/config/llm-presets", {
     name: "Chat Custom",
+    credentialId: "test-credential",
     baseURL: "https://chat.example.test/v1",
     model: "chat-custom",
     temperature: "0.4",
@@ -126,6 +182,7 @@ test("llm api preset save persists enabled proxy usage", async () => {
   const response = createResponse();
   await handler(createRequest("PUT", "/admin/api/config/llm-presets", {
     name: "Proxy Preset",
+    credentialId: "test-credential",
     baseURL: "https://chat.example.test/v1",
     model: "chat-custom",
     temperature: "0.4",
@@ -150,6 +207,7 @@ test("llm api preset save accepts long timeout values", async () => {
   const response = createResponse();
   await handler(createRequest("PUT", "/admin/api/config/llm-presets", {
     name: "Long Timeout",
+    credentialId: "test-credential",
     baseURL: "https://chat.example.test/v1",
     model: "chat-custom",
     temperature: "0.4",
@@ -174,6 +232,7 @@ test("llm api preset save rejects invalid max tokens", async () => {
   const response = createResponse();
   await handler(createRequest("PUT", "/admin/api/config/llm-presets", {
     name: "Invalid Max Tokens",
+    credentialId: "test-credential",
     baseURL: "https://chat.example.test/v1",
     model: "chat-custom",
     temperature: "0.4",
@@ -218,9 +277,12 @@ test("prompt api profile saves chat binding", async () => {
   const root = makeTempDir("admin-prompt-api-profile-chat");
   fs.mkdirSync(path.join(root, "config"), { recursive: true });
   fs.writeFileSync(path.join(root, "config", "llm-api-presets.json"), `${JSON.stringify({
+    schemaVersion: 2,
     presets: [
       {
         name: "Chat Custom",
+        protocol: "openai-chat-completions",
+        credentialId: "test-credential",
         baseURL: "https://chat.example.test/v1",
         model: "chat-custom",
         temperature: 0.4,
@@ -231,6 +293,8 @@ test("prompt api profile saves chat binding", async () => {
       },
       {
         name: "Talk Custom",
+        protocol: "openai-chat-completions",
+        credentialId: "test-credential",
         baseURL: "https://talk.example.test/v1",
         model: "talk-custom",
         temperature: 0.3,
@@ -241,6 +305,8 @@ test("prompt api profile saves chat binding", async () => {
       },
       {
         name: "Memorize Custom",
+        protocol: "openai-chat-completions",
+        credentialId: "test-credential",
         baseURL: "https://memorize.example.test/v1",
         model: "memorize-custom",
         temperature: 0.5,

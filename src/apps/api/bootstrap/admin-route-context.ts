@@ -27,6 +27,8 @@ import type { AsrPluginConfig, AsrTranscribeError, AsrTranscribeInput, AsrTransc
 import type { ImageRecognitionConfig, ImageRecognitionError, ImageRecognitionInput, ImageRecognitionResult } from "../../../channels/image-recognition/src/index.js";
 import type { PiWorkerRuntime } from "../../../contexts/pi-worker/src/index.js";
 import type { MemorySandbox } from "../../../contexts/memory/src/model.js";
+import type { CredentialStore } from "../../../contexts/llm-gateway/src/credential-store.js";
+import type { createXaiOAuthService } from "../../../contexts/llm-gateway/src/xai-oauth-service.js";
 
 export type AdminRouteServices = {
   handleApiRoute(request: any, response: any): Promise<void>;
@@ -41,6 +43,8 @@ export type PromptVariableTree = Record<string, PromptContextValue>;
 
 export type AdminRuntimeContext = {
   config: AppConfig;
+  credentialStore: CredentialStore;
+  xaiOAuthService: ReturnType<typeof createXaiOAuthService>;
   logs: unknown[];
   messageLogs: unknown[];
   llmRequestLogs: unknown[];

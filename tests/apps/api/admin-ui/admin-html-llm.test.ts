@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import { assertExcludesAll, assertIncludesAll, renderAdminHtml } from "./admin-html-helpers.js";
+import { renderAdminSidebar } from "../../../../src/apps/api/admin-ui/sidebar.js";
 
 test("llmSessions_initialRender_exposesSessionControls", () => {
   const html = renderAdminHtml();
@@ -25,7 +26,8 @@ test("llmApiPreset_initialRender_exposesPresetEditor", () => {
     "Delete",
     "Base URL",
     "Model",
-    "API Key",
+    "Protocol",
+    "Credential",
     "Max Tokens (optional)",
     "Timeout Ms",
     "Use Proxy",
@@ -33,6 +35,13 @@ test("llmApiPreset_initialRender_exposesPresetEditor", () => {
     "Follow-up Extra Params JSON"
   ]);
   assertExcludesAll(html, ["Apply Preset", "Current runtime config"]);
+});
+
+test("llmSidebar_onlySelectsCredentialsAndDoesNotManageThem", () => {
+  const sidebar = renderAdminSidebar();
+
+  assertIncludesAll(sidebar, ['id="credentialId"']);
+  assertExcludesAll(sidebar, ["Configured Credentials", "Add API Key", "Connect xAI OAuth", "credentialList"]);
 });
 
 test("llmApiPreset_clientContract_usesPresetEndpointsAndStatuses", () => {
@@ -45,8 +54,10 @@ test("llmApiPreset_clientContract_usesPresetEndpointsAndStatuses", () => {
     "Saving preset...",
     "Max Tokens must be a positive integer.",
     "Timeout Ms must be at least 1000",
+    "Credential is required.",
     " is not valid JSON."
   ]);
+  assertExcludesAll(html, ['id="apiKey"', "preset.apiKeySet"]);
 });
 
 test("tokenUsage_initialRender_exposesAgentFilters", () => {

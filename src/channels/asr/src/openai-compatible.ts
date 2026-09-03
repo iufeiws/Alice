@@ -2,13 +2,13 @@ import type { AsrPluginConfig, AsrPluginDeps, AsrTranscribeInput, AsrTranscribeR
 import { bufferToArrayBuffer, fetchWithTimeout, retryAsync, retryOptions, stringValue } from "./utils.js";
 import { mimeTypeForFileName, readAudioInput } from "./audio.js";
 import { AsrConfigError } from "./errors.js";
+import { resolveCredentialAuthorization } from "../../../contexts/llm-gateway/src/credential-runtime.js";
 
 export async function transcribeOpenAiCompatible(input: AsrTranscribeInput, config: AsrPluginConfig, deps: AsrPluginDeps): Promise<AsrTranscribeResult> {
   const providerConfig = config.providers.openaiCompatible;
   const preset = providerConfig?.apiPresetName ? deps.resolveApiPreset?.(providerConfig.apiPresetName) : undefined;
-  const apiKey = preset?.apiKey;
   const model = preset?.model;
-  if (!providerConfig?.apiPresetName || !preset?.baseURL || !apiKey || !model) {
+  if (!providerConfig?.apiPresetName || !preset?.baseURL || !preset.credentialId || !model) {
     throw new AsrConfigError("missing_provider_config");
   }
 
@@ -20,13 +20,32 @@ export async function transcribeOpenAiCompatible(input: AsrTranscribeInput, conf
   if (input.prompt) form.append("prompt", input.prompt);
   if (providerConfig.responseFormat) form.append("response_format", providerConfig.responseFormat);
 
-  const response = await retryAsync(() => fetchWithTimeout(deps.fetch ?? fetch, `${preset.baseURL.replace(/\/+$/, "")}/audio/transcriptions`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${apiKey}`
-    },
-    body: form
-  }, preset.timeoutMs), retryOptions(providerConfig, deps));
+  const target = new URL(`${preset.baseURL.replace(/\/+$/, "")}/audio/transcriptions`);
+  const authorization = resolveCredentialAuthorization(preset.credentialId);
+  let authorizationValue = await authorization.authorization(target);
+  let authorizationRetried = false;
+  const response = await retryAsync(async () => {
+    let current = await fetchWithTimeout(deps.fetch ?? fetch, target.toString(), {
+      method: "POST",
+      headers: { authorization: authorizationValue },
+      body: form
+    }, preset.timeoutMs);
+    if (current.status === 401 && !authorizationRetried) {
+      const refreshed = await authorization.retryAfterUnauthorized({ target, rejectedAuthorization: authorizationValue });
+      if (refreshed) {
+        authorizationRetried = true;
+        authorizationValue = refreshed;
+        await current.body?.cancel();
+        current = await fetchWithTimeout(deps.fetch ?? fetch, target.toString(), {
+          method: "POST",
+          headers: { authorization: authorizationValue },
+          body: form
+        }, preset.timeoutMs);
+      }
+    }
+    if (current.status >= 500) throw new Error(`openai_compatible_asr_failed:${current.status}:${await current.text()}`);
+    return current;
+  }, retryOptions(providerConfig, deps));
   if (!response.ok) throw new Error(`openai_compatible_asr_failed:${response.status}:${await response.text()}`);
 
   const responseFormat = providerConfig.responseFormat ?? "json";

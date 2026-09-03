@@ -29,12 +29,12 @@ export async function translateTtsText(text: string, config: TtsPluginConfig, de
   }
   const preset = resolveEffectivePreset(config, deps);
   const client = deps.llm ?? (preset ? deps.createLlmClientFromPreset?.(preset, deps.env ?? process.env) : undefined);
-  if (!preset && deps.llmRequestSender) {
+  if (!preset) {
     deps.appendLog?.("warn", "tts translation skipped: missing api preset");
     return undefined;
   }
-  if (!client && !deps.llmRequestSender) {
-    deps.appendLog?.("warn", "tts translation skipped: missing api preset baseURL or api key");
+  if (!deps.llmRequestSender) {
+    deps.appendLog?.("warn", "tts translation skipped: missing LLM request sender");
     return undefined;
   }
 
@@ -55,14 +55,7 @@ export async function translateTtsText(text: string, config: TtsPluginConfig, de
       stream: false,
       metadata: { pluginId: "tts", route: "send_chat.voice.before_tts" }
     };
-    const result = deps.llmRequestSender
-      ? await deps.llmRequestSender(request)
-      : await client!.chat({
-        messages: request.messages,
-        model: request.model,
-        temperature: request.temperature,
-        extraParams: request.extraParams
-      });
+    const result = await deps.llmRequestSender(request);
     const translated = result.message.content.trim();
     if (!translated) {
       deps.appendLog?.("warn", "tts translation returned empty text");

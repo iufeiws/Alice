@@ -66,10 +66,12 @@ function createMemoryRunDayFixture() {
   const root = makeTempDir("admin-memory-run-day");
   fs.mkdirSync(path.join(root, "config"), { recursive: true });
   fs.writeFileSync(path.join(root, "config", "llm-api-presets.json"), `${JSON.stringify({
+    schemaVersion: 2,
     presets: [{
       name: "Memorize Custom",
+      protocol: "openai-chat-completions",
+      credentialId: "test-credential",
       baseURL: "https://memorize.example.test/v1",
-      apiKey: "memorize-key",
       model: "memorize-model",
       temperature: 0.65,
       timeoutMs: 45_000,

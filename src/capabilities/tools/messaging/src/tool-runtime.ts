@@ -124,7 +124,7 @@ export function createToolRuntime(input: {
     selfieImageApiRelayOutputFormat: input.config.photo.selfieImageApiRelayOutputFormat,
     selfieImageApiRelayOutputCompression: input.config.photo.selfieImageApiRelayOutputCompression,
     selfieImageApiRelayTimeoutMs: input.config.photo.selfieImageApiRelayTimeoutMs,
-    selfieXaiImageApiKey: input.config.photo.selfieXaiImageApiKey,
+    selfieXaiCredentialId: input.config.photo.selfieXaiCredentialId,
     selfieXaiImageApiBaseURL: input.config.photo.selfieXaiImageApiBaseURL,
     selfieXaiImageApiModel: input.config.photo.selfieXaiImageApiModel,
     selfieXaiImageApiAspectRatio: input.config.photo.selfieXaiImageApiAspectRatio,

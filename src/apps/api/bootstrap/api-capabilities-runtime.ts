@@ -3,7 +3,7 @@ import { createPromptToolPreviewRuntime } from "../../../contexts/agent-profile/
 import { createVoicePluginRuntime } from "./voice-plugin-runtime.js";
 import { createLLMRequestsRuntime } from "../../../contexts/llm-gateway/src/llm-requests-runtime.js";
 import { registerToolPlugins } from "../../../contexts/tool-execution/src/index.js";
-import { createOpenAICompatibleClient } from "../../../contexts/llm-gateway/src/index.js";
+import { createLLMClientFromPreset } from "../../../contexts/llm-gateway/src/llm-api-profile.js";
 import { readImageRecognitionConfig, recognizeImageWithPlugin, type ImageRecognitionTarget } from "../../../channels/image-recognition/src/index.js";
 import type { PiWorkerRuntime } from "../../../contexts/pi-worker/src/index.js";
 const path = await import("node:path");
@@ -69,16 +69,7 @@ export function createApiCapabilitiesRuntime(input: {
         return input.readLLMApiPresets().find((entry: { name?: string }) => entry.name === name);
       },
       createLlmClientFromPreset(preset) {
-        if (!preset.baseURL || !preset.apiKey) return undefined;
-        return createOpenAICompatibleClient({
-          baseURL: preset.baseURL,
-          apiKey: preset.apiKey,
-          model: preset.model,
-          temperature: preset.temperature,
-          timeoutMs: preset.timeoutMs,
-          useProxy: preset.useProxy === true,
-          extraParams: preset.extraParams
-        });
+        return createLLMClientFromPreset(preset);
       },
       llmRequestSender: (request) => llmRequests.send(request),
       promptRenderer: input.promptContextRuntime,

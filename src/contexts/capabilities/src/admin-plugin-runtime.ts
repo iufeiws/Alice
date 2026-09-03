@@ -699,6 +699,14 @@ function withDynamicPluginConfigSchema(context: AdminRoutesContext, pluginId: st
         : field)
     };
   }
+  if (pluginId === "photo") {
+    return {
+      ...schema,
+      fields: schema.fields.map((field) => field.key === "selfieXaiCredentialId"
+        ? { ...field, options: context.credentialStore.list().filter((credential) => credential.provider === "xai" && credential.status === "connected").map((credential) => ({ value: credential.id, label: `${credential.label}${credential.accountLabel ? ` (${credential.accountLabel})` : ""}` })) }
+        : field)
+    };
+  }
   if (pluginId !== "tts") return schema;
   const config = configValue as TtsAdminConfig;
   const translationNames = Object.keys(config.translationPresets ?? {});

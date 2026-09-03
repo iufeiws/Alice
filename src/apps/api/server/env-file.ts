@@ -26,6 +26,7 @@ export function updateEnvFile(path: string, updates: Record<string, string | und
   }
 
   fs.writeFileSync(path, `${lines.join("\n").replace(/\n+$/, "")}\n`);
+  fs.chmodSync(path, 0o600);
 }
 
 function formatEnvValue(value: string): string {

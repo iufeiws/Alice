@@ -1,6 +1,48 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createOpenAIUpstreamRequester, setOpenAICallObserver } from "../../../src/contexts/llm-gateway/src/llm-upstream-requester.js";
+import { createApiKeyAuthorization, type RequestAuthorization } from "../../../src/contexts/llm-gateway/src/request-authorization.js";
+
+test("LLM upstream replays one 401 with refreshed OAuth authorization", async () => {
+  const headers: string[] = [];
+  let refreshes = 0;
+  const authorization: RequestAuthorization = {
+    async authorization() { return "Bearer old"; },
+    async retryAfterUnauthorized({ rejectedAuthorization }) {
+      assert.equal(rejectedAuthorization, "Bearer old");
+      refreshes += 1;
+      return "Bearer new";
+    }
+  };
+  const request = createOpenAIUpstreamRequester({
+    baseURL: "https://api.x.ai/v1",
+    authorization,
+    useProxy: true,
+    fetchImpl: async (_url, init) => {
+      headers.push(new Headers(init?.headers).get("authorization") ?? "");
+      return new Response("{}", { status: headers.length === 1 ? 401 : 200 });
+    }
+  });
+  const attempt = await request({ path: "/responses", init: { method: "POST" } });
+  assert.equal(attempt.response.status, 200);
+  assert.deepEqual(headers, ["Bearer old", "Bearer new"]);
+  assert.equal(refreshes, 1);
+  attempt.cleanup();
+});
+
+test("LLM upstream does not replay API key 401", async () => {
+  let calls = 0;
+  const request = createOpenAIUpstreamRequester({
+    baseURL: "https://upstream.example/v1",
+    authorization: createApiKeyAuthorization("key"),
+    useProxy: true,
+    fetchImpl: async () => { calls += 1; return new Response("unauthorized", { status: 401 }); }
+  });
+  const attempt = await request({ path: "/chat/completions", init: { method: "POST" } });
+  assert.equal(attempt.response.status, 401);
+  assert.equal(calls, 1);
+  attempt.cleanup();
+});
 
 test("LLM upstream completion emits one normalized call event after the response is consumed", async () => {
   const events: any[] = [];
@@ -165,7 +207,7 @@ test("LLM upstream requests bypass the process proxy by default", async () => {
   let requestInit: (RequestInit & { dispatcher?: unknown }) | undefined;
   const request = createOpenAIUpstreamRequester({
     baseURL: "https://upstream.example/v1",
-    apiKey: "test",
+    authorization: createApiKeyAuthorization("test"),
     fetchImpl: async (_url, init) => {
       requestInit = init as RequestInit & { dispatcher?: unknown };
       return new Response("{}", { status: 200 });
@@ -182,7 +224,7 @@ test("LLM upstream requests use the process proxy when the preset enables it", a
   let requestInit: (RequestInit & { dispatcher?: unknown }) | undefined;
   const request = createOpenAIUpstreamRequester({
     baseURL: "https://upstream.example/v1",
-    apiKey: "test",
+    authorization: createApiKeyAuthorization("test"),
     useProxy: true,
     fetchImpl: async (_url, init) => {
       requestInit = init as RequestInit & { dispatcher?: unknown };

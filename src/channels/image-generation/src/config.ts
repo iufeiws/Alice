@@ -33,7 +33,7 @@ export type PhotoPluginConfig = {
   selfieImageApiRelayOutputFormat: string;
   selfieImageApiRelayOutputCompression: number;
   selfieImageApiRelayTimeoutMs: number;
-  selfieXaiImageApiKey?: string;
+  selfieXaiCredentialId?: string;
   selfieXaiImageApiBaseURL: string;
   selfieXaiImageApiModel: string;
   selfieXaiImageApiAspectRatio: string;
@@ -50,14 +50,15 @@ export type PhotoPluginConfig = {
   selfie2DinRealPrompt: string;
 };
 
-export type PhotoPluginPublicConfig = Omit<PhotoPluginConfig, "selfieImageApiKey" | "selfieImageApiRelayKey" | "selfieXaiImageApiKey"> & {
+export type PhotoPluginPublicConfig = Omit<PhotoPluginConfig, "selfieImageApiKey" | "selfieImageApiRelayKey"> & {
   selfieImageApiKeySet: boolean;
   selfieImageApiRelayKeySet: boolean;
-  selfieXaiImageApiKeySet: boolean;
+  selfieXaiCredentialSet: boolean;
 };
 
 export type ImageApiSettings = {
   key?: string;
+  credentialId?: string;
   baseURL: string;
   endpoint: "edits" | "relayEdits" | "xaiEdits";
   model: string;
@@ -85,12 +86,12 @@ export function readPhotoPluginConfig(configPath?: string, defaults: Partial<Pho
 }
 
 export function publicPhotoPluginConfig(config: PhotoPluginConfig): PhotoPluginPublicConfig {
-  const { selfieImageApiKey, selfieImageApiRelayKey, selfieXaiImageApiKey, ...publicConfig } = config;
+  const { selfieImageApiKey, selfieImageApiRelayKey, ...publicConfig } = config;
   return {
     ...publicConfig,
     selfieImageApiKeySet: Boolean(selfieImageApiKey),
     selfieImageApiRelayKeySet: Boolean(selfieImageApiRelayKey),
-    selfieXaiImageApiKeySet: Boolean(selfieXaiImageApiKey)
+    selfieXaiCredentialSet: Boolean(config.selfieXaiCredentialId)
   };
 }
 
@@ -125,7 +126,7 @@ export function normalizePhotoPluginConfig(parsed: Record<string, unknown>, defa
     selfieImageApiRelayOutputFormat: outputFormatValue(parsed.selfieImageApiRelayOutputFormat, defaults.selfieImageApiRelayOutputFormat ?? defaults.selfieImageApiOutputFormat ?? "jpeg", "selfieImageApiRelayOutputFormat"),
     selfieImageApiRelayOutputCompression: numberValue(parsed.selfieImageApiRelayOutputCompression, defaults.selfieImageApiRelayOutputCompression ?? defaults.selfieImageApiOutputCompression ?? 45, "selfieImageApiRelayOutputCompression"),
     selfieImageApiRelayTimeoutMs: numberValue(parsed.selfieImageApiRelayTimeoutMs, defaults.selfieImageApiRelayTimeoutMs ?? defaults.selfieImageApiTimeoutMs ?? 120_000, "selfieImageApiRelayTimeoutMs"),
-    selfieXaiImageApiKey: optionalStringValue(parsed.selfieXaiImageApiKey, defaults.selfieXaiImageApiKey, "selfieXaiImageApiKey"),
+    selfieXaiCredentialId: optionalStringValue(parsed.selfieXaiCredentialId, defaults.selfieXaiCredentialId, "selfieXaiCredentialId"),
     selfieXaiImageApiBaseURL: requiredStringValue(parsed.selfieXaiImageApiBaseURL, defaults.selfieXaiImageApiBaseURL ?? defaultXaiImageApiBaseURL, "selfieXaiImageApiBaseURL").replace(/\/+$/, ""),
     selfieXaiImageApiModel: requiredStringValue(parsed.selfieXaiImageApiModel, defaults.selfieXaiImageApiModel ?? "grok-imagine-image-2.0", "selfieXaiImageApiModel"),
     selfieXaiImageApiAspectRatio: requiredStringValue(parsed.selfieXaiImageApiAspectRatio, defaults.selfieXaiImageApiAspectRatio ?? "2:3", "selfieXaiImageApiAspectRatio"),
@@ -146,7 +147,7 @@ export function normalizePhotoPluginConfig(parsed: Record<string, unknown>, defa
 export function selectedImageApiSettings(config: PhotoPluginConfig): ImageApiSettings {
   if (config.selfieMode === "xai") {
     return {
-      key: config.selfieXaiImageApiKey,
+      credentialId: config.selfieXaiCredentialId,
       baseURL: config.selfieXaiImageApiBaseURL,
       endpoint: "xaiEdits",
       model: config.selfieXaiImageApiModel,

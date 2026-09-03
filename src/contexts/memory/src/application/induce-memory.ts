@@ -58,7 +58,7 @@ export function createSleepMemoryInductionRuntime(input: {
       const memoryConfig = memoryPreset ? {
         ...input.config.memorySummary,
         baseURL: memoryPreset.baseURL,
-        apiKey: memoryPreset.apiKey,
+        apiKey: undefined,
         model: memoryPreset.model,
         temperature: memoryPreset.temperature,
         maxTokens: memoryPreset.maxTokens,

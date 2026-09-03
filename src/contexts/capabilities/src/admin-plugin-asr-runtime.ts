@@ -1,4 +1,4 @@
-import { createOpenAICompatibleClient } from "../../llm-gateway/src/index.js";
+import { createLLMClientFromPreset } from "../../llm-gateway/src/llm-api-profile.js";
 import { multimodalLlmAsrProtocolCall, readAsrPluginConfig, transcribeWithAsrPlugin, type AsrPluginConfig, type AsrTranscribeError, type AsrTranscribeResult } from "../../../channels/asr/src/index.js";
 import { readRawBody } from "../../../apps/api/middleware/http-utils.js";
 import { readLLMApiPresets } from "../../llm-gateway/src/admin-presets.js";
@@ -151,16 +151,7 @@ async function testAsrPlugin(context: AdminRoutesContext, input: Record<string, 
         return readLLMApiPresets(context).find((entry) => entry.name === name);
       },
       createLlmClientFromPreset(preset) {
-        if (!preset.baseURL || !preset.apiKey) return undefined;
-        return createOpenAICompatibleClient({
-          baseURL: preset.baseURL,
-          apiKey: preset.apiKey,
-          model: preset.model,
-          temperature: preset.temperature,
-          timeoutMs: preset.timeoutMs,
-          useProxy: preset.useProxy === true,
-          extraParams: preset.extraParams
-        });
+        return createLLMClientFromPreset(preset as any);
       },
       llmRequestSender: context.llmRequestSender ? (request) => context.llmRequestSender!({ ...request, client: request.client as any } as any) as any : undefined,
       promptRenderer: () => context.getPromptRenderer(),

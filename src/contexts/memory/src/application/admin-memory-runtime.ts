@@ -17,23 +17,13 @@ import {
   type MemoryTarget
 } from "../memory.js";
 import { targetFiles } from "../model.js";
+import type { LLMApiPreset } from "../../../llm-gateway/src/llm-api-preset.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
 const childProcess = await import("node:child_process");
 
-export type MemoryAdminLLMApiPreset = {
-  name: string;
-  baseURL: string;
-  apiKey?: string;
-  model: string;
-  temperature: number;
-  maxTokens?: number;
-  timeoutMs: number;
-  stream: boolean;
-  extraParams: Record<string, unknown>;
-  followupExtraParams: Record<string, unknown>;
-};
+export type MemoryAdminLLMApiPreset = LLMApiPreset;
 
 type MemoryRunProgress = {
   id: string;
@@ -306,7 +296,7 @@ export function createAdminMemoryRuntime(input: MemoryAdminRuntimeInput) {
     return {
       ...input.config.memorySummary,
       baseURL: preset.baseURL,
-      apiKey: preset.apiKey,
+      apiKey: undefined,
       model: preset.model,
       temperature: preset.temperature,
       maxTokens: preset.maxTokens,

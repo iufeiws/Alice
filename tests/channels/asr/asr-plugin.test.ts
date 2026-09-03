@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createApiKeyAuthorization, setActiveCredentialRuntime } from "../../../src/contexts/llm-gateway/src/index.js";
+
+setActiveCredentialRuntime({ resolveAuthorization: () => createApiKeyAuthorization("secret") } as any);
 import fs from "node:fs";
 import { transcribeWithAsrPlugin, type AsrPluginConfig } from "../../../src/channels/asr/src/index.js";
 import { assertAsrError, assertAsrSuccess, jsonResponse, writeAsrConfigFixture, writeAudioFixture } from "./asr-plugin-helpers.js";
@@ -29,7 +32,7 @@ test("openaiCompatible_validAudio_sendsMultipartAndReturnsText", async () => {
       return {
         name,
         baseURL: "https://api.siliconflow.cn/v1",
-        apiKey: "secret",
+        credentialId: "test-credential",
         model: "FunAudioLLM/SenseVoiceSmall",
         timeoutMs: 60_000,
         temperature: 0.2,
@@ -58,6 +61,50 @@ test("openaiCompatible_validAudio_sendsMultipartAndReturnsText", async () => {
   assert.ok(result.model);
   assert.ok(result.language);
   assert.equal(typeof result.durationMs, "number");
+});
+
+test("openaiCompatible_oauth401_refreshesAuthorizationAndReplaysOnce", async () => {
+  const audioPath = writeAudioFixture("openai-compatible-oauth.wav");
+  const seenAuthorization: string[] = [];
+  let refreshCalls = 0;
+  setActiveCredentialRuntime({
+    resolveAuthorization: () => ({
+      async authorization() { return "Bearer expired"; },
+      async retryAfterUnauthorized({ rejectedAuthorization }: { rejectedAuthorization: string }) {
+        assert.equal(rejectedAuthorization, "Bearer expired");
+        refreshCalls += 1;
+        return "Bearer refreshed";
+      }
+    })
+  } as any);
+  try {
+    const result = await transcribeWithAsrPlugin({ audioFile: audioPath, filename: "speech.wav" }, {
+      enabled: true,
+      defaultProvider: "openai_compatible",
+      providers: { openaiCompatible: { apiPresetName: "xai", responseFormat: "json" } }
+    }, {
+      resolveApiPreset: () => ({
+        name: "xai",
+        baseURL: "https://api.x.ai/v1",
+        credentialId: "oauth-xai",
+        model: "whisper",
+        timeoutMs: 60_000
+      }),
+      fetch: async (_url, init) => {
+        const value = (init?.headers as Record<string, string>).authorization;
+        seenAuthorization.push(value);
+        return value === "Bearer expired"
+          ? new Response("unauthorized", { status: 401 })
+          : jsonResponse({ text: "refreshed transcription" });
+      }
+    });
+    assertAsrSuccess(result);
+    assert.equal(result.text, "refreshed transcription");
+    assert.deepEqual(seenAuthorization, ["Bearer expired", "Bearer refreshed"]);
+    assert.equal(refreshCalls, 1);
+  } finally {
+    setActiveCredentialRuntime({ resolveAuthorization: () => createApiKeyAuthorization("secret") } as any);
+  }
 });
 
 test("tencent_validAudio_createsTaskPollsAndReturnsText", async () => {
@@ -129,7 +176,7 @@ test("providerTimeout_configuredPreset_passesAbortSignal", async () => {
       return {
         name: "openai",
         baseURL: "https://api.openai.com/v1",
-        apiKey: "secret",
+        credentialId: "test-credential",
         model: "whisper-1",
         timeoutMs: 1234,
         temperature: 0.2,
@@ -220,7 +267,7 @@ test("providerRequest_firstTimeout_retriesAndReturnsText", async () => {
       return {
         name: "openai",
         baseURL: "https://api.openai.com/v1",
-        apiKey: "secret",
+        credentialId: "test-credential",
         model: "whisper-1",
         timeoutMs: 1000,
         temperature: 0.2,
@@ -268,7 +315,7 @@ test("asrPlugin_emptyTranscription_returnsEmptyError", async () => {
       return {
         name: "openai",
         baseURL: "https://api.openai.com/v1",
-        apiKey: "secret",
+        credentialId: "test-credential",
         model: "whisper-1",
         timeoutMs: 60_000,
         temperature: 0.2,

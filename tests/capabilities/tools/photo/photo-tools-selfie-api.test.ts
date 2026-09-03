@@ -5,6 +5,7 @@ import { createPhotoTools } from "../../../../src/capabilities/tools/photo/src/i
 import { runOpenAIAPISelfie } from "../../../../src/channels/image-generation/src/openai-api-provider.js";
 import { createCurrentTimeProvider } from "../../../../src/platform/time/src/index.js";
 import type { AgentOutput } from "../../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
+import { createApiKeyAuthorization, setActiveCredentialRuntime } from "../../../../src/contexts/llm-gateway/src/index.js";
 import {
   assetRootFromOutputDir,
   createTestStore,
@@ -49,6 +50,7 @@ test("selfie_openaiMode_sendsImageApiRequestContract", async () => {
       data: [{ b64_json: fakeJpegBytes.toString("base64") }]
     }), { status: 200, statusText: "OK" });
   }) as typeof fetch;
+  setActiveCredentialRuntime({ resolveAuthorization: () => createApiKeyAuthorization("xai-key") } as any);
 
   try {
     const tools = createPhotoTools({ promptContextRuntime: testPromptRuntime(),
@@ -171,7 +173,7 @@ test("selfie_xaiMode_sendsJsonEditRequestWithThreeDataUriReferences", async () =
       selfieOutputDir: outputRoot,
       selfieAssetRoot: assetRootFromOutputDir(outputRoot),
       selfieMode: "xai",
-      selfieXaiImageApiKey: "xai-key",
+      selfieXaiCredentialId: "xai-test",
       outputRouter: { async send() {} },
       getSelfieContext: selfieContext,
       getDefaultTarget: () => ({ plugin: "feishu", channelId: "chat-1", sessionId: "session-1" })
@@ -180,6 +182,7 @@ test("selfie_xaiMode_sendsJsonEditRequestWithThreeDataUriReferences", async () =
     const result = await tools.execute({ id: "call_selfie_xai", toolName: "Selfie", input: { pose: "靠近镜头" } });
     assert.equal(result.ok, true);
   } finally {
+    setActiveCredentialRuntime(undefined);
     globalThis.fetch = previousFetch;
     fs.rmSync(outputRoot, { recursive: true, force: true });
     fs.rmSync(referenceRoot, { recursive: true, force: true });

@@ -12,7 +12,7 @@ export type AsrResponseFormat = "json" | "text" | "verbose_json";
 export type AsrApiPreset = {
   name?: string;
   baseURL: string;
-  apiKey?: string;
+  credentialId?: string;
   model: string;
   temperature?: number;
   timeoutMs?: number;

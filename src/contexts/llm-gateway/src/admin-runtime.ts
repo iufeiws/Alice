@@ -30,6 +30,15 @@ export async function saveLLMApiPreset(context: AdminRoutesContext, request: any
   if (!name) return writeJson(response, 400, { ok: false, error: "missing_name" });
   const preset = parseLLMApiPresetBody(context, body, name);
   if ("error" in preset) return writeJson(response, 400, { ok: false, error: preset.error });
+  const credential = context.credentialStore.get(preset.credentialId);
+  if (!credential) return writeJson(response, 400, { ok: false, error: "credential_not_found" });
+  if (credential.kind === "oauth" && credential.provider === "xai") {
+    if (preset.protocol !== "openai-responses") return writeJson(response, 400, { ok: false, error: "xai_oauth_requires_responses" });
+    const target = new URL(preset.baseURL);
+    if (target.origin !== "https://api.x.ai" || target.pathname.replace(/\/+$/, "") !== "/v1") {
+      return writeJson(response, 400, { ok: false, error: "xai_oauth_base_url_not_allowed" });
+    }
+  }
   const presets = readLLMApiPresets(context).filter((entry) => entry.name !== name);
   presets.push(preset);
   writeLLMApiPresets(context, presets);

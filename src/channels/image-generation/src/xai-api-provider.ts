@@ -1,4 +1,5 @@
 import type { ImageGenerationProviderInput, ImageGenerationProviderResult } from "./gateway.js";
+import { resolveCredentialAuthorization } from "../../../contexts/llm-gateway/src/credential-runtime.js";
 
 const fs = await import("node:fs");
 const moduleApi = await import("node:module");
@@ -6,7 +7,7 @@ const path = await import("node:path");
 const require = moduleApi.createRequire(import.meta.url);
 
 export async function runXaiAPISelfie(input: ImageGenerationProviderInput): Promise<ImageGenerationProviderResult> {
-  if (!input.apiKey) throw new Error("selfie xAI Image API key is not configured; set SELFIE_XAI_IMAGE_API_KEY");
+  if (!input.credentialId && !input.apiKey) throw new Error("selfie xAI Image API credential is not configured");
   if (input.referenceImages.length === 0 || input.referenceImages.length > 3) {
     throw new Error(`xAI Image API requires one to three reference images; received ${input.referenceImages.length}`);
   }
@@ -14,12 +15,15 @@ export async function runXaiAPISelfie(input: ImageGenerationProviderInput): Prom
   const timer = setTimeout(() => controller.abort(), input.apiTimeoutMs);
   const started = Date.now();
   const requestUrl = `${input.apiBaseURL}/images/edits`;
+  const authorization = input.credentialId ? resolveCredentialAuthorization(input.credentialId) : undefined;
   try {
-    const response = await fetch(requestUrl, {
+    const target = new URL(requestUrl);
+    let authorizationValue = authorization ? await authorization.authorization(target) : `Bearer ${input.apiKey}`;
+    let response = await fetch(requestUrl, {
       method: "POST",
       signal: controller.signal,
       headers: {
-        authorization: `Bearer ${input.apiKey}`,
+        authorization: authorizationValue,
         "content-type": "application/json"
       },
       body: JSON.stringify({
@@ -33,6 +37,28 @@ export async function runXaiAPISelfie(input: ImageGenerationProviderInput): Prom
       }),
       ...dispatcherInit(input.proxyUrl, input.apiTimeoutMs)
     });
+    if (response.status === 401 && authorization) {
+      const refreshed = await authorization.retryAfterUnauthorized({ target, rejectedAuthorization: authorizationValue });
+      if (refreshed) {
+        authorizationValue = refreshed;
+        await response.body?.cancel();
+        response = await fetch(requestUrl, {
+          method: "POST",
+          signal: controller.signal,
+          headers: { authorization: authorizationValue, "content-type": "application/json" },
+          body: JSON.stringify({
+            model: input.apiModel,
+            prompt: input.prompt,
+            images: input.referenceImages.map((image) => ({ type: "image_url", url: imageDataUri(image) })),
+            response_format: "b64_json",
+            aspect_ratio: input.xaiAspectRatio,
+            resolution: input.xaiResolution,
+            quality: input.apiQuality
+          }),
+          ...dispatcherInit(input.proxyUrl, input.apiTimeoutMs)
+        });
+      }
+    }
     const elapsedMs = Date.now() - started;
     const body = await response.text();
     if (!response.ok) throw new Error(`xAI Image API failed after ${elapsedMs}ms url=${requestUrl}: HTTP ${response.status} ${response.statusText} ${excerpt(body, 4000)}`);

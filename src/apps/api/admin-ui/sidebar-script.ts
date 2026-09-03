@@ -30,7 +30,6 @@ export function renderAdminSidebarScript(): string {
       $("llm-preset-save").addEventListener("click", saveCurrentLLMApiPreset);
       $("llm-preset-rename").addEventListener("click", renameSelectedLLMApiPreset);
       $("llm-preset-delete").addEventListener("click", deleteSelectedLLMApiPreset);
-
       $("agent-form").addEventListener("submit", async (event) => {
         event.preventDefault();
         const form = new FormData(event.currentTarget);

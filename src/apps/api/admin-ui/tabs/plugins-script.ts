@@ -3,7 +3,16 @@ export function renderPluginsScript(): string {
         if ($("pluginConfigPanel").classList.contains("active")) return;
         const payload = await fetch("/admin/api/plugins").then((res) => res.json());
         const query = ($("pluginSearch").value || "").toLowerCase().trim();
-        const plugins = (payload.plugins || []).filter((plugin) => {
+        const entries = [{
+          id: "credentials",
+          name: "Credentials",
+          kind: "management",
+          status: "available",
+          health: "ready",
+          description: "Manage API keys and OAuth connections used by LLM presets and plugins.",
+          managementOnly: true
+        }].concat(payload.plugins || []);
+        const plugins = entries.filter((plugin) => {
           const haystack = [plugin.id, plugin.name, plugin.kind, plugin.status, plugin.description].join(" ").toLowerCase();
           return !query || haystack.includes(query);
         });
@@ -15,6 +24,24 @@ export function renderPluginsScript(): string {
         const canConfig = Boolean(plugin.configurable);
         const canSwitch = Boolean(plugin.switchable);
         const enabled = plugin.status === "enabled" || plugin.status === "missing_config" || plugin.status === "error";
+        if (plugin.managementOnly) return \`
+          <div class="plugin-card" data-plugin-card="\${escapeAttr(plugin.id)}">
+            <div class="plugin-card-head">
+              <div class="plugin-icon">\${escapeHtml(initial)}</div>
+              <div>
+                <div class="plugin-title">\${escapeHtml(plugin.name)}</div>
+                <div class="plugin-desc">\${escapeHtml(plugin.description)}</div>
+              </div>
+            </div>
+            <div class="plugin-meta">
+              <div>Kind: \${escapeHtml(plugin.kind)}</div>
+              <div class="plugin-state">\${escapeHtml(plugin.status)}</div>
+            </div>
+            <div class="plugin-actions">
+              <button type="button" data-credential-management>Manage</button>
+            </div>
+          </div>
+        \`;
         return \`
           <div class="plugin-card" data-plugin-card="\${escapeAttr(plugin.id)}">
             <div class="plugin-card-head">

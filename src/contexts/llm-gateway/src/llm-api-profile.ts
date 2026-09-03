@@ -1,24 +1,13 @@
-import { createOpenAICompatibleClient } from "./index.js";
+import { createOpenAICompatibleClient, type LLMClient } from "./index.js";
+import { createOpenAIResponsesClient } from "./openai-responses-client.js";
+import { resolveCredentialAuthorization } from "./credential-runtime.js";
+import { normalizeLLMApiPreset, type LLMApiPreset } from "./llm-api-preset.js";
 import { promptStoragePath } from "../../../contexts/agent-profile/src/adapters/json-prompt-profile-store.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
 
-export type LLMApiPreset = {
-  name: string;
-  baseURL: string;
-  apiKey?: string;
-  model: string;
-  temperature: number;
-  maxTokens?: number;
-  timeoutMs: number;
-  stream: boolean;
-  useProxy?: boolean;
-  supportsImage: boolean;
-  supportsAudio: boolean;
-  extraParams: Record<string, unknown>;
-  followupExtraParams: Record<string, unknown>;
-};
+export type { LLMApiPreset, LLMProtocol } from "./llm-api-preset.js";
 
 export type PromptApiProfile = {
   chatPresetName?: string;
@@ -27,79 +16,56 @@ export type PromptApiProfile = {
 };
 
 export function createPromptApiPresetStore(memoryRoot: string) {
-  return {
-    readPromptApiProfile,
-    readLLMApiPresets,
-    resolvePromptApiPreset
-  };
+  return { readPromptApiProfile, readLLMApiPresets, resolvePromptApiPreset };
 
   function resolvePromptApiPreset(kind: "chat" | "talk" | "memorize"): LLMApiPreset | undefined {
     const profile = readPromptApiProfile();
-    const name = kind === "chat"
-      ? profile.chatPresetName
-      : kind === "talk"
-        ? profile.talkPresetName
-        : profile.memorizePresetName;
-    if (!name) return undefined;
-    return readLLMApiPresets().find((entry) => entry.name === name);
+    const name = kind === "chat" ? profile.chatPresetName : kind === "talk" ? profile.talkPresetName : profile.memorizePresetName;
+    return name ? readLLMApiPresets().find((entry) => entry.name === name) : undefined;
   }
 
   function readPromptApiProfile(): PromptApiProfile {
     const filePath = promptStoragePath(memoryRoot, "prompt-api-profile.json");
     if (!fs.existsSync(filePath)) return {};
-    try {
-      const value = JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<string, unknown>;
-      return {
-        chatPresetName: typeof value.chatPresetName === "string" && value.chatPresetName ? value.chatPresetName : undefined,
-        talkPresetName: typeof value.talkPresetName === "string" && value.talkPresetName ? value.talkPresetName : undefined,
-        memorizePresetName: typeof value.memorizePresetName === "string" && value.memorizePresetName ? value.memorizePresetName : undefined
-      };
-    } catch {
-      return {};
-    }
+    const value = JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<string, unknown>;
+    return {
+      chatPresetName: nonEmptyString(value.chatPresetName),
+      talkPresetName: nonEmptyString(value.talkPresetName),
+      memorizePresetName: nonEmptyString(value.memorizePresetName)
+    };
   }
 
   function readLLMApiPresets(): LLMApiPreset[] {
     const filePath = path.join(memoryRoot, "config", "llm-api-presets.json");
     if (!fs.existsSync(filePath)) return [];
-    try {
-      const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as { presets?: Partial<LLMApiPreset>[] };
-      const presets = Array.isArray(parsed.presets) ? parsed.presets : [];
-      return presets.map(normalizeLLMApiPreset).filter((entry): entry is LLMApiPreset => Boolean(entry));
-    } catch {
-      return [];
-    }
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as { schemaVersion?: number; presets?: unknown[] };
+    if (parsed.schemaVersion !== 2) throw new Error("llm_api_presets_migration_required");
+    if (!Array.isArray(parsed.presets)) throw new Error("llm_api_presets_invalid");
+    return parsed.presets.map((value) => {
+      const preset = normalizeLLMApiPreset(value);
+      if (!preset) throw new Error("llm_api_preset_invalid");
+      return preset;
+    });
   }
 }
 
-export function createLLMClientFromPreset(preset: LLMApiPreset): ReturnType<typeof createOpenAICompatibleClient> | undefined {
-  if (!preset.baseURL || !preset.apiKey) return undefined;
-  return createOpenAICompatibleClient({
+export function createLLMClientFromPreset(preset: LLMApiPreset): LLMClient | undefined {
+  if (!preset.baseURL || !preset.credentialId) return undefined;
+  const authorization = resolveCredentialAuthorization(preset.credentialId);
+  const config = {
     baseURL: preset.baseURL,
-    apiKey: preset.apiKey,
+    authorization,
     model: preset.model,
     temperature: preset.temperature,
     timeoutMs: preset.timeoutMs,
     useProxy: preset.useProxy === true,
     extraParams: preset.extraParams
-  });
+  };
+  return preset.protocol === "openai-responses"
+    ? createOpenAIResponsesClient(config)
+    : createOpenAICompatibleClient(config);
 }
 
-function normalizeLLMApiPreset(value: Partial<LLMApiPreset>): LLMApiPreset | undefined {
-  if (!value || typeof value !== "object" || !value.name || !value.model) return undefined;
-  return {
-    name: String(value.name),
-    baseURL: typeof value.baseURL === "string" ? value.baseURL : "",
-    apiKey: typeof value.apiKey === "string" ? value.apiKey : undefined,
-    model: String(value.model),
-    temperature: Number.isFinite(Number(value.temperature)) ? Number(value.temperature) : 0.2,
-    maxTokens: Number.isInteger(Number(value.maxTokens)) && Number(value.maxTokens) > 0 ? Number(value.maxTokens) : undefined,
-    timeoutMs: Number.isFinite(Number(value.timeoutMs)) ? Number(value.timeoutMs) : 60_000,
-    stream: value.stream !== false,
-    useProxy: value.useProxy === true,
-    supportsImage: value.supportsImage === true,
-    supportsAudio: value.supportsAudio === true,
-    extraParams: value.extraParams && typeof value.extraParams === "object" && !Array.isArray(value.extraParams) ? value.extraParams : {},
-    followupExtraParams: value.followupExtraParams && typeof value.followupExtraParams === "object" && !Array.isArray(value.followupExtraParams) ? value.followupExtraParams : {}
-  };
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value ? value : undefined;
 }

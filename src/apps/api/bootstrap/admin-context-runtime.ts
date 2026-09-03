@@ -10,10 +10,14 @@ import type { PromptContextRuntime } from "../../../contexts/prompt-context/src/
 import { createAdminRouteServices } from "./admin-api-service.js";
 import type { AdminRuntimeContext, PromptVariableTree } from "./admin-route-context.js";
 import { createApiRequestHandler } from "../routes/admin-routes.js";
+import type { CredentialStore } from "../../../contexts/llm-gateway/src/credential-store.js";
+import type { createXaiOAuthService } from "../../../contexts/llm-gateway/src/xai-oauth-service.js";
 
 type AppendLog = (level: "info" | "warn" | "error", message: string) => void;
 export function createAdminRequestHandlerRuntime(input: {
   config: AppConfig;
+  credentialStore: CredentialStore;
+  xaiOAuthService: ReturnType<typeof createXaiOAuthService>;
   logs: unknown[];
   messageLogs: unknown[];
   llmRequestLogs: unknown[];
@@ -99,6 +103,8 @@ export function createAdminRequestHandlerRuntime(input: {
   });
   const runtimeContext: AdminRuntimeContext = {
     config: input.config,
+    credentialStore: input.credentialStore,
+    xaiOAuthService: input.xaiOAuthService,
     logs: input.logs,
     messageLogs: input.messageLogs,
     llmRequestLogs: input.llmRequestLogs,

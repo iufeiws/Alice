@@ -1,25 +1,12 @@
 import { promptStoragePath } from "../../agent-profile/src/adapters/json-prompt-profile-store.js";
 import { booleanFromUnknown, isValidHttpUrl, numberFromUnknown, optionalString, parseJsonObject, requiredString } from "../../../shared/admin-input/src/index.js";
 import type { AdminRuntimeContext as AdminRoutesContext } from "../../../apps/api/bootstrap/admin-route-context.js";
+import { normalizeLLMApiPreset, type LLMApiPreset, type LLMProtocol } from "./llm-api-preset.js";
+
+export type { LLMApiPreset, LLMProtocol } from "./llm-api-preset.js";
 
 const fs = await import("node:fs");
 const path = await import("node:path");
-
-export type LLMApiPreset = {
-  name: string;
-  baseURL: string;
-  apiKey?: string;
-  model: string;
-  temperature: number;
-  maxTokens?: number;
-  timeoutMs: number;
-  stream: boolean;
-  useProxy?: boolean;
-  supportsImage?: boolean;
-  supportsAudio?: boolean;
-  extraParams: Record<string, unknown>;
-  followupExtraParams: Record<string, unknown>;
-};
 
 export type PromptApiProfile = {
   chatPresetName?: string;
@@ -27,12 +14,13 @@ export type PromptApiProfile = {
   memorizePresetName?: string;
 };
 
-export type LLMApiPresetView = Omit<LLMApiPreset, "apiKey"> & { apiKeySet: boolean };
+export type LLMApiPresetView = LLMApiPreset;
 
 export function parseLLMApiPresetBody(context: AdminRoutesContext, body: Record<string, unknown>, name: string): LLMApiPreset | { error: string } {
   const existing = readLLMApiPresets(context).find((entry) => entry.name === name);
   const baseURL = requiredString(body.baseURL);
-  const apiKey = optionalString(body.apiKey) ?? existing?.apiKey;
+  const protocol = optionalString(body.protocol) as LLMProtocol | undefined ?? existing?.protocol ?? "openai-chat-completions";
+  const credentialId = optionalString(body.credentialId) ?? existing?.credentialId ?? "";
   const model = requiredString(body.model);
   const temperature = numberFromUnknown(body.temperature, existing?.temperature ?? 0.2);
   const maxTokens = body.maxTokens === undefined
@@ -48,31 +36,34 @@ export function parseLLMApiPresetBody(context: AdminRoutesContext, body: Record<
   const extraParamsResult = parseJsonObject(optionalString(body.extraParams) ?? "{}");
   const followupExtraParamsResult = parseJsonObject(optionalString(body.followupExtraParams) ?? "{}");
   if (baseURL && !isValidHttpUrl(baseURL)) return { error: "invalid_base_url" };
+  if (protocol !== "openai-chat-completions" && protocol !== "openai-responses") return { error: "invalid_protocol" };
+  if (!credentialId) return { error: "missing_credential" };
   if (!model) return { error: "missing_model" };
   if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) return { error: "invalid_temperature" };
   if (maxTokens !== undefined && (!Number.isInteger(maxTokens) || maxTokens <= 0)) return { error: "invalid_max_tokens" };
   if (!Number.isFinite(timeoutMs) || timeoutMs < 1_000) return { error: "invalid_timeout_ms" };
   if (!extraParamsResult.ok) return { error: "invalid_extra_params" };
   if (!followupExtraParamsResult.ok) return { error: "invalid_followup_extra_params" };
-  return { name, baseURL, apiKey, model, temperature, maxTokens, timeoutMs, stream, useProxy, supportsImage, supportsAudio, extraParams: extraParamsResult.value, followupExtraParams: followupExtraParamsResult.value };
+  return { name, protocol, credentialId, baseURL, model, temperature, maxTokens, timeoutMs, stream, useProxy, supportsImage, supportsAudio, extraParams: extraParamsResult.value, followupExtraParams: followupExtraParamsResult.value };
 }
 
 export function readLLMApiPresets(context: AdminRoutesContext): LLMApiPreset[] {
   const filePath = llmApiPresetsPath(context);
   if (!fs.existsSync(filePath)) return [];
-  try {
-    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as { presets?: LLMApiPreset[] };
-    const presets = Array.isArray(parsed.presets) ? parsed.presets : [];
-    return sortLLMApiPresets(presets.map(normalizeLLMApiPreset).filter((entry): entry is LLMApiPreset => Boolean(entry)));
-  } catch {
-    return [];
-  }
+  const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as { schemaVersion?: number; presets?: unknown[] };
+  if (parsed.schemaVersion !== 2) throw new Error("llm_api_presets_migration_required");
+  if (!Array.isArray(parsed.presets)) throw new Error("llm_api_presets_invalid");
+  return sortLLMApiPresets(parsed.presets.map((value) => {
+    const preset = normalizeLLMApiPreset(value);
+    if (!preset) throw new Error("llm_api_preset_invalid");
+    return preset;
+  }));
 }
 
 export function writeLLMApiPresets(context: AdminRoutesContext, presets: LLMApiPreset[]): void {
   const filePath = llmApiPresetsPath(context);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify({ presets: sortLLMApiPresets(presets) }, null, 2)}\n`);
+  fs.writeFileSync(filePath, `${JSON.stringify({ schemaVersion: 2, presets: sortLLMApiPresets(presets) }, null, 2)}\n`);
 }
 
 export function sortLLMApiPresets(presets: LLMApiPreset[]): LLMApiPreset[] {
@@ -84,8 +75,7 @@ export function publicLLMApiPresets(presets: LLMApiPreset[]): LLMApiPresetView[]
 }
 
 export function publicLLMApiPreset(preset: LLMApiPreset): LLMApiPresetView {
-  const { apiKey, ...rest } = preset;
-  return { ...rest, apiKeySet: Boolean(apiKey) };
+  return { ...preset };
 }
 
 export function readPromptApiProfile(context: AdminRoutesContext): PromptApiProfile {
@@ -127,25 +117,6 @@ export function resolveMemorizeApiPreset(context: AdminRoutesContext): LLMApiPre
   return resolvePromptApiPreset(context, "memorize") ?? defaultMemorizeApiPreset(context);
 }
 
-function normalizeLLMApiPreset(value: Partial<LLMApiPreset>): LLMApiPreset | undefined {
-  if (!value || typeof value !== "object" || !value.name || !value.model) return undefined;
-  return {
-    name: String(value.name),
-    baseURL: typeof value.baseURL === "string" ? value.baseURL : "",
-    apiKey: typeof value.apiKey === "string" ? value.apiKey : undefined,
-    model: String(value.model),
-    temperature: Number.isFinite(Number(value.temperature)) ? Number(value.temperature) : 0.2,
-    maxTokens: Number.isInteger(Number(value.maxTokens)) && Number(value.maxTokens) > 0 ? Number(value.maxTokens) : undefined,
-    timeoutMs: Number.isFinite(Number(value.timeoutMs)) ? Number(value.timeoutMs) : 60_000,
-    stream: value.stream !== false,
-    useProxy: value.useProxy === true,
-    supportsImage: value.supportsImage === true,
-    supportsAudio: value.supportsAudio === true,
-    extraParams: value.extraParams && typeof value.extraParams === "object" && !Array.isArray(value.extraParams) ? value.extraParams : {},
-    followupExtraParams: value.followupExtraParams && typeof value.followupExtraParams === "object" && !Array.isArray(value.followupExtraParams) ? value.followupExtraParams : {}
-  };
-}
-
 function llmApiPresetsPath(context: AdminRoutesContext): string {
   return path.join(context.config.memoryFiles.root, "config", "llm-api-presets.json");
 }
@@ -155,8 +126,9 @@ function defaultMemorizeApiPreset(context: AdminRoutesContext): LLMApiPreset | u
   if (!config.enabled || !config.model) return undefined;
   return {
     name: "Memory Summary",
+    protocol: "openai-chat-completions",
+    credentialId: "env:memory-summary",
     baseURL: config.baseURL,
-    apiKey: config.apiKey,
     model: config.model,
     temperature: config.temperature,
     timeoutMs: config.timeoutMs,

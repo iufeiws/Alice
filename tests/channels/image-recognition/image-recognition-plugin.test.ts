@@ -7,11 +7,14 @@ function multimodalPreset(name = "mimo") {
   return {
     name,
     baseURL: "https://api.example.test/v1",
-    apiKey: "secret",
+    credentialId: "image-credential",
+    protocol: "openai-chat-completions" as const,
     model: "mimo-v2.5",
     temperature: 0.2,
     timeoutMs: 120_000,
     stream: false,
+    supportsImage: true,
+    supportsAudio: false,
     extraParams: { presetValue: true },
     followupExtraParams: {}
   };

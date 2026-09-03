@@ -4,7 +4,7 @@ export function renderPluginsTab(): string {
             <div class="plugin-toolbar">
               <div>
                 <h2>Plugin</h2>
-                <p class="muted">Manage local plugins and their runtime switches.</p>
+                <p class="muted">Manage local plugins, runtime switches, and shared credentials.</p>
               </div>
               <label for="pluginSearch">Search plugins
                 <input id="pluginSearch" autocomplete="off" placeholder="name, id, kind" />

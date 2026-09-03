@@ -11,7 +11,7 @@ import { promptStoragePath } from "../../../../../src/contexts/agent-profile/src
 import { createPromptProfileStore } from "../../../../../src/contexts/agent-profile/src/application/build-system-prompt.js";
 import { createDailyShellStore } from "../../../../../src/contexts/agent-profile/src/domain/shell.js";
 import { createPromptContextRuntime, promptVariableTree } from "../../../../../src/contexts/prompt-context/src/index.js";
-import type { LLMChatInput, LLMClient } from "../../../../../src/contexts/llm-gateway/src/index.js";
+import { createApiKeyAuthorization, setActiveCredentialRuntime, type LLMChatInput, type LLMClient } from "../../../../../src/contexts/llm-gateway/src/index.js";
 import { createDiaryStore } from "../../../../../src/platform/storage/src/diary-store.js";
 import { createCalendarStore } from "../../../../../src/platform/storage/src/calendar-store.js";
 import type { StoredConversationMessage } from "../../../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
@@ -43,6 +43,7 @@ export async function assertPatchError(handler: ReturnType<typeof createAdminHan
 }
 
 export function baseContext(root: string, memoryStore: ReturnType<typeof createMarkdownMemoryStore>, promptStore: ReturnType<typeof createMemoryInductionPromptStore>) {
+  setActiveCredentialRuntime({ resolveAuthorization: () => createApiKeyAuthorization("secret") } as any);
   return {
     config: {
       project: { username: "user" },
@@ -91,6 +92,14 @@ export function baseContext(root: string, memoryStore: ReturnType<typeof createM
       },
       core: { timezone: "Asia/Shanghai" }
     },
+    credentialStore: {
+      list: () => [{ id: "test-credential", label: "Test Credential", kind: "api_key", provider: "openai-compatible", status: "connected" }],
+      get: (id: string) => id ? { id, label: "Test Credential", kind: "api_key", provider: "openai-compatible", status: "connected" } : undefined,
+      upsert: (value: any) => ({ ...value, status: value.status ?? "connected" }),
+      delete: () => true,
+      readPayload: () => ({ apiKey: "secret" })
+    },
+    xaiOAuthService: { startDeviceLogin: async () => ({}), getSession: () => undefined, disconnect: async () => {} },
     logs: [],
     messageLogs: [],
     llmRequestLogs: [],
@@ -296,8 +305,9 @@ export function writePreset(root: string, name: string) {
   const presets = Array.isArray(current.presets) ? current.presets.filter((entry: { name?: string }) => entry.name !== name) : [];
   presets.push({
     name,
+    protocol: "openai-chat-completions",
+    credentialId: "test-credential",
     baseURL: "https://llm.example.test/v1",
-    apiKey: "secret",
     model: "flash",
     temperature: 0.2,
     timeoutMs: 60_000,
@@ -305,7 +315,7 @@ export function writePreset(root: string, name: string) {
     extraParams: {},
     followupExtraParams: {}
   });
-  fs.writeFileSync(filePath, `${JSON.stringify({ presets })}\n`);
+  fs.writeFileSync(filePath, `${JSON.stringify({ schemaVersion: 2, presets })}\n`);
 }
 
 export function writeTtsPluginConfig(root: string, input: {

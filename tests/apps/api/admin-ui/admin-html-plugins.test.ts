@@ -12,11 +12,43 @@ test("pluginList_initialRender_exposesPluginManagement", () => {
 
   assertIncludesAll(html, [
     "<h2>Plugin</h2>",
-    "Manage local plugins and their runtime switches.",
+    "Manage local plugins, runtime switches, and shared credentials.",
     "Search plugins",
     "Plugin Config",
     "Choose a plugin to configure."
   ]);
+});
+
+test("pluginList_exposesCredentialManagementWithoutRuntimeSwitches", () => {
+  const html = renderAdminHtml();
+
+  assertIncludesAll(html, [
+    'id: "credentials"',
+    'kind: "management"',
+    "data-credential-management",
+    "Configured Credentials",
+    "Add API Key",
+    "Connect xAI OAuth",
+    "/admin/api/credentials/api-key",
+    "/admin/api/credentials/xai/device"
+  ]);
+
+  const context = {
+    escapeAttr: (value: string) => value,
+    escapeHtml: (value: string) => value
+  };
+  vm.runInNewContext(renderPluginsScript(), context);
+  const card = (context as unknown as { renderPluginCard: (plugin: unknown) => string }).renderPluginCard({
+    id: "credentials",
+    name: "Credentials",
+    kind: "management",
+    status: "available",
+    health: "ready",
+    description: "Manage credentials.",
+    managementOnly: true
+  });
+  assert.match(card, /data-credential-management/);
+  assert.doesNotMatch(card, /data-plugin-switch|data-plugin-reload/);
 });
 
 test("pluginConfig_schemaRender_exposesConfigActions", () => {

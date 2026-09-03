@@ -244,7 +244,7 @@ test("messageRuntime_processNowWithoutPending_startsManualLlmSession", async () 
   assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 0);
 });
 
-test("messageRuntime_recoverPendingSessions_processesStoredInbound", async () => {
+test("messageRuntime_periodicHeartbeat_processesStoredInbound", async () => {
   const store = createAliceStore(path.join(makeTempDir("runtime-recover"), "alice.sqlite"));
   store.upsertInboundMessage({
     plugin: "feishu",
@@ -275,7 +275,6 @@ test("messageRuntime_recoverPendingSessions_processesStoredInbound", async () =>
     }
   });
 
-  runtime.recoverPendingSessions();
   await waitFor(() => coreInputs.length === 1);
 
   assert.equal(coreInputs[0].meta.replyTo, "om_1");
@@ -313,7 +312,6 @@ test("messageRuntime_persistedWechatConversation_recoversUserId", async () => {
     }
   });
 
-  runtime.recoverPendingSessions();
   await waitFor(() => coreInputs.length === 1);
 
   assert.equal(coreInputs[0].source.plugin, "wechat");

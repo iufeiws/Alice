@@ -126,21 +126,28 @@ export async function sendSystemNoticeFromRuntime(deps: SendSystemNoticeDeps, in
 
 export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   const latestSessionEvents = new Map<string, AgentEvent>();
-  const pendingSessions = new Set<string>();
   const processingSessions = new Set<string>();
+  let pendingBatch: {
+    sessionId: string;
+    entries: Array<{ message: StoredConversationMessage; placement: "initial" | "pending" }>;
+  } | undefined;
+  let latestDispatchedTask: Promise<unknown> | undefined;
   let failedAgentSessionEvent: AgentEvent | undefined;
   const time = deps.time ?? createCurrentTimeProvider("UTC", deps.now);
   const now = () => time.now().date;
   const random = deps.random ?? Math.random;
   const agentLoopRuntime = deps.agentLoopRuntime ?? createAgentLoopRuntime();
-  // §7.1: 无论 runtime 由调用方注入还是本 runtime 自建, 都把 chat/talk 的 prepare 跑者
-  // 接到本 runtime 的 deps(测试注入裸 runtime 时同样可用; 生产值与 root 注入一致)。
   agentLoopRuntime.setRunners({
     prepareChat: ({ event, agentLoopRunSeq, appendSessionContextAfterFailedRequest }) => deps.chatAgent.prepareEventRun(event, {
       agentLoopRunSeq,
       appendSessionContextAfterFailedRequest
     }),
     prepareTalk: ({ sessionId, signal, agentLoopRunSeq }) => deps.talkRuntime?.prepareReadyAgentLoopSession?.(sessionId, { signal, agentLoopRunSeq })
+  });
+  agentLoopRuntime.setInboundUserMessageInterruptSource({
+    hasPending: hasPendingInterruptBatch,
+    consumeContent: consumePendingInterruptBatch,
+    discard: discardPendingInterruptBatch
   });
   const heartbeat = createAgentHeartbeatRuntime({
     getIntervalMs: () => deps.getHeartbeatIntervalMs?.() ?? 1000,
@@ -149,42 +156,29 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       isIdleTransitionDue: () => isIdleTransitionDue(deps.agentState?.getSnapshot?.()),
       getIdleTransitionDelayMs: () => idleTransitionDelayMs(deps.agentState?.getSnapshot?.(), time.timeZone),
       onIdleTimerTransition: deps.onIdleTimerTransition,
-      isMainAgentBusy: () => agentLoopRuntime.isMainAgentBusy() || deps.isLLMSessionActive?.() === true,
+      isMainAgentBusy: () => processingSessions.size > 0 || agentLoopRuntime.isMainAgentBusy() || deps.isLLMSessionActive?.() === true,
       canRunHeartbeat,
-      retryFailedSessionBeforeStateSwitch,
+      notePendingInboundMessage,
+      insertPendingBatchIntoActiveChat,
+      startFailedSessionRetryBeforeStateSwitch,
       tickAgentState: () => {
         deps.agentState?.tick();
       },
       onHeartbeatTick: deps.onHeartbeatTick,
       hasPendingUserMessages,
       buildRandomizedInitiatedBehaviorEvent: () => buildRandomizedInitiatedBehaviorEvent({ deps, now, random, time }),
-      runGeneratedSession,
-      runManualSession,
-      setAgentWaiting: (reason) => {
-        deps.agentState?.setState?.("waiting", { reason });
-      },
+      startGeneratedSession,
+      startManualSession,
       claimReadyTalkSession: () => deps.talkRuntime?.claimReadyAgentLoopSession?.(),
-      runTalkSession: runTalkSession,
-      markTalkSessionReady: (sessionId) => {
-        deps.talkRuntime?.markAgentLoopReady?.(sessionId);
-      },
-      getPendingSessionIds: () => [...pendingSessions],
+      startTalkSession,
+      getPendingSessionIds: () => deps.store.listPendingCoreConversations().map((entry) => entry.conversationId),
       isProcessingSession: (sessionId) => processingSessions.has(sessionId),
-      beginProcessingSession: (sessionId) => {
-        processingSessions.add(sessionId);
-      },
-      finishProcessingSession: (sessionId) => {
-        processingSessions.delete(sessionId);
-      },
       getPendingMessageCount: (sessionId) => deps.store.listUnprocessedCoreMessagesForConversation(sessionId, Number.MAX_SAFE_INTEGER).length,
       shouldProcessPendingSession: (sessionId) => {
         const pending = deps.store.listUnprocessedCoreMessagesForConversation(sessionId, Number.MAX_SAFE_INTEGER);
         return pending.length > 0 && shouldProcessPending(pending);
       },
-      markSessionNotPending: (sessionId) => {
-        pendingSessions.delete(sessionId);
-      },
-      processPendingSession: handleDirtySession,
+      startPendingSession,
       getSleepCocoonWakeEvent: () => deps.getSleepCocoonWakeEvent?.() ?? deps.getSleepCocoonMorningEvent?.(),
       beforeSleepCocoonWakeSession: (event) => deps.beforeSleepCocoonWakeSession?.(event as AgentEvent),
       getSleepCocoonGoodnightEvent: deps.getSleepCocoonGoodnightEvent,
@@ -195,37 +189,15 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     onPausedChange: deps.onHeartbeatPausedChange,
     appendLog: deps.appendLog
   });
-  let previousAgentState = deps.agentState?.getSnapshot?.().state;
-  // §11.2/问题 3: 状态监听器驱动 heartbeat(等待→idle 过渡清除完成才调度);
-  // flushAll 必须退订监听器(恢复 HEAD 行为), 已 flush 的 runtime 不因状态变化复活;
-  // 正常运行时监听器保持注册(既有行为不变)。门控来自 Main Agent activity 占用,
-  // 不依赖监听器 await; 监听器 fire-and-forget 调度的 heartbeat 在占用释放后恢复执行。
-  let registeredStateListener: ((snapshot: AgentStateSnapshot | undefined) => Promise<void> | void) | undefined;
-  const stateListener = async (snapshot: AgentStateSnapshot | undefined): Promise<void> => {
-    if (!snapshot) return;
-    // 问题 3: 记录本次调用发起时是否仍为已注册监听器——退订前发出的 in-flight
-    // 调用在退订后不得复活 runtime(其 schedule 落在 flushAll 之后); 退订后才被
-    // 直接调用的监听器(外部持有原始引用)仍可驱动心跳(不依赖 flushAll 退订行为)。
-    const startedWhileRegistered = registeredStateListener === stateListener;
-    if (previousAgentState === "waiting" && snapshot.state === "idle" && snapshot.reason === "inactive") {
-      // §7.1: mode_transition 清除(含 Short Memory 采集)必须完成后才进入后续 heartbeat;
-      // §10/§11.2: 清除失败时不得调度后续 heartbeat(loop 停止, 会话保持未清除), 只记录错误。
+  const unsubscribeState = deps.agentState?.onTransition?.(async ({ previous, current }) => {
+    if (previous.state === "waiting" && current.state === "idle" && current.reason === "inactive") {
       try {
         await deps.clearLLMSession("mode_transition");
       } catch (error) {
         deps.appendLog("error", `idle transition llm session clear failed: ${error instanceof Error ? error.message : String(error)}`);
-        previousAgentState = snapshot.state;
-        return;
       }
     }
-    previousAgentState = snapshot.state;
-    if (startedWhileRegistered && registeredStateListener !== stateListener) {
-      return;
-    }
-    heartbeat.schedule(0);
-  };
-  const unsubscribeState = deps.agentState?.onChange(stateListener);
-  registeredStateListener = stateListener;
+  });
   heartbeat.schedule(0);
 
   return {
@@ -276,8 +248,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     appendAlbertMessage,
     sendSystemNotice,
     deliverPiInvocationCompletion,
-    recoverPendingSessions() {
-      recoverPendingSessionsFromStore();
+    noteMessagesPolled(sessionId) {
+      discardPendingInterruptBatch(sessionId);
     },
     async recoverProcessRestartContinuation() {
       const record = deps.processRestartContinuationStore?.read();
@@ -298,28 +270,26 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       heartbeat.resume();
     },
     async processNow() {
-      recoverPendingSessionsFromStore();
+      const previousTask = latestDispatchedTask;
       await heartbeat.run({ force: true, runManualSessionWhenIdle: true });
+      if (latestDispatchedTask && latestDispatchedTask !== previousTask) await latestDispatchedTask;
     },
     getStatus() {
       return {
         heartbeatPaused: heartbeat.isPaused(),
-        pendingSessions: [...pendingSessions],
+        pendingSessions: deps.store.listPendingCoreConversations().map((entry) => entry.conversationId),
         processingSessions: [...processingSessions],
         heartbeatScheduled: heartbeat.isScheduled()
       };
     },
     async flushAll() {
-      // 问题 3: 恢复 HEAD 行为——flushAll 同时退订状态监听器,
-      // 已 flush 的 runtime 不因状态变化复活(计时器与监听器一并停止)。
+      // 已 flush 的 runtime 不再响应 heartbeat 或状态跃迁。
       heartbeat.flush();
       unsubscribeState?.();
-      registeredStateListener = undefined;
+      agentLoopRuntime.setInboundUserMessageInterruptSource(undefined);
     }
   };
-
   async function ingestStoredEvent(event: AgentEvent): Promise<void> {
-    deps.agentState?.noteInboundMessage();
     const contentText = summarizeEventPayload(event);
     deps.appendMessageLog({
       direction: "inbound",
@@ -364,7 +334,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     }
     const receivedAt = event.meta.receivedAt;
     const receivedAtUtc = event.meta.receivedAtUtc;
-    const storedMessage = deps.store.upsertInboundMessage({
+    deps.store.upsertInboundMessage({
       plugin: event.source.plugin,
       externalMessageId: event.source.rawMessageId ?? event.id,
       conversationId: event.externalSession.sessionId,
@@ -384,33 +354,18 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       receivedAt,
       receivedAtUtc
     });
-    if (shouldProcessInboundWithCore(event)) {
-      agentLoopRuntime.noteInboundUserMessageInterrupt(event.externalSession.sessionId, storedMessage);
-    }
     latestSessionEvents.set(event.externalSession.sessionId, event);
-    // §11.2: 每次事件入库都同步恢复 store 中已有的 pending 会话标记,
-    // 保证清除占用期间到达的消息与既有 pending 会话一并保持 pending(不丢失)。
-    // 先标记事件自身会话、再恢复 store 会话: 后续 run 按集合顺序先处理新会话。
-    markPending(event.externalSession.sessionId);
-    recoverPendingSessionsFromStore();
   }
-
-  function markPending(sessionId: string): void {
-    pendingSessions.add(sessionId);
-    heartbeat.schedule(0);
-  }
-
   function shouldProcessInboundWithCore(event: AgentEvent): boolean {
     if (event.payload.kind === "text") return true;
     return event.payload.kind === "audio" && typeof event.payload.transcript === "string" && event.payload.transcript.trim().length > 0;
   }
-
-  function recoverPendingSessionsFromStore(): void {
-    for (const session of deps.store.listPendingCoreConversations()) {
-      markPending(session.conversationId);
-    }
+  function startManualSession(): boolean {
+    const target = deps.getProcessNowTarget?.();
+    if (!target || processingSessions.has(target.sessionId)) return false;
+    latestDispatchedTask = runManualSession();
+    return true;
   }
-
   async function runManualSession(): Promise<boolean> {
     const target = deps.getProcessNowTarget?.();
     if (!target) {
@@ -486,6 +441,19 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       processingSessions.delete(target.sessionId);
     }
   }
+  function startGeneratedSession(
+    event: AgentEvent,
+    label: string,
+    options: { setWaitingReasonAfter?: string } = {}
+  ): boolean {
+    if (processingSessions.has(event.externalSession.sessionId)) return false;
+    latestDispatchedTask = runGeneratedSession(event, label).then((handled) => {
+      if (handled && options.setWaitingReasonAfter) {
+        deps.agentState?.setState?.("waiting", { reason: options.setWaitingReasonAfter });
+      }
+    });
+    return true;
+  }
 
   async function runGeneratedSession(
     event: AgentEvent,
@@ -548,11 +516,75 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   }
 
   function canRunHeartbeat(): boolean {
-    // §11.2: 门控来自 Main Agent 统一占用(running 与 clearing 同权), 不依赖状态监听器 await;
-    // isLLMSessionActive 为生产 wiring 双保险(与 isMainAgentBusy 同源)。
-    if (agentLoopRuntime.isMainAgentBusy()) return false;
-    if (deps.isLLMSessionActive?.()) return false;
     return deps.agentState?.canRunHeartbeat() ?? true;
+  }
+
+  function notePendingInboundMessage(): void {
+    if (!deps.agentState?.noteInboundMessage || !deps.agentState.getSnapshot) return;
+    let latest: StoredConversationMessage | undefined;
+    for (const { conversationId } of deps.store.listPendingCoreConversations()) {
+      const messages = deps.store.listUnprocessedCoreMessagesForConversation(conversationId, Number.MAX_SAFE_INTEGER);
+      const candidate = messages[messages.length - 1];
+      if (!candidate) continue;
+      if (!latest || parseZonedIso(candidate.createdAt, time.timeZone).getTime() > parseZonedIso(latest.createdAt, time.timeZone).getTime()) {
+        latest = candidate;
+      }
+    }
+    if (!latest) return;
+    const lastInboundAt = deps.agentState.getSnapshot().lastInboundAt;
+    if (lastInboundAt && parseZonedIso(lastInboundAt, time.timeZone).getTime() >= parseZonedIso(latest.createdAt, time.timeZone).getTime()) return;
+    deps.agentState.noteInboundMessage();
+  }
+
+  function insertPendingBatchIntoActiveChat(): boolean {
+    const active = agentLoopRuntime.getActiveMainLLMSession();
+    if (!active || active.phase !== "running" || active.agentId !== "chat") return false;
+    const sessionId = String(active.id);
+    if (!pendingBatch || pendingBatch.sessionId !== sessionId) return true;
+    const includedIds = new Set(pendingBatch.entries.map(({ message }) => message.id));
+    const messages = deps.store
+      .listUnprocessedCoreMessagesForConversation(sessionId, Number.MAX_SAFE_INTEGER)
+      .filter((message) => !includedIds.has(message.id));
+    if (messages.length === 0) return true;
+    pendingBatch.entries.push(...messages.map((message) => ({ message, placement: "pending" as const })));
+    deps.appendLog("info", `pending batch offered to active chat: session=${sessionId} count=${messages.length}`);
+    return true;
+  }
+
+  function hasPendingInterruptBatch(sessionId: string): boolean {
+    return pendingBatch?.sessionId === sessionId
+      && pendingBatch.entries.some((entry) => entry.placement === "pending");
+  }
+
+  function consumePendingInterruptBatch(sessionId: string): string | undefined {
+    if (!pendingBatch || pendingBatch.sessionId !== sessionId) return undefined;
+    const messages = pendingBatch.entries
+      .filter((entry) => entry.placement === "pending")
+      .map((entry) => entry.message);
+    if (messages.length === 0) return undefined;
+    if (!deps.formatPendingBatch) throw new Error("pending_batch_formatter_required");
+    const content = deps.formatPendingBatch(messages);
+    pendingBatch.entries = pendingBatch.entries.filter((entry) => entry.placement !== "pending");
+    const processedAt = time.now().iso;
+    const batchId = createId("interrupt_batch");
+    deps.store.markMessagesCoreProcessed(messages.map((message) => message.id), processedAt, batchId);
+    deps.appendLog("info", `pending batch inserted into active chat: session=${sessionId} count=${messages.length} batch=${batchId}`);
+    return content;
+  }
+
+  function discardPendingInterruptBatch(sessionId: string): void {
+    if (!pendingBatch || pendingBatch.sessionId !== sessionId) return;
+    pendingBatch.entries = pendingBatch.entries.filter((entry) => entry.placement !== "pending");
+  }
+
+  function startFailedSessionRetryBeforeStateSwitch(): boolean {
+    const snapshot = deps.agentState?.getSnapshot?.();
+    if (!failedAgentSessionEvent || snapshot?.state !== "waiting" || !snapshot.nextTransitionAt) return false;
+    if (parseZonedIso(snapshot.nextTransitionAt, time.timeZone).getTime() > now().getTime()) return false;
+    latestDispatchedTask = retryFailedSessionBeforeStateSwitch().catch((error) => {
+      deps.appendLog("error", `failed agent retry crashed: ${describeError(error)}`);
+    });
+    return true;
   }
 
   async function retryFailedSessionBeforeStateSwitch(): Promise<boolean> {
@@ -593,11 +625,31 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     return result.started;
   }
 
+  function startTalkSession(sessionId: number): boolean {
+    latestDispatchedTask = runTalkSession(sessionId).then((started) => {
+      if (!started) deps.talkRuntime?.markAgentLoopReady?.(sessionId);
+    }, (error) => {
+      const message = describeError(error);
+      if (message === "llm_request_cancelled" || /abort/i.test(message)) {
+        deps.appendLog("info", `agent talk session cancelled: session=${sessionId} reason=${message}`);
+        return;
+      }
+      deps.appendLog("error", `agent talk session failed: session=${sessionId} error=${message}`);
+      deps.talkRuntime?.markAgentLoopReady?.(sessionId);
+    });
+    return true;
+  }
+
   async function runChatEvent(
     event: AgentEvent,
     reason: string,
-    options: { appendSessionContextAfterFailedRequest?: boolean } = {}
+    options: { appendSessionContextAfterFailedRequest?: boolean; pendingMessages?: StoredConversationMessage[] } = {}
   ): Promise<AgentOutput[]> {
+    const chatPendingBatch = {
+      sessionId: event.externalSession.sessionId,
+      entries: (options.pendingMessages ?? []).map((message) => ({ message, placement: "initial" as const }))
+    };
+    pendingBatch = chatPendingBatch;
     let result;
     try {
       result = await agentLoopRuntime.requestRun({
@@ -610,6 +662,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     } catch (error) {
       failedAgentSessionEvent = event;
       throw error;
+    } finally {
+      if (pendingBatch === chatPendingBatch) pendingBatch = undefined;
     }
     if (!result.started) throw new Error("agent_loop_busy");
     failedAgentSessionEvent = undefined;
@@ -621,8 +675,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   }
 
   function hasPendingUserMessages(): boolean {
-    return pendingSessions.size > 0
-      || processingSessions.size > 0
+    return processingSessions.size > 0
       || deps.store.listPendingCoreConversations().length > 0;
   }
 
@@ -667,7 +720,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       let outputs: AgentOutput[];
       try {
         outputs = await runChatEvent(agentEvent, "dirty_session", {
-          appendSessionContextAfterFailedRequest: hasNewPendingMessagesAfterFailure
+          appendSessionContextAfterFailedRequest: hasNewPendingMessagesAfterFailure,
+          pendingMessages: pending
         });
       } catch (error) {
         if (isAgentLoopBusyError(error)) {
@@ -740,6 +794,17 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     } finally {
       await setTypingIndicator(typingTargetFromPending(sessionId, pending, agentEvent, false));
     }
+  }
+
+  function startPendingSession(sessionId: string): boolean {
+    if (processingSessions.has(sessionId)) return false;
+    processingSessions.add(sessionId);
+    latestDispatchedTask = handleDirtySession(sessionId).catch((error) => {
+      deps.appendLog("error", `agent session failed: ${describeError(error)}`);
+    }).finally(() => {
+      processingSessions.delete(sessionId);
+    });
+    return true;
   }
 
   async function setTypingIndicator(input: {
@@ -877,11 +942,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
     }
     // Alice/Core pending: the both message enters the Core queue independently
     // of the user-facing send status.
-    if (!message.coreProcessedAt) {
-      deps.agentState?.noteInboundMessage();
-      agentLoopRuntime.noteInboundUserMessageInterrupt(input.conversationId, message);
-      markPending(input.conversationId);
-    }
     deps.appendMessageLog({
       direction: "inbound",
       plugin: input.plugin,

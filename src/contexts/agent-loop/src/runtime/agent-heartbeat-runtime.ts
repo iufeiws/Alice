@@ -22,25 +22,22 @@ export type AgentHeartbeatRunTaskDeps = {
   onIdleTimerTransition?(input: { delayMs: number }): Promise<unknown> | unknown;
   isMainAgentBusy?(): boolean;
   canRunHeartbeat(): boolean;
-  retryFailedSessionBeforeStateSwitch?(): Promise<boolean>;
+  notePendingInboundMessage?(): void;
+  insertPendingBatchIntoActiveChat?(): boolean;
+  startFailedSessionRetryBeforeStateSwitch?(): boolean;
   tickAgentState?(): void;
   onHeartbeatTick?(): void;
   hasPendingUserMessages(): boolean;
   buildRandomizedInitiatedBehaviorEvent?(): unknown;
-  runGeneratedSession(event: unknown, label: string): Promise<boolean>;
-  runManualSession?(): Promise<boolean>;
-  setAgentWaiting?(reason: string): void;
+  startGeneratedSession(event: unknown, label: string, options?: { setWaitingReasonAfter?: string }): boolean;
+  startManualSession?(): boolean;
   claimReadyTalkSession?(): number | undefined;
-  runTalkSession?(sessionId: number): Promise<boolean>;
-  markTalkSessionReady?(sessionId: number): void;
+  startTalkSession?(sessionId: number): boolean;
   getPendingSessionIds(): string[];
   isProcessingSession(sessionId: string): boolean;
-  beginProcessingSession(sessionId: string): void;
-  finishProcessingSession(sessionId: string): void;
   getPendingMessageCount(sessionId: string): number;
   shouldProcessPendingSession(sessionId: string): boolean;
-  markSessionNotPending(sessionId: string): void;
-  processPendingSession(sessionId: string): Promise<void>;
+  startPendingSession(sessionId: string): boolean;
   getSleepCocoonWakeEvent?(): unknown;
   beforeSleepCocoonWakeSession?(event: unknown): Promise<void> | void;
   getSleepCocoonGoodnightEvent?(): unknown;
@@ -131,11 +128,8 @@ export function createAgentHeartbeatRuntime(input: {
 async function runHeartbeatTasks(tasks: AgentHeartbeatRunTaskDeps, options: AgentHeartbeatRunOptions = {}): Promise<number> {
   const force = options.force ?? false;
   let processed = 0;
-  if (tasks.isMainAgentBusy?.()) return 0;
-  // 问题 2: force 只绕过延迟/随机行为等策略, 不绕过 Main Agent 互斥门控——
-  // clearing/running 占用期间 force run 不进入任何任务分支(含 idle 过渡检查与状态 tick)。
-  if (force && !tasks.canRunHeartbeat()) return 0;
-  if (await tasks.retryFailedSessionBeforeStateSwitch?.()) return processed;
+  if (runHeartbeatPrelude(tasks)) return 0;
+  if (tasks.startFailedSessionRetryBeforeStateSwitch?.()) return 1;
   // 恢复原语义(HEAD): idle 过渡 hook 仅在非 force 心跳执行, force 不执行。
   const idleTransitionDue = !force && tasks.isIdleTransitionDue?.() === true;
   let idleTransitionEvent: unknown;
@@ -146,10 +140,9 @@ async function runHeartbeatTasks(tasks: AgentHeartbeatRunTaskDeps, options: Agen
       tasks.appendLog("warn", `idle timer transition hook failed: ${describeError(error)}`);
     }
   }
+  if (tasks.isMainAgentBusy?.()) return 0;
   if (idleTransitionEvent && tasks.canRunHeartbeat()) {
-    const handled = await tasks.runGeneratedSession(idleTransitionEvent, "idle timer transition");
-    if (handled) processed += 1;
-    tasks.setAgentWaiting?.("idle_timer_transition");
+    if (tasks.startGeneratedSession(idleTransitionEvent, "idle timer transition", { setWaitingReasonAfter: "idle_timer_transition" })) processed += 1;
     return processed;
   }
   const randomizedInitiatedEvent = idleTransitionDue
@@ -158,41 +151,26 @@ async function runHeartbeatTasks(tasks: AgentHeartbeatRunTaskDeps, options: Agen
     ? tasks.buildRandomizedInitiatedBehaviorEvent?.()
     : undefined;
   if (randomizedInitiatedEvent) {
-    const handled = await tasks.runGeneratedSession(randomizedInitiatedEvent, "randomized initiated behavior");
-    if (handled) processed += 1;
-    tasks.setAgentWaiting?.("randomized_initiated_behavior");
+    if (tasks.startGeneratedSession(randomizedInitiatedEvent, "randomized initiated behavior", { setWaitingReasonAfter: "randomized_initiated_behavior" })) processed += 1;
     return processed;
   }
 
   tasks.tickAgentState?.();
-  // 非 force 门控(恢复 HEAD 位置): 占用期间非 force 心跳仍先 tick 状态
-  // (睡眠/away 期间的周期性心跳), 但不得进入任何任务分支。
-  if (!force && !tasks.canRunHeartbeat()) return 0;
+  if (!tasks.canRunHeartbeat()) return 0;
   if (tasks.canRunHeartbeat()) tasks.onHeartbeatTick?.();
 
   const timedYieldEvent = !force && tasks.canRunHeartbeat() && !tasks.hasPendingUserMessages()
     ? tasks.getTimedYieldEvent?.()
     : undefined;
   if (timedYieldEvent) {
-    const handled = await tasks.runGeneratedSession(timedYieldEvent, "timed yield");
-    if (handled) processed += 1;
+    if (tasks.startGeneratedSession(timedYieldEvent, "timed yield")) processed += 1;
     return processed;
   }
 
   const talkSessionId = !force && tasks.canRunHeartbeat() ? tasks.claimReadyTalkSession?.() : undefined;
   if (talkSessionId) {
-    try {
-      const started = await (tasks.runTalkSession?.(talkSessionId) ?? Promise.resolve(false));
-      if (!started) tasks.markTalkSessionReady?.(talkSessionId);
-      if (started) processed += 1;
-    } catch (error) {
-      if (isHeartbeatCancellationError(error)) {
-        tasks.appendLog("info", `agent talk session cancelled: session=${talkSessionId} reason=${describeError(error)}`);
-      } else {
-        tasks.appendLog("error", `agent talk session failed: session=${talkSessionId} error=${describeError(error)}`);
-        tasks.markTalkSessionReady?.(talkSessionId);
-      }
-    }
+    if (tasks.startTalkSession?.(talkSessionId)) processed += 1;
+    return processed;
   }
 
   const sleepCocoonWakeEvent = !force && tasks.canRunHeartbeat()
@@ -200,56 +178,52 @@ async function runHeartbeatTasks(tasks: AgentHeartbeatRunTaskDeps, options: Agen
     : undefined;
   if (sleepCocoonWakeEvent) {
     if (isSleepCocoonWakeEvent(sleepCocoonWakeEvent)) await tasks.beforeSleepCocoonWakeSession?.(sleepCocoonWakeEvent);
-    const handled = await tasks.runGeneratedSession(sleepCocoonWakeEvent, "sleep cocoon wake");
-    if (handled) processed += 1;
+    if (tasks.startGeneratedSession(sleepCocoonWakeEvent, "sleep cocoon wake")) processed += 1;
+    return processed;
   }
 
   const sleepCocoonGoodnightEvent = !force && tasks.canRunHeartbeat() && !tasks.hasPendingUserMessages()
     ? tasks.getSleepCocoonGoodnightEvent?.()
     : undefined;
   if (sleepCocoonGoodnightEvent) {
-    const handled = await tasks.runGeneratedSession(sleepCocoonGoodnightEvent, "sleep cocoon goodnight");
-    if (handled) processed += 1;
+    if (tasks.startGeneratedSession(sleepCocoonGoodnightEvent, "sleep cocoon goodnight")) processed += 1;
+    return processed;
   }
 
   const calendarReminderEvent = !force && tasks.canRunHeartbeat() && !tasks.hasPendingUserMessages()
     ? tasks.getCalendarReminderEvent?.()
     : undefined;
   if (calendarReminderEvent) {
-    const handled = await tasks.runGeneratedSession(calendarReminderEvent, "calendar reminder");
-    if (handled) processed += 1;
+    if (tasks.startGeneratedSession(calendarReminderEvent, "calendar reminder")) processed += 1;
+    return processed;
   }
 
   for (const sessionId of tasks.getPendingSessionIds()) {
     if (tasks.isProcessingSession(sessionId)) continue;
     const pendingCount = tasks.getPendingMessageCount(sessionId);
-    if (pendingCount === 0) {
-      tasks.markSessionNotPending(sessionId);
-      continue;
-    }
+    if (pendingCount === 0) continue;
     if (!force && !tasks.shouldProcessPendingSession(sessionId)) continue;
 
-    tasks.beginProcessingSession(sessionId);
-    try {
-      await tasks.processPendingSession(sessionId);
-      processed += 1;
-      if (tasks.getPendingMessageCount(sessionId) === 0) {
-        tasks.markSessionNotPending(sessionId);
-      }
-    } catch (error) {
-      tasks.appendLog("error", `agent session failed: ${describeError(error)}`);
-    } finally {
-      tasks.finishProcessingSession(sessionId);
-    }
-    // 恢复原语义(HEAD): 一次 heartbeat run 逐个处理全部 pending 会话(无 break)。
+    if (tasks.startPendingSession(sessionId)) processed += 1;
+    return processed;
   }
 
   if (force && options.runManualSessionWhenIdle && processed === 0) {
-    const handled = await (tasks.runManualSession?.() ?? Promise.resolve(false));
-    if (handled) processed += 1;
+    if (tasks.startManualSession?.()) processed += 1;
   }
 
   return processed;
+}
+
+function runHeartbeatPrelude(tasks: AgentHeartbeatRunTaskDeps): boolean {
+  if (!tasks.canRunHeartbeat()) {
+    tasks.tickAgentState?.();
+    if (!tasks.canRunHeartbeat()) return true;
+  }
+  tasks.notePendingInboundMessage?.();
+  if (tasks.insertPendingBatchIntoActiveChat?.()) return true;
+  if (tasks.isMainAgentBusy?.()) return true;
+  return false;
 }
 
 function isSleepCocoonWakeEvent(event: unknown): boolean {
@@ -262,10 +236,4 @@ function isSleepCocoonWakeEvent(event: unknown): boolean {
     && event.meta.raw
     && "agentInitiatedTriggerEvent" in event.meta.raw
     && event.meta.raw.agentInitiatedTriggerEvent === "sleep_cocoon.wake");
-}
-
-function isHeartbeatCancellationError(error: unknown): boolean {
-  if (!error) return false;
-  const message = error instanceof Error ? error.message : String(error);
-  return message === "llm_request_cancelled" || /abort/i.test(message);
 }

@@ -30,6 +30,11 @@ export type AgentStateSnapshot = {
   sleepCocoonAutoCheckedAt?: string;
 };
 
+export type AgentStateTransition = {
+  previous: AgentStateSnapshot;
+  current: AgentStateSnapshot;
+};
+
 export type AgentStateStore = {
   read(): string | undefined;
   write(content: string): void;
@@ -56,6 +61,7 @@ export type AgentStateController = {
   canReplyToInbound(): boolean;
   canRunHeartbeat(): boolean;
   onChange(listener: (snapshot: AgentStateSnapshot) => void): () => void;
+  onTransition(listener: (transition: AgentStateTransition) => void): () => void;
 };
 
 export type AgentStateControllerOptions = {
@@ -95,6 +101,7 @@ export function createAgentStateController(options: AgentStateControllerOptions)
   let snapshot = normalizeSnapshot(readPersisted(options.store), time, random, true);
   let subAgentHoldCount = 0;
   const listeners = new Set<(snapshot: AgentStateSnapshot) => void>();
+  const transitionListeners = new Set<(transition: AgentStateTransition) => void>();
 
   function currentIso(): string {
     return time.now().iso;
@@ -109,9 +116,12 @@ export function createAgentStateController(options: AgentStateControllerOptions)
   }
 
   function commit(next: AgentStateSnapshot): AgentStateSnapshot {
+    const previous = clone(snapshot);
     snapshot = normalizeSnapshot(next, time, random, false);
+    const current = clone(snapshot);
     persist();
     emitChange();
+    if (previous.state !== current.state) emitTransition(previous, current);
     return clone(snapshot);
   }
 
@@ -292,12 +302,23 @@ export function createAgentStateController(options: AgentStateControllerOptions)
       return () => {
         listeners.delete(listener);
       };
+    },
+    onTransition(listener) {
+      transitionListeners.add(listener);
+      return () => {
+        transitionListeners.delete(listener);
+      };
     }
   };
 
   function emitChange(): void {
     const current = clone(snapshot);
     for (const listener of listeners) listener(current);
+  }
+
+  function emitTransition(previous: AgentStateSnapshot, current: AgentStateSnapshot): void {
+    const transition = { previous: clone(previous), current: clone(current) };
+    for (const listener of transitionListeners) listener(transition);
   }
 }
 

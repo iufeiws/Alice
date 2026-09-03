@@ -22,9 +22,8 @@ export function createAgentStateRuntime(input: {
     }
   });
 
-  let previousAgentBehaviorState = agentState.getSnapshot().state;
-  agentState.onChange(async (snapshot) => {
-    if (snapshot.state === "sleeping" && previousAgentBehaviorState !== "sleeping") {
+  agentState.onTransition(async ({ previous, current: snapshot }) => {
+    if (snapshot.state === "sleeping") {
       const now = input.time.now();
       const diaryStore = input.getDiaryStore();
       diaryStore.recordSleepBoundary({
@@ -49,13 +48,12 @@ export function createAgentStateRuntime(input: {
         await input.clearLLMSession();
       } catch (error) {
         input.appendLog("error", `sleep transition llm session clear failed: ${error instanceof Error ? error.message : String(error)}`);
-        previousAgentBehaviorState = snapshot.state;
         return;
       }
       if (snapshot.reason === "sleep_started") await input.sendSleepNotice();
       await input.triggerSleepMemoryInduction();
     }
-    if (previousAgentBehaviorState === "sleeping" && snapshot.state === "waiting") {
+    if (previous.state === "sleeping" && snapshot.state === "waiting") {
       if (snapshot.reason === "woke") {
         const now = input.time.now();
         const diaryStore = input.getDiaryStore();
@@ -71,7 +69,6 @@ export function createAgentStateRuntime(input: {
         input.queueMorningEvent();
       }
     }
-    previousAgentBehaviorState = snapshot.state;
   });
 
   return {

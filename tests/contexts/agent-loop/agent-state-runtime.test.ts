@@ -125,6 +125,31 @@ test("entering sleeping awaits the clear before notice and induction, in order",
   assert.deepEqual(calls.events, ["clear", "notice", "induction"], "成功后才按序触发通知与归纳");
 });
 
+test("sleeping 状态的 snapshot 更新不会重复触发睡眠边界或 Memorize", async () => {
+  const root = makeTempDir("agent-state-runtime-sleep-snapshot-update");
+  const calls = createCalls();
+  let releaseClear: (() => void) | undefined;
+  const clearGate = new Promise<void>((resolve) => {
+    releaseClear = resolve;
+  });
+  const agentState = createRuntime(root, calls, {
+    clearLLMSession: () => {
+      calls.events.push("clear");
+      return clearGate;
+    }
+  });
+
+  agentState.setState("sleeping", { reason: "sleep_started" });
+  await waitFor(() => calls.events.includes("clear"));
+  agentState.noteInboundMessage();
+
+  assert.equal(calls.sleepBoundaries.length, 1);
+  assert.deepEqual(calls.events, ["clear"]);
+  releaseClear?.();
+  await waitFor(() => calls.sleepInductions === 1);
+  assert.equal(calls.sleepInductions, 1);
+});
+
 test("entering sleeping clear failure blocks notice and induction and records the error", async () => {
   const root = makeTempDir("agent-state-runtime-sleep-clear-fail");
   const calls = createCalls();

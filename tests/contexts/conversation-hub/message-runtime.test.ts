@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import { createMessageRuntimeRuntime } from "../../../src/apps/api/bootstrap/message-runtime-runtime.js";
 import { createMessageRuntime } from "../../../src/contexts/conversation-hub/src/application/ingest-channel-message.js";
 import { createAliceStore } from "../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
+import { createAgentLoopRuntime } from "../../../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js";
+import { registerToolPlugins } from "../../../src/contexts/tool-execution/src/index.js";
+import { emptyPromptRenderer } from "../agent-loop/agent-loop-runtime-helpers.js";
 import type { AgentEvent, AgentOutput } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import { audioEvent, imageResourceEvent, makeTempDir, runMessageRuntimeWakeIndicator, textEvent, textEventAt, textOutput, waitFor } from "./message-runtime-helpers.js";
 
@@ -316,6 +319,12 @@ test("messageRuntime_agentStateDelay_recordsInboundActivity", async () => {
         };
       },
       getInboundDelayMs: () => 10,
+      getSnapshot: () => ({
+        state: "waiting",
+        intimacy: 50,
+        updatedAt: "2026-05-24T00:00:00.000Z",
+        responseDelayMs: 10
+      }),
       onChange: () => () => {},
       noteInboundMessage() {
         inboundActivity += 1;
@@ -564,4 +573,104 @@ test("messageRuntime_flushAllWithGatedInbound_stopsHeartbeatWithoutProcessing", 
 
   assert.equal(coreInputs.length, 0);
   assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 1);
+});
+
+test("heartbeat 从 MessageRuntime pending batch 向活动 Chat 插入且不标记已读", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-active-chat-pending-batch"), "alice.sqlite"));
+  const agentLoopRuntime = createAgentLoopRuntime();
+  const formatted: string[] = [];
+  const requests: any[][] = [];
+  const toolRegistryName = `message-runtime-pending-batch-${Date.now()}`;
+  registerToolPlugins(toolRegistryName, [{
+    id: "pending-batch-test",
+    listTools: () => [{ name: "test_tool", description: "test", inputSchema: { type: "object" } }],
+    async execute(call) {
+      return { callId: call.id, ok: true, output: "ok" };
+    }
+  }]);
+  let releaseChat: (() => void) | undefined;
+  const chatGate = new Promise<void>((resolve) => {
+    releaseChat = resolve;
+  });
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 0,
+    getHeartbeatIntervalMs: () => 10,
+    formatPendingBatch(messages) {
+      const content = messages.map((message) => message.contentText).join("\n");
+      formatted.push(content);
+      return content;
+    },
+    clearLLMSession() {},
+    agentLoopRuntime,
+    store,
+    chatAgent: {
+      prepareEventRun() {
+        return {
+          prepare() {
+            return {
+              initialMessages: [{ role: "user" as const, content: "initial" }],
+              buildRequest({ messages }) {
+                requests.push(messages);
+                return { agentId: "chat", messages, toolNames: ["test_tool"], toolVariables: emptyPromptRenderer() };
+              },
+              promptProfile: {
+                visibleTools: { feishu: true },
+                layers: { meta: {}, messages: [] },
+                interruptLayer: {
+                  meta: {},
+                  messages: [{
+                    meta: { title: "Interrupt Layer", enabled: true },
+                    role: "user" as const,
+                    name: "Alert",
+                    content: "<new_message>\n${{interrupt/messages/content}}\n</new_message>"
+                  }]
+                }
+              },
+              async sendRequest({ round }) {
+                if (round === 0) {
+                  await chatGate;
+                  return {
+                    message: {
+                      role: "assistant" as const,
+                      content: "",
+                      toolCalls: [{ id: "call_1", type: "function" as const, function: { name: "test_tool", arguments: "{}" } }]
+                    },
+                    finishReason: "tool_calls"
+                  };
+                }
+                return { message: { role: "assistant" as const, content: "done" }, finishReason: "stop" };
+              },
+              toolRegistryName
+            };
+          },
+          complete: () => []
+        };
+      }
+    },
+    outputRouter: { async sendAll() {} },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  await runtime.ingestEvent(textEvent("session-1", "om_initial", "initial"));
+  await waitFor(() => agentLoopRuntime.getActiveMainLLMSession()?.phase === "running");
+  await runtime.ingestEvent(textEvent("session-1", "om_during_chat", "during chat"));
+  assert.deepEqual(formatted, [], "IM ingress 只入库，不直接构造插入内容");
+
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.deepEqual(formatted, [], "heartbeat 只把 batch 暴露给活动 Chat，尚未到插入点时不结算");
+  assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).some((message) => message.externalMessageId === "om_during_chat"), true);
+
+  releaseChat?.();
+  await waitFor(() => formatted.length === 1);
+  assert.equal(formatted[0], "during chat");
+  assert.equal(requests[1].at(-1).content, "<new_message>\nduring chat\n</new_message>");
+  const duringChat = store.listMessagesForConversation("session-1", 10).find((message) => message.externalMessageId === "om_during_chat");
+  assert.equal(Boolean(duringChat?.isRead), false, "插入 Chat 不改变 isRead");
+  assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).some((message) => message.externalMessageId === "om_during_chat"), false);
+
+  await waitFor(() => agentLoopRuntime.getActiveMainLLMSession()?.phase === "idle");
+  await runtime.flushAll();
 });

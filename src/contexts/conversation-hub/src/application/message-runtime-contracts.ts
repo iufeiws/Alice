@@ -16,6 +16,7 @@ import type {
 
 export type MessageRuntimeDeps = {
   getDelayMs(): number;
+  formatPendingBatch?(messages: StoredConversationMessage[]): string;
   getHeartbeatIntervalMs?: () => number;
   startHeartbeatPaused?: boolean;
   onHeartbeatTick?: () => void;
@@ -82,8 +83,8 @@ export type MessageRuntimeDeps = {
   };
   agentState?: Pick<
     AgentStateController,
-    "canReplyToInbound" | "canRunHeartbeat" | "getInboundDelayMs" | "noteInboundMessage" | "onChange" | "tick"
-  > & Partial<Pick<AgentStateController, "getSnapshot" | "noteInboundProcessed" | "setState" | "waitForWake">>;
+    "canReplyToInbound" | "canRunHeartbeat" | "getInboundDelayMs" | "tick"
+  > & Partial<Pick<AgentStateController, "getSnapshot" | "noteInboundMessage" | "noteInboundProcessed" | "onChange" | "onTransition" | "setState" | "waitForWake">>;
   outputRouter: {
     sendAll(outputs: AgentOutput[]): Promise<unknown>;
   };
@@ -149,7 +150,7 @@ export type MessageRuntime = {
   appendAlbertMessage(input: AppendAlbertMessageInput): void;
   sendSystemNotice(input: SendSystemNoticeInput): Promise<void>;
   deliverPiInvocationCompletion(input: DeliverPiInvocationCompletionInput): Promise<void>;
-  recoverPendingSessions(): void;
+  noteMessagesPolled(sessionId: string): void;
   recoverProcessRestartContinuation(): Promise<void>;
   pauseHeartbeat(): void;
   resumeHeartbeat(): void;

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createApiStartupRuntime } from "../../../../src/apps/api/bootstrap/api-startup-runtime.js";
 
-test("API startup resumes an interrupted restart tool round before recovering ordinary pending messages", async () => {
+test("API startup resumes an interrupted restart tool round before starting the periodic heartbeat", async () => {
   const events: string[] = [];
   const config = {
     core: { heartbeatPaused: false },
@@ -29,9 +29,6 @@ test("API startup resumes an interrupted restart tool round before recovering or
       async recoverProcessRestartContinuation() {
         events.push("restart-resumed");
       },
-      recoverPendingSessions() {
-        events.push("pending-recovered");
-      },
       resumeHeartbeat() {
         events.push("heartbeat-resumed");
       }
@@ -46,7 +43,6 @@ test("API startup resumes an interrupted restart tool round before recovering or
     "agent-started",
     "restart-resumed",
     "scheduler-started",
-    "pending-recovered",
     "heartbeat-resumed"
   ]);
 });
@@ -78,9 +74,6 @@ test("API startup always resumes heartbeat after startup even when a stale pause
       async recoverProcessRestartContinuation() {
         events.push("restart-resumed");
       },
-      recoverPendingSessions() {
-        events.push("pending-recovered");
-      },
       resumeHeartbeat() {
         events.push("heartbeat-resumed");
       }
@@ -97,7 +90,6 @@ test("API startup always resumes heartbeat after startup even when a stale pause
     "agent-started",
     "restart-resumed",
     "scheduler-started",
-    "pending-recovered",
     "heartbeat-resumed"
   ]);
   assert.ok(logs.some((entry) => entry.includes("discarded stale heartbeat pause")));

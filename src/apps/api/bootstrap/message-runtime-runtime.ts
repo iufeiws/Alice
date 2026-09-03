@@ -2,7 +2,7 @@ import { createMessageRuntime } from "../../../contexts/conversation-hub/src/app
 import { buildWorldWandererTargetReachedEvent } from "../../../contexts/conversation-hub/src/application/message-event-builders.js";
 import { updateEnvFile } from "../../../apps/api/server/env-file.js";
 import type { StoredMessageLog } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
-import { defaultMessagingPluginConfigPath, readMessagingPluginConfig } from "../../../capabilities/tools/messaging/src/index.js";
+import { defaultMessagingPluginConfigPath, formatCheckChatMessages, readMessagingPluginConfig } from "../../../capabilities/tools/messaging/src/index.js";
 
 export function createMessageRuntimeRuntime(input: {
   config: any;
@@ -33,6 +33,12 @@ export function createMessageRuntimeRuntime(input: {
 }) {
   return createMessageRuntime({
     getDelayMs: () => input.config.core.inboundDebounceMs,
+    formatPendingBatch(messages) {
+      return formatCheckChatMessages(messages, {
+        timeZone: input.time.timeZone,
+        userName: input.config.project.username
+      });
+    },
     startHeartbeatPaused: input.config.core.heartbeatPaused,
     onHeartbeatPausedChange(paused) {
       updateEnvFile(".env", {

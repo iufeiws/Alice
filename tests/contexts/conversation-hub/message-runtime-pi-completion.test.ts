@@ -16,6 +16,7 @@ function createRuntime(input: { store: AliceStore; sent: AgentOutput[]; noteInbo
   const runtime = createMessageRuntime({
     getDelayMs: () => 60_000,
     getHeartbeatIntervalMs: () => 10_000,
+    startHeartbeatPaused: true,
     clearLLMSession() {},
     store: input.store,
     chatAgent: {
@@ -84,7 +85,7 @@ test("pi completion creates one both message with the alert text, sends the shor
     sessionId: "oc_chat_1"
   });
 
-  assert.equal(noteInbound.count, 1);
+  assert.equal(noteInbound.count, 0, "Pi completion 投递路径不得直接登记 inbound 状态");
   assert.equal(store.listUnprocessedCoreMessagesForConversation("oc_chat_1", 10).length, 1);
   // No second outbound/system conversation message was inserted.
   assert.equal(store.listMessagesForConversation("oc_chat_1", 10).filter((entry) => entry.direction === "outbound").length, 0);
@@ -120,6 +121,7 @@ test("pi completion send failure marks the both message send_failed without bloc
   const failing = createMessageRuntime({
     getDelayMs: () => 60_000,
     getHeartbeatIntervalMs: () => 10_000,
+    startHeartbeatPaused: true,
     clearLLMSession() {},
     store,
     chatAgent: {
@@ -183,7 +185,7 @@ test("pi completion without a message target still lands in Core pending", async
 
   assert.equal(sent.length, 1);
   assert.equal(sent[0].target.sessionId, "default");
-  assert.equal(noteInbound.count, 1);
+  assert.equal(noteInbound.count, 0, "无投递目标时也只能保留 Core pending，不能直接登记 inbound 状态");
 });
 
 test("Yield clear appends an Albert message without sending it or creating Core pending work", () => {

@@ -113,10 +113,15 @@ export type AgentLoopRunSpec = {
   messages: LLMChatInput["messages"];
 };
 
+export type InboundUserMessageInterruptSource = {
+  hasPending(sessionId: string): boolean;
+  consumeContent(sessionId: string): string | undefined;
+  discard(sessionId: string): void;
+};
+
 export type AgentLoopRuntime = {
   getActiveMainLLMSession(): ActiveMainLLMSessionState | undefined;
-  noteInboundUserMessageInterrupt(sessionId: string, message: unknown): void;
-  clearPendingUserMessageInterrupts(sessionId: string): void;
+  setInboundUserMessageInterruptSource(source: InboundUserMessageInterruptSource | undefined): void;
   setLLMSessionRuntime(runtime: LLMSessionRuntimePort | undefined): void;
   ensureCurrentLLMSession(time: string, agentId?: AgentLoopKind): { id: number | string };
   createTalkLLMSession(time: string): { id: number | string };
@@ -160,12 +165,7 @@ const EMPTY_AGENT_LOOP_RESULT: AgentFunctionCallLoopResult = {
   toolCallCount: 0
 };
 
-export function createAgentLoopRuntime(
-  input: Partial<AgentLoopRunners> = {},
-  options: {
-    formatInboundUserMessageInterrupts?(messages: unknown[]): string;
-  } = {}
-): AgentLoopRuntime {
+export function createAgentLoopRuntime(input: Partial<AgentLoopRunners> = {}): AgentLoopRuntime {
   let activeMainLLMSession: ActiveMainLLMSessionState | undefined;
   // §7.1/§10: 统一的 Main Agent 运行占用(running / clearing 互斥, idle 为空闲)。
   let activity: MainAgentActivity = { phase: "idle" };
@@ -191,21 +191,14 @@ export function createAgentLoopRuntime(
   let abortController: AbortController | undefined;
   let runners: Partial<AgentLoopRunners> = { ...input };
   let llmSessionRuntime: LLMSessionRuntimePort | undefined;
-  const pendingUserMessageInterrupts = new Map<string, unknown[]>();
+  let inboundUserMessageInterruptSource: InboundUserMessageInterruptSource | undefined;
 
   return {
     getActiveMainLLMSession() {
       return activeMainLLMSession ? { ...activeMainLLMSession } : undefined;
     },
-    noteInboundUserMessageInterrupt(sessionId, message) {
-      if (!activeMainLLMSession || activeMainLLMSession.phase !== "running") return;
-      if (String(activeMainLLMSession.id) !== sessionId) return;
-      const pending = pendingUserMessageInterrupts.get(sessionId) ?? [];
-      pending.push(message);
-      pendingUserMessageInterrupts.set(sessionId, pending);
-    },
-    clearPendingUserMessageInterrupts(sessionId) {
-      pendingUserMessageInterrupts.delete(sessionId);
+    setInboundUserMessageInterruptSource(source) {
+      inboundUserMessageInterruptSource = source;
     },
     setLLMSessionRuntime(runtime) {
       llmSessionRuntime = runtime;
@@ -344,7 +337,6 @@ export function createAgentLoopRuntime(
             phase: "idle"
           };
         }
-        pendingUserMessageInterrupts.delete(String(request.sessionId));
         // §11.2: 若 run 内部(loop 结束路径)已把占用交接给 clear(running→clearing),
         // 占用由 clear 的 finally 释放, 此处不得回到 idle 造成 busy 空窗。
         if (activity.phase === "running") {
@@ -403,24 +395,17 @@ export function createAgentLoopRuntime(
         runtimeInterrupts: {
           ...spec.runtimeInterrupts,
           hasPendingUserMessage() {
-            const sessionId = String(request.sessionId);
-            return (pendingUserMessageInterrupts.get(sessionId)?.length ?? 0) > 0
+            return inboundUserMessageInterruptSource?.hasPending(String(request.sessionId)) === true
               || spec.runtimeInterrupts?.hasPendingUserMessage() === true;
           },
           consumePendingUserMessageContent() {
             const sessionId = String(request.sessionId);
-            const pending = pendingUserMessageInterrupts.get(sessionId) ?? [];
-            if (pending.length > 0) {
-              if (!options.formatInboundUserMessageInterrupts) {
-                throw new Error("inbound_user_message_interrupt_formatter_required");
-              }
-              pendingUserMessageInterrupts.delete(sessionId);
-              return options.formatInboundUserMessageInterrupts(pending);
-            }
+            const content = inboundUserMessageInterruptSource?.consumeContent(sessionId);
+            if (content !== undefined) return content;
             return spec.runtimeInterrupts?.consumePendingUserMessageContent?.();
           },
           discardPendingUserMessage() {
-            pendingUserMessageInterrupts.delete(String(request.sessionId));
+            inboundUserMessageInterruptSource?.discard(String(request.sessionId));
             spec.runtimeInterrupts?.discardPendingUserMessage?.();
           }
         }

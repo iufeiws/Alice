@@ -21,6 +21,7 @@ export function createApiToolingRuntime(input: {
   appendMessageLog(input: any): unknown;
   sessionClearCoordinator: any;
   getApprovalService(): any;
+  onMessagesPolled(sessionId: string): void;
   piWorkerRuntime?: any;
 }) {
   const apiCapabilitiesRuntime = createApiCapabilitiesRuntime({
@@ -50,9 +51,7 @@ export function createApiToolingRuntime(input: {
     memoryStore: input.apiContextRuntime.memoryStore,
     randomEventStore: input.apiContextRuntime.randomEventStore,
     getApprovalService: input.getApprovalService,
-    onMessagesPolled(sessionId) {
-      input.agentLoopRuntime.clearPendingUserMessageInterrupts(sessionId);
-    },
+    onMessagesPolled: input.onMessagesPolled,
     piWorkerRuntime: input.piWorkerRuntime
   });
   const apiSupportRuntime = createApiSupportRuntime({

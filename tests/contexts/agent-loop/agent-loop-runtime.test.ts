@@ -113,9 +113,9 @@ test("agent loop runtime appends pending interrupt after completed tool result b
     event: textEvent("session-1")
   });
   await toolStarted;
-  runtime.noteInboundUserMessageInterrupt("other-session", { content: "ignored" });
-  runtime.noteInboundUserMessageInterrupt("session-1", { content: "M1" });
-  runtime.noteInboundUserMessageInterrupt("session-1", { content: "M2" });
+  offerInterrupt(runtime, "other-session", "user:ignored");
+  offerInterrupt(runtime, "session-1", "user:M1");
+  offerInterrupt(runtime, "session-1", "user:M2");
   releaseTool?.();
   const result = await run;
 
@@ -123,7 +123,7 @@ test("agent loop runtime appends pending interrupt after completed tool result b
   assert.equal(requests[1].at(-2).role, "tool");
   assert.equal(requests[1].at(-2).toolCallId, "call_1");
   assert.equal(requests[1].at(-1).role, "user");
-  assert.equal(requests[1].at(-1).content, "<new_message>\n[2026-06-12 08:00:00]\nuser:M1\nuser:M2\n</new_message>");
+  assert.equal(requests[1].at(-1).content, "<new_message>\nuser:M1\nuser:M2\n</new_message>");
 });
 
 test("pending inbound starts a fresh function-call loop budget after a single output", async () => {
@@ -133,7 +133,7 @@ test("pending inbound starts a fresh function-call loop budget after a single ou
     id: "interrupt-budget-test",
     listTools: () => [{ name: "test_tool", description: "test", inputSchema: { type: "object" } }],
     async execute(call) {
-      if (call.id === "call_2") runtime.noteInboundUserMessageInterrupt("session-budget", { content: "M3" });
+      if (call.id === "call_2") offerInterrupt(runtime, "session-budget", "user:M3");
       return { callId: call.id, ok: true, output: "tool ok" };
     }
   }]);
@@ -183,7 +183,7 @@ test("pending inbound starts a fresh function-call loop budget after a single ou
 
   assert.equal(requests.length, 4);
   assert.equal(requests[2].at(-1).role, "user");
-  assert.equal(requests[2].at(-1).content, "<new_message>\n[2026-06-12 08:00:00]\nuser:M3\n</new_message>");
+  assert.equal(requests[2].at(-1).content, "<new_message>\nuser:M3\n</new_message>");
 });
 
 test("pending inbound batches are consumed at each interrupt insertion point", async () => {
@@ -194,11 +194,11 @@ test("pending inbound batches are consumed at each interrupt insertion point", a
     listTools: () => [{ name: "test_tool", description: "test", inputSchema: { type: "object" } }],
     async execute(call) {
       if (call.id === "call_1") {
-        runtime.noteInboundUserMessageInterrupt("session-batches", { content: "M1" });
-        runtime.noteInboundUserMessageInterrupt("session-batches", { content: "M2" });
+        offerInterrupt(runtime, "session-batches", "user:M1");
+        offerInterrupt(runtime, "session-batches", "user:M2");
       }
       if (call.id === "call_2") {
-        runtime.noteInboundUserMessageInterrupt("session-batches", { content: "M3" });
+        offerInterrupt(runtime, "session-batches", "user:M3");
       }
       return { callId: call.id, ok: true, output: "tool ok" };
     }
@@ -240,8 +240,8 @@ test("pending inbound batches are consumed at each interrupt insertion point", a
     event: textEvent("session-batches")
   });
 
-  assert.equal(requests[1].at(-1).content, "<new_message>\n[2026-06-12 08:00:00]\nuser:M1\nuser:M2\n</new_message>");
-  assert.equal(requests[2].at(-1).content, "<new_message>\n[2026-06-12 08:00:00]\nuser:M3\n</new_message>");
+  assert.equal(requests[1].at(-1).content, "<new_message>\nuser:M1\nuser:M2\n</new_message>");
+  assert.equal(requests[2].at(-1).content, "<new_message>\nuser:M3\n</new_message>");
 });
 
 test("agent loop runtime resumes yield from Chat poll after the poll clears the interrupt", async () => {
@@ -253,7 +253,7 @@ test("agent loop runtime resumes yield from Chat poll after the poll clears the 
     id: "yield-test",
     listTools: () => [{ name: "Yield", description: "wait", inputSchema: { type: "object" } }],
     async execute(call) {
-      runtime.noteInboundUserMessageInterrupt("session-yield", { content: "yield message" });
+      offerInterrupt(runtime, "session-yield", "user:yield message");
       return { callId: call.id, ok: true, output: "yield", meta: { yieldReturn: true } };
     }
   }]);
@@ -265,7 +265,7 @@ test("agent loop runtime resumes yield from Chat poll after the poll clears the 
             ...interruptTestSpec(requests, "agent-loop-runtime-yield-interrupt", true),
             buildYieldResumeMessages() {
               resumeCalls += 1;
-              runtime.clearPendingUserMessageInterrupts("session-yield");
+              discardInterrupts(runtime, "session-yield");
               return [{ role: "tool" as const, name: "Yield", toolCallId: "call_1", content: "resume" }];
             }
           };
@@ -301,7 +301,7 @@ test("Yield discards its pending interrupt and starts a fresh function-call loop
     id: "yield-budget-test",
     listTools: () => [{ name: "Yield", description: "wait", inputSchema: { type: "object" } }],
     async execute(call) {
-      runtime.noteInboundUserMessageInterrupt("session-yield-budget", { content: "yield budget message" });
+      offerInterrupt(runtime, "session-yield-budget", "user:yield budget message");
       return { callId: call.id, ok: true, output: "yield", meta: { yieldReturn: true } };
     }
   }]);
@@ -478,11 +478,35 @@ function interruptTestSpec(requests: any[][], toolRegistryName: string, yieldRet
   };
 }
 
+const interruptQueues = new WeakMap<object, Map<string, string[]>>();
+
 function createInterruptRuntime() {
-  return createAgentLoopRuntime({}, {
-    formatInboundUserMessageInterrupts(messages) {
-      const lines = messages.map((message) => `user:${(message as { content: string }).content}`);
-      return ["[2026-06-12 08:00:00]", ...lines].join("\n");
+  const runtime = createAgentLoopRuntime();
+  const queues = new Map<string, string[]>();
+  interruptQueues.set(runtime, queues);
+  runtime.setInboundUserMessageInterruptSource({
+    hasPending(sessionId) {
+      return (queues.get(sessionId)?.length ?? 0) > 0;
+    },
+    consumeContent(sessionId) {
+      const pending = queues.get(sessionId);
+      if (!pending?.length) return undefined;
+      queues.delete(sessionId);
+      return pending.join("\n");
+    },
+    discard(sessionId) {
+      queues.delete(sessionId);
     }
   });
+  return runtime;
+}
+
+function offerInterrupt(runtime: object, sessionId: string, content: string): void {
+  const queues = interruptQueues.get(runtime);
+  if (!queues) throw new Error("interrupt_source_not_registered");
+  queues.set(sessionId, [...(queues.get(sessionId) ?? []), content]);
+}
+
+function discardInterrupts(runtime: object, sessionId: string): void {
+  interruptQueues.get(runtime)?.delete(sessionId);
 }

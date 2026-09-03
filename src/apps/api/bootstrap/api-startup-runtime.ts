@@ -14,7 +14,6 @@ export function createApiStartupRuntime(input: {
   scheduler: { start(): void };
   messageRuntime: {
     recoverProcessRestartContinuation?(): Promise<void> | void;
-    recoverPendingSessions(): void;
     pauseHeartbeat?(): void;
     resumeHeartbeat?(): void;
   };
@@ -36,7 +35,6 @@ export function createApiStartupRuntime(input: {
     await input.chatAgent.start();
     await input.messageRuntime.recoverProcessRestartContinuation?.();
     input.scheduler.start();
-    input.messageRuntime.recoverPendingSessions();
     input.messageRuntime.resumeHeartbeat?.();
     if (persistedHeartbeatPaused) {
       input.appendLog("info", "agent heartbeat resumed after startup: discarded stale heartbeat pause persisted by a previous run");

@@ -95,6 +95,7 @@ type ChatAgentConfig = {
 };
 
 type ChatLLMRuntimeConfig = {
+  protocol?: "openai-chat-completions" | "openai-responses";
   client?: LLMClient;
   model?: string;
   temperature?: number;
@@ -563,6 +564,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
             extraParams: deps.config.llm.extraParams,
             followupExtraParams: deps.config.llm.followupExtraParams,
             presetName: undefined,
+            protocol: undefined,
             stream: deps.config.llm.stream,
             supportsImage: false,
             supportsAudio: false
@@ -576,6 +578,7 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
             extraParams: llmConfig.extraParams,
             followupExtraParams: llmConfig.followupExtraParams,
             presetName: llmConfig.presetName,
+            protocol: llmConfig.protocol,
             stream: llmConfig.stream,
             supportsImage: llmConfig.supportsImage,
             supportsAudio: llmConfig.supportsAudio,

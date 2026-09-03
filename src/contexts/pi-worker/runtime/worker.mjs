@@ -507,7 +507,7 @@ async function createAgentSessionFor(sessionManager, modelConfig) {
     name: "Alice Pi Relay",
     baseUrl: relayUrl,
     authHeader: true,
-    api: "openai-completions",
+    api: modelConfig.protocol === "openai-responses" ? "openai-responses" : "openai-completions",
     headers: { "x-pi-session-id": sessionManager.getSessionId() },
     models: [{
       id: modelConfig.model,
@@ -626,6 +626,7 @@ function normalizeToolResult(result) {
 function modelConfigFrom(input) {
   return {
     model: typeof input?.model === "string" ? input.model : undefined,
+    protocol: input?.protocol === "openai-responses" ? "openai-responses" : "openai-chat-completions",
     maxTokens: Number.isInteger(input?.maxTokens) ? input.maxTokens : undefined,
     supportsImage: input?.supportsImage === true,
     reasoning: input?.reasoning === true

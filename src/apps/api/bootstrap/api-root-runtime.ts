@@ -85,6 +85,7 @@ export function createApiRootRuntime() {
       const snapshot = createPiPresetSnapshot(preset);
       return {
         model: snapshot.model,
+        protocol: snapshot.protocol,
         maxTokens: snapshot.maxTokens,
         supportsImage: snapshot.supportsImage,
         reasoning: typeof snapshot.extraParams.reasoning_effort === "string"
@@ -154,8 +155,8 @@ export function createApiRootRuntime() {
     },
     sendMemoryFailureNotice: (error) => apiControlRuntime.outboundNoticeRuntime.sendMemoryFailureNoticeToFeishu(error),
     getApprovalService: () => apiServerStackRuntime.apiCommunicationRuntime.approvalService,
-    appendLog: foundation.appendLog,
     onMessagesPolled: (sessionId) => apiServerStackRuntime.apiCommunicationRuntime.messageRuntime.noteMessagesPolled(sessionId),
+    appendLog: foundation.appendLog,
     resolvePromptApiPreset: foundation.resolvePromptApiPreset,
     appendMessageLog: foundation.appendMessageLog,
     sessionClearCoordinator,
@@ -191,6 +192,8 @@ export function createApiRootRuntime() {
   });
   const apiServerStackRuntime = createApiServerStackRuntime({
     config: foundation.config,
+    credentialStore: foundation.credentialStore,
+    xaiOAuthService: foundation.xaiOAuthService,
     logs: foundation.logs,
     messageLogs: foundation.messageLogs,
     systemLogStore: foundation.systemLogStore,

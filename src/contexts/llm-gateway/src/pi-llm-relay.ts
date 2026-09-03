@@ -2,6 +2,7 @@ import { timingSafeEqual, createHash } from "node:crypto";
 import type { CurrentTimeProvider } from "../../../shared/clock/src/index.js";
 import type { PiPresetSnapshot } from "./pi-preset-adapter.js";
 import { createOpenAIUpstreamRequester, type OpenAIUpstreamRequest } from "./llm-upstream-requester.js";
+import { resolveCredentialAuthorization } from "./credential-runtime.js";
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 const allowedResponseHeaders = ["content-type", "cache-control", "x-request-id", "retry-after"];
@@ -54,7 +55,7 @@ export function createPiLLMRelay(input: {
         preset,
         requester: createOpenAIUpstreamRequester({
           baseURL: preset.baseURL,
-          apiKey: preset.apiKey,
+          authorization: resolveCredentialAuthorization(preset.credentialId),
           timeoutMs: preset.timeoutMs,
           useProxy: preset.useProxy === true,
           fetchImpl: input.fetchImpl
@@ -211,12 +212,15 @@ async function handleRelayRequest(
   const url = request instanceof Request ? request.url : request.url ?? "/";
   const headers = request instanceof Request ? request.headers : new Headers(request.headers);
   if (method === "GET" && new URL(url, "http://pi-relay.local").pathname === "/health") return new Response(JSON.stringify({ ready: true }), { status: 200, headers: { "content-type": "application/json" } });
-  if (method !== "POST" || new URL(url, "http://pi-relay.local").pathname !== "/v1/chat/completions") return relayError(404, "pi_relay_route_not_found");
+  const pathname = new URL(url, "http://pi-relay.local").pathname;
+  if (method !== "POST" || (pathname !== "/v1/chat/completions" && pathname !== "/v1/responses")) return relayError(404, "pi_relay_route_not_found");
   const token = bearerToken(headers.get("authorization"));
   if (!token) return relayError(401, "pi_relay_capability_required");
   const capability = findCapability(input.capabilities, token);
   if (!capability || !capability.active) return relayError(403, "pi_relay_capability_invalid");
   const preset = capability.preset;
+  const expectedPath = preset.protocol === "openai-responses" ? "/v1/responses" : "/v1/chat/completions";
+  if (pathname !== expectedPath) return relayError(404, "pi_relay_protocol_mismatch");
   let body: Buffer;
   try {
     body = await readBody(request, input.maxBodyBytes);
@@ -230,7 +234,14 @@ async function handleRelayRequest(
   } catch {
     return relayError(400, "pi_relay_invalid_json");
   }
-  const upstreamBody: Record<string, unknown> = {
+  const upstreamBody: Record<string, unknown> = preset.protocol === "openai-responses" ? {
+    ...preset.extraParams,
+    ...parsed,
+    model: preset.model,
+    stream: preset.stream,
+    temperature: preset.temperature,
+    ...(preset.maxTokens === undefined ? {} : { max_output_tokens: preset.maxTokens })
+  } : {
     ...preset.extraParams,
     model: preset.model,
     stream: preset.stream,
@@ -249,7 +260,7 @@ async function handleRelayRequest(
   try {
     // Upstream transport (timeout, retry, auth) belongs to the LLM gateway.
     const attempt = await capability.requester({
-      path: "/chat/completions",
+      path: preset.protocol === "openai-responses" ? "/responses" : "/chat/completions",
       callContext: { agentId: "pi" },
       init: {
         method: "POST",
@@ -291,7 +302,7 @@ async function forwardResponse(
     try {
       const bytes = new Uint8Array(await response.arrayBuffer());
       if (response.ok) {
-        if (preset.stream === false) {
+        if (preset.stream === false && preset.protocol === "openai-chat-completions") {
           const sseHeaders = new Headers(responseHeaders);
           sseHeaders.set("content-type", "text/event-stream");
           sseHeaders.set("cache-control", "no-cache");

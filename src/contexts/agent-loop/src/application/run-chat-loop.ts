@@ -51,6 +51,7 @@ export type YieldResumeTarget = {
 
 export type ChatAgentLoopInput = {
   llmInput: {
+    protocol?: "openai-chat-completions" | "openai-responses";
     agentId?: string;
     messages: LLMChatInput["messages"];
     client?: LLMClient;
@@ -187,6 +188,7 @@ export function buildChatAgentLoop(input: ChatAgentLoopInput): PreparedChatAgent
         maxTokens: input.llmInput.maxTokens,
         extraParams: round === 0 ? input.llmInput.extraParams : input.llmInput.followupExtraParams,
         presetName: input.llmInput.presetName,
+        protocol: input.llmInput.protocol,
         toolNames: visibleToolNames,
         toolVariables: input.buildTextVariables(input.event),
         stream: input.llmInput.stream !== false && Boolean((input.llmInput.client ?? input.llm).chatStream),

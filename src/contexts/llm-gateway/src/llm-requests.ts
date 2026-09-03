@@ -79,6 +79,8 @@ export function createLLMRequests(deps: LLMRequestsDeps): LLMRequests {
     input.signal?.addEventListener("abort", abort, { once: true });
     const useStream = (input.stream === true || input.extraParams?.stream === true) && Boolean(client.chatStream);
     const request: LLMChatInput = {
+      protocol: input.protocol,
+      stream: useStream,
       messages: sanitizeLLMRequestMessages(input.messages, deps.messageSanitization),
       model: input.model,
       temperature: input.temperature,

@@ -50,18 +50,18 @@ export function createLLMRequestPreviewRuntime(input: {
     return { ...preview, rawRequest: buildRawLLMRequest(preview) };
   }
 
-  async function getLLMRequestProfilePreview(apiPreset?: { model?: string; temperature?: number; maxTokens?: number; extraParams?: Record<string, unknown> }): Promise<LLMRequestPreview | undefined> {
+  async function getLLMRequestProfilePreview(apiPreset?: { protocol?: LLMApiPreset["protocol"]; stream?: boolean; model?: string; temperature?: number; maxTokens?: number; extraParams?: Record<string, unknown> }): Promise<LLMRequestPreview | undefined> {
     const profilePreview = await buildLLMRequestPreviewFromProfile(apiPreset);
     return profilePreview ? { ...profilePreview, rawRequest: buildRawLLMRequest(profilePreview) } : undefined;
   }
 
-  async function getTalkLLMRequestProfilePreview(apiPreset?: { model?: string; temperature?: number; maxTokens?: number; extraParams?: Record<string, unknown> }): Promise<LLMRequestPreview | undefined> {
+  async function getTalkLLMRequestProfilePreview(apiPreset?: { protocol?: LLMApiPreset["protocol"]; stream?: boolean; model?: string; temperature?: number; maxTokens?: number; extraParams?: Record<string, unknown> }): Promise<LLMRequestPreview | undefined> {
     const profilePreview = await buildLLMRequestPreviewFromProfile(apiPreset, input.getTalkPromptProfile());
     return profilePreview ? { ...profilePreview, rawRequest: buildRawLLMRequest(profilePreview) } : undefined;
   }
 
   async function buildLLMRequestPreviewFromProfile(
-    apiPreset?: { model?: string; temperature?: number; maxTokens?: number; extraParams?: Record<string, unknown> },
+    apiPreset?: { protocol?: LLMApiPreset["protocol"]; stream?: boolean; model?: string; temperature?: number; maxTokens?: number; extraParams?: Record<string, unknown> },
     profile = input.getPromptProfile()
   ): Promise<LLMRequestPreview | undefined> {
     const target = input.getDefaultTarget();
@@ -88,6 +88,8 @@ export function createLLMRequestPreviewRuntime(input: {
     const messages = await input.buildPromptPreviewMessages(profile, previewEvent, true);
     return {
       id: 0,
+      protocol: apiPreset?.protocol,
+      stream: apiPreset?.stream,
       source: "preview",
       conversationId: target?.sessionId ?? "preview",
       time: previewTime.iso,
@@ -136,6 +138,8 @@ export function createLLMRequestPreviewRuntime(input: {
     const messages = await input.buildPromptPreviewMessages(profile, previewEvent, true);
     return {
       id: 0,
+      protocol: chatPreset?.protocol,
+      stream: chatPreset?.stream,
       source: "preview",
       conversationId: latestInbound.conversationId,
       time: latestInbound.lastEventAt || latestInbound.createdAt,

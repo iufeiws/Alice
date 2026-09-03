@@ -28,6 +28,8 @@ export type LLMSessionSnapshot = {
 };
 
 export type LLMRequestLogEntry = {
+  protocol?: "openai-chat-completions" | "openai-responses";
+  stream?: boolean;
   id: number;
   agentId?: "chat" | "talk";
   sessionId?: number;

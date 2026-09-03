@@ -4,8 +4,9 @@ import { createPiPresetSnapshot } from "../../../src/contexts/llm-gateway/src/pi
 
 const preset = {
   name: "local",
+  protocol: "openai-chat-completions" as const,
+  credentialId: "credential-a",
   baseURL: "https://upstream.example/v1/",
-  apiKey: "secret",
   model: "model-a",
   temperature: 0.3,
   timeoutMs: 10_000,
@@ -21,8 +22,9 @@ test("Pi preset snapshot retains only approved upstream fields", () => {
   const snapshot = createPiPresetSnapshot(preset);
   assert.deepEqual(snapshot, {
     name: "local",
+    protocol: "openai-chat-completions",
+    credentialId: "credential-a",
     baseURL: "https://upstream.example/v1",
-    apiKey: "secret",
     model: "model-a",
     temperature: 0.3,
     maxTokens: 1024,
@@ -53,13 +55,12 @@ test("Pi preset snapshot accepts project preset parameters and ignores followup-
   });
 });
 
-test("Pi preset snapshot accepts project presets without optional upstream credentials", () => {
+test("Pi preset snapshot accepts project presets without an optional base URL", () => {
   const snapshot = createPiPresetSnapshot({
     ...preset,
-    baseURL: "",
-    apiKey: undefined
+    baseURL: ""
   });
 
   assert.equal(snapshot.baseURL, "");
-  assert.equal(snapshot.apiKey, undefined);
+  assert.equal(snapshot.credentialId, "credential-a");
 });

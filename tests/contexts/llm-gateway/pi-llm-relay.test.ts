@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import { createPiLLMRelay } from "../../../src/contexts/llm-gateway/src/pi-llm-relay.js";
 import type { PiPresetSnapshot } from "../../../src/contexts/llm-gateway/src/pi-preset-adapter.js";
 import { setOpenAICallObserver } from "../../../src/contexts/llm-gateway/src/llm-upstream-requester.js";
+import { createApiKeyAuthorization, setActiveCredentialRuntime } from "../../../src/contexts/llm-gateway/src/index.js";
+
+setActiveCredentialRuntime({ resolveAuthorization: () => createApiKeyAuthorization("upstream-secret") } as any);
 
 const time = {
   timeZone: "Asia/Tokyo",
@@ -10,8 +13,9 @@ const time = {
 } as any;
 const preset: PiPresetSnapshot = {
   name: "local",
+  protocol: "openai-chat-completions",
+  credentialId: "credential-a",
   baseURL: "https://upstream.example/v1",
-  apiKey: "upstream-secret",
   model: "model-a",
   temperature: 0.2,
   timeoutMs: 10_000,
@@ -86,6 +90,54 @@ test("relay rejects invalid capability but ignores Pi model", async () => {
   assert.equal(calls, 1);
 });
 
+test("relay forwards native Responses requests only through the Responses route", async () => {
+  let upstreamBody: Record<string, unknown> | undefined;
+  const responsesPreset: PiPresetSnapshot = {
+    ...preset,
+    protocol: "openai-responses",
+    baseURL: "https://api.x.ai/v1",
+    model: "grok-4",
+    maxTokens: 256,
+    extraParams: { reasoning: { effort: "high" } }
+  };
+  const relay = createPiLLMRelay({
+    time,
+    fetchImpl: async (url, init) => {
+      assert.equal(url, "https://api.x.ai/v1/responses");
+      upstreamBody = JSON.parse(String(init?.body));
+      const stream = [
+        { type: "response.output_item.added", output_index: 0, item: { type: "function_call", call_id: "call-1", name: "read", arguments: "" } },
+        { type: "response.function_call_arguments.delta", output_index: 0, delta: "{}" },
+        { type: "response.completed", response: { id: "resp-1", model: "grok-4", status: "completed", output: [], usage: { input_tokens: 2, output_tokens: 1, total_tokens: 3 } } }
+      ].map((event) => `data: ${JSON.stringify(event)}\n\n`).join("");
+      return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
+    }
+  });
+  relay.createCapability({ sandboxId: "sandbox-a", token: "token-a", preset: responsesPreset });
+  const wrongRoute = await relay.handle(new Request("http://relay/v1/chat/completions", {
+    method: "POST",
+    headers: { authorization: "Bearer token-a" },
+    body: "{}"
+  }));
+  assert.equal(wrongRoute.status, 404);
+  const response = await relay.handle(new Request("http://relay/v1/responses", {
+    method: "POST",
+    headers: { authorization: "Bearer token-a" },
+    body: JSON.stringify({ model: "ignored", input: [{ role: "user", content: "hi" }], tools: [{ type: "function", name: "read" }], max_output_tokens: 1 })
+  }));
+  assert.equal(response.status, 200);
+  assert.deepEqual(upstreamBody, {
+    reasoning: { effort: "high" },
+    model: "grok-4",
+    input: [{ role: "user", content: "hi" }],
+    tools: [{ type: "function", name: "read" }],
+    max_output_tokens: 256,
+    stream: true,
+    temperature: 0.2
+  });
+  assert.match(await response.text(), /response\.function_call_arguments\.delta/);
+});
+
 test("relay applies the immutable preset sampling values", async () => {
   let body: Record<string, unknown> | undefined;
   const relay = createPiLLMRelay({
@@ -117,7 +169,7 @@ test("relay records a successful call centrally even when upstream omits token c
       return new Response(JSON.stringify({ choices: [] }), { status: 200, headers: { "content-type": "application/json" } });
     }
   });
-  relay.createCapability({ sandboxId: "sandbox-a", token: "token-a", preset: { ...preset, apiKey: undefined } });
+  relay.createCapability({ sandboxId: "sandbox-a", token: "token-a", preset });
   const response = await relay.handle(new Request("http://relay/v1/chat/completions", {
     method: "POST",
     headers: { authorization: "Bearer token-a" },
@@ -125,7 +177,7 @@ test("relay records a successful call centrally even when upstream omits token c
   }));
 
   assert.equal(response.status, 200);
-  assert.equal(authorization, null);
+  assert.equal(authorization, "Bearer upstream-secret");
   assert.equal(calls.length, 1);
   assert.equal(calls[0].agentId, "pi");
   assert.equal(calls[0].usage, undefined);
@@ -317,4 +369,5 @@ test("client cancelling an SSE response aborts the upstream and releases the slo
     body: JSON.stringify({ model: "model-a", messages: [] })
   }));
   assert.equal(second.status, 200);
+  await second.body?.cancel();
 });

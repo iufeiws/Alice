@@ -2,8 +2,9 @@ import type { LLMApiPreset } from "./admin-presets.js";
 
 export type PiPresetSnapshot = {
   name: string;
+  protocol: LLMApiPreset["protocol"];
+  credentialId: string;
   baseURL: string;
-  apiKey?: string;
   model: string;
   temperature: number;
   maxTokens?: number;
@@ -17,8 +18,9 @@ export type PiPresetSnapshot = {
 export function createPiPresetSnapshot(preset: LLMApiPreset): PiPresetSnapshot {
   return {
     name: preset.name,
+    protocol: preset.protocol,
+    credentialId: preset.credentialId,
     baseURL: preset.baseURL.replace(/\/+$/, ""),
-    apiKey: preset.apiKey,
     model: preset.model,
     temperature: preset.temperature,
     maxTokens: preset.maxTokens,

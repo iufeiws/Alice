@@ -42,6 +42,7 @@ export type PiInvocationStatus = "queued" | "running" | "completed" | "failed" |
 /** Model runtime fields the container accepts; sampling stays on the relay. */
 export type PiModelConfig = {
   model: string;
+  protocol?: "openai-chat-completions" | "openai-responses";
   maxTokens?: number;
   supportsImage: boolean;
   reasoning: boolean;

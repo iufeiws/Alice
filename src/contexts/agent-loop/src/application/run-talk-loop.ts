@@ -26,6 +26,7 @@ export type TalkAgentLoopResult = ChatAgentLoopResult;
 
 type TalkAgentLoopLogLevel = "info" | "warn" | "error";
 type TalkAgentLoopLLMConfig = {
+  protocol?: "openai-chat-completions" | "openai-responses";
   client: NonNullable<LLMRequestSenderInput["client"]>;
   model?: string;
   temperature?: number;
@@ -152,6 +153,7 @@ export function createTalkAgentLoopForSession(deps: TalkAgentLoopDeps): TalkAgen
           maxTokens: input.config.maxTokens,
           extraParams: input.config.extraParams,
           presetName: input.config.presetName,
+          protocol: input.config.protocol,
           toolNames: input.toolNames,
           toolVariables: input.toolVariables,
           stream: input.config.stream !== false,

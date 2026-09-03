@@ -1,12 +1,18 @@
 import type { LLMChatInput } from "./index.js";
 import { sanitizeLLMRequestMessages } from "./llm-message-sanitization.js";
 import type { StoredConversationMessage } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
+import { buildOpenAIResponsesRequest } from "./openai-responses-client.js";
 
-export function buildRawLLMRequest(input: Pick<LLMChatInput, "model" | "temperature" | "messages" | "tools" | "maxTokens" | "extraParams">): unknown {
+export function buildRawLLMRequest(input: Pick<LLMChatInput, "protocol" | "stream" | "model" | "temperature" | "messages" | "tools" | "maxTokens" | "extraParams">): unknown {
+  if (input.protocol === "openai-responses") {
+    const result = buildOpenAIResponsesRequest(input, { model: input.model ?? "", temperature: input.temperature, extraParams: input.extraParams });
+    if (input.stream !== false) result.stream = true;
+    return result;
+  }
   const result: Record<string, unknown> = {
     ...(input.extraParams ?? {}),
     model: input.model,
-    stream: true,
+    stream: input.stream !== false,
     temperature: input.temperature,
     messages: sanitizeLLMRequestMessages(input.messages).map((message) => {
       const entry: Record<string, unknown> = {
@@ -29,6 +35,13 @@ export function buildRawLLMRequest(input: Pick<LLMChatInput, "model" | "temperat
       return entry;
     })
   };
+  if (input.stream !== false) {
+    const configured = result.stream_options;
+    result.stream_options = {
+      ...(configured && typeof configured === "object" && !Array.isArray(configured) ? configured : {}),
+      include_usage: true
+    };
+  }
   if (input.tools !== undefined) result.tools = input.tools;
   if (input.maxTokens !== undefined) result.max_tokens = input.maxTokens;
   return result;

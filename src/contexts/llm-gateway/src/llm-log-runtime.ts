@@ -31,6 +31,8 @@ export function createLLMLogRuntime(input: {
     const sessionId = input.ensureActiveSession(now.iso, agentId).id;
     const entry = {
       id: nextRequestId,
+      protocol: request.protocol,
+      stream: request.stream,
       agentId,
       sessionId,
       time: now.iso,

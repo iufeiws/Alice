@@ -16,6 +16,7 @@ export type LLMRequestAgentId = "chat" | "memorize" | string;
 
 export type LLMRequestSenderInput = {
   agentId: LLMRequestAgentId;
+  protocol?: "openai-chat-completions" | "openai-responses";
   client?: LLMClient;
   messages: LLMMessage[];
   model?: string;

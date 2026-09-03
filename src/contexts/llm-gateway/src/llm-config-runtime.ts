@@ -24,6 +24,7 @@ export function createLLMConfigRuntime(input: {
         extraParams: {},
         followupExtraParams: {},
         presetName: undefined,
+        protocol: undefined,
         stream: false,
         supportsImage: false,
         supportsAudio: false
@@ -37,6 +38,7 @@ export function createLLMConfigRuntime(input: {
       extraParams: preset.extraParams,
       followupExtraParams: preset.followupExtraParams,
       presetName: preset.name,
+      protocol: preset.protocol,
       stream: preset.stream,
       supportsImage: preset.supportsImage,
       supportsAudio: preset.supportsAudio

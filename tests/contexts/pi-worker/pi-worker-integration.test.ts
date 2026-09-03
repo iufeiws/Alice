@@ -5,6 +5,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createPiLLMRelay } from "../../../src/contexts/llm-gateway/src/pi-llm-relay.js";
+import { createApiKeyAuthorization, setActiveCredentialRuntime } from "../../../src/contexts/llm-gateway/src/index.js";
+
+setActiveCredentialRuntime({ resolveAuthorization: () => createApiKeyAuthorization("upstream-secret") } as any);
 
 // pi-coding-agent (undici 8.5) requires Node >= 22.19; the worker container
 // ships a matching runtime. On older hosts point PI_WORKER_NODE_BIN at a
@@ -23,8 +26,9 @@ const time = {
 
 const preset = {
   name: "model-a",
+  protocol: "openai-chat-completions" as const,
+  credentialId: "credential-a",
   baseURL: "http://127.0.0.1:1/v1",
-  apiKey: "upstream-secret",
   model: "model-a",
   temperature: 0.2,
   maxTokens: 256,

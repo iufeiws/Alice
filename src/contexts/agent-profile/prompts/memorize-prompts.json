@@ -12,7 +12,7 @@
     {
       "meta": {
         "title": "基础职责",
-        "enabled": true
+        "enabled": false
       },
       "role": "user",
       "content": "",

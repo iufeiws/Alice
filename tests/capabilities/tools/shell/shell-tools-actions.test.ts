@@ -150,5 +150,6 @@ test("wardrobe random switches a matching outfit", async () => {
   const result = await tools.execute({ id: "call_random", toolName: "Wardrobe", input: { action: "random", name: "Two" } });
 
   assert.equal(result.ok, true);
+  assert.equal(result.output, '<O Two group="root">\noutfit two\n</O Two>');
   assert.equal(store.get(new Date("2026-05-26T12:31:00.000Z"), "Asia/Shanghai").outfit.id, "o2");
 });

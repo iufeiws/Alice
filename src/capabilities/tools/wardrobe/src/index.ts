@@ -113,10 +113,15 @@ export function createWardrobeTools(deps: WardrobeToolsDeps): ToolPlugin {
     const query = stringValue(call.input.name).trim();
     const outfits = query ? filterOutfits(config.outfits, query) : config.outfits;
     if (outfits.length === 0) return wardrobeError(call, wardrobeToolText.unknownOutfitName);
-    return changeWardrobe(call, target, outfits[Math.floor(Math.random() * outfits.length)].id);
+    return changeWardrobe(call, target, outfits[Math.floor(Math.random() * outfits.length)].id, true);
   }
 
-  async function changeWardrobe(call: ToolCall, target: WardrobeToolTarget, outfitId: string): Promise<ToolResult> {
+  async function changeWardrobe(
+    call: ToolCall,
+    target: WardrobeToolTarget,
+    outfitId: string,
+    returnCurrentOutfit = false
+  ): Promise<ToolResult> {
     let current;
     try {
       current = deps.wardrobeRuntime.switchOutfit(time.now().date, time.timeZone, outfitId);
@@ -133,7 +138,7 @@ export function createWardrobeTools(deps: WardrobeToolsDeps): ToolPlugin {
     return {
       callId: call.id,
       ok: true,
-      output: wardrobeToolText.switched
+      output: returnCurrentOutfit ? formatOutfit(current.outfit, false) : wardrobeToolText.switched
     };
   }
 

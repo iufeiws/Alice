@@ -14,6 +14,7 @@
 - `agent-loop/`: chat/talk agent loop 与 ChatAgent。
 - `agent-profile/`: prompt/profile/shell/persona。
 - `conversation-hub/`: conversation/message/log 归一化和存储入口。
+- `control-command/`: 入站控制命令识别与执行；控制命令不进入普通消息历史或 Chat loop。
 - `initiative/`: 主动行为配置、触发和运行记录。
 - `llm-gateway/`: LLM request、client、tool-loop、观测。
 - `llm-session/`: LLM session 指针、归档、列表和视图。

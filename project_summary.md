@@ -1,5 +1,7 @@
 # Alice 项目结构总结
 
+> 当前源码行为补充：Pi relay 不限制请求体大小。
+
 > 生成时间：2026-08-17。本文档是对当前仓库结构和各模块职责的高层总结，作为项目入口阅读材料；行为细节以 `src/` 源码与 `docs/` 为准。
 
 ## 1. 项目概述
@@ -23,7 +25,7 @@ Alice 是一个**本地优先的个人陪伴型 Agent 运行时**（TypeScript /
 | WebRTC | `werift`（信令/媒体处理自研） |
 | 语音编码 | `silk-wasm`、`ffmpeg-static` |
 | 其他 | `date-holidays`（节假日）、`qrcode`、`shell-quote` |
-| 测试 | `node:test` + `tsx`（串行），genie_tts 用 `python3 -m unittest` |
+| 测试 | `node:test` + `tsx`（串行，`npm test` 通过 `scripts/run-tests.mjs` 不输出逐项通过信息，仅在结束时输出通过测试文件/套件数与总数，失败时输出诊断），genie_tts 用 `python3 -m unittest` |
 
 ## 3. 顶层目录
 
@@ -76,13 +78,14 @@ src/
 | **tool-execution** | 通用工具执行上下文。`contracts.ts` 独立定义 `ToolDefinition`、`ToolCall`、`ToolResult`、`ToolPlugin`、执行上下文与 reporter 契约；`tool-execution-runtime.ts` 管理命名工具注册表、定义查询和统一 `ToolPlugin.execute` 路径，在执行前依据工具 JSON Schema 删除可选参数中的纯空白字符串（含嵌套对象和对象数组），使工具原有默认值生效，并统一驱动 execution reporter。`agent-loop` 与 `llm-gateway` 不再拥有工具契约、注册表或插件执行实现。 |
 | **agent-profile** | Prompt 层管理。`domain/prompt-layer.ts` 为**唯一公共 layer 解析入口**（normalize、layer→LLMMessage、tool 参数解析）；`build-system-prompt.ts`（PromptProfile + build/append messages + layer 内嵌 tool call 回填 + staticPromptFingerprint）；PromptProfile 的 `consecutiveToolReminderLayer` 与 `silentEndingReminderLayer` 分别配置两类动态 user reminder，均只接受 user-role 消息，在管理后台独立编辑，运行时按条件注入而不属于初始/append prompt；`shell.ts`（每日 persona/relationship/outfit，`createDailyShellStore`；选项级 `enabled` 开关，关闭的选项不参与随机选中） |
 | **talk-session** | WebRTC 语音 talk 会话。SQLite 适配器（`logs/talk/talk.sqlite`，talk_sessions/events/transcript/outputs）、`createTalkRuntime`（open/append/delta/interrupt/claim；`closeSession` 异步，经统一清除协调器，成功后按序：重写 Talk LLM transcript → 标记 LLM session cleared 并清 pointer → 关闭 talk.sqlite 会话 → conversation-hub 投影 → 切 waiting，采集失败时保持打开）、`createTalkRuntimeRuntime`（+ conversation-hub 投影，会话关闭转 inbound 消息） |
-| **conversation-hub** | 多渠道消息统一入口。`createMessageRuntime`（ingestEvent/ingestLifecycle/appendAlbertMessage/sendSystemNotice/processNow/flushAll）内部组装 agentLoopRuntime + heartbeat 全部任务；普通入站只归一化并写入 SQLite，不调用 `noteInboundMessage`、不直接插入 Chat、也不额外调度 heartbeat。周期 heartbeat 以 SQLite 未处理消息为唯一 pending 来源；状态不可运行时先推进到期状态且仍不可运行则退出，可运行后登记 pending inbound，运行中同会话 Chat 由 `MessageRuntime` 持有 pending batch 并在 function-call loop 的真实插入点提供格式化文本，其他 MainAgent busy 状态直接退出；增量插入只结算 `coreProcessed`，`isRead` 仍只由真实 `Chat poll` 设置。Chat/Talk/Generated/pending loop 均由 heartbeat 非阻塞发起并由对应 runtime 异步收尾。force_wake 先获取 clearing 占用再清除、成功后才唤醒；`sqlite-conversation-store` 为 Core 侧消息历史 |
+| **conversation-hub** | 多渠道消息统一入口。`createMessageRuntime`（ingestEvent/ingestLifecycle/appendAlbertMessage/sendSystemNotice/processNow/flushAll）内部组装 agentLoopRuntime + heartbeat 全部任务；空白 text 与无有效转写的 audio 在入站边界丢弃，其余真实用户入站类型（text/markdown/image/audio/file/link/card_action）统一写入 SQLite pending，不预先标记已处理；普通入站不调用 `noteInboundMessage`、不直接插入 Chat、也不额外调度 heartbeat。周期 heartbeat 以 SQLite 未处理消息为唯一 pending 来源；状态不可运行时先推进到期状态且仍不可运行则退出，可运行后登记 pending inbound，运行中同会话 Chat 由 `MessageRuntime` 持有 pending batch 并在 function-call loop 的真实插入点提供格式化文本，其他 MainAgent busy 状态直接退出；增量插入只结算 `coreProcessed`，`isRead` 仍只由真实 `Chat poll` 设置。Chat/Talk/Generated/pending loop 均由 heartbeat 非阻塞发起并由对应 runtime 异步收尾。force_wake 先获取 clearing 占用再清除、成功后才唤醒；`sqlite-conversation-store` 为 Core 侧消息历史 |
+| **control-command** | 入站控制命令 context。`createControlCommandRuntime` 统一识别和执行控制命令，已支持 `/force_wake` 与 `/force_clear`；命令记录入站消息日志，但不进入 Core 消息历史或 Chat loop。两者均先获取 MainAgent clearing 占用再清除当前 LLM session；`/force_wake` 清除成功后切到 `waiting`、清睡眠茧并触发强制唤醒事件，`/force_clear` 不改变 Agent 状态且不触发 wake。非命令同步返回，保持普通消息的同步落库时序。 |
 | **capabilities** | 插件 admin 运行时（asr/photo/tts/geo/image-recognition 等 admin-plugin-*）+ `tool-output-target.ts`（AgentOutput 投递目标解析器，产出 AgentOutput 的工具必须经此解析） |
 | **initiative** | Agent 主动行为。initiated-behavior 定义、触发评估、随机事件、admin 配置、JSON 存储；`randomized` 行为 prompt 支持 `user` 与 `assistant` role |
 | **prompt-context** | Prompt 模板变量渲染运行时（统一使用 `${{variable}}`，user/时间/dailyShell/memory/calendar/skills/notes_list/outfit 变量树）。未解析变量 warning 后保留原占位符，不再抛错；旧式 `{{variable}}` 作为普通文本。Short Memory 变量 `memory/shortMemory/content`：必填依赖 `shortMemoryStore`，取最新 wake boundary 的 `occurredAtUtc` 前 24 小时至当前的闭区间记录，输出 `<short_memories>` XML（`& < >` 转义，空结果固定空 XML），是否加入 Prompt layer 完全由用户 Prompt 编辑器配置决定 |
 | **world-wanderer** | Google Street View 世界漫步空闲行为（移动 runtime、选路 policy、geo 计算）；选路优先近期未走过的有向 pano 边，当前出口的有向边全部耗尽时每次 idle 最多搜索一次附近可移动 pano，搜索失败则保留旧链接回退，因此兼容死路原路返回与小型 pano 环路脱困 |
 | **bash-sandbox** | Docker 沙箱 bash 执行（`createBashSandboxRuntime` + `createDockerBashExecutor`、命令权限分类）；sandbox 容器由项目启动流程创建并保持运行，容器内 Pi worker 仍按 heartbeat/真实调用懒启动；codebase 挂载在启动配置时按 Git 可见树生成最小目录覆盖（只有含 ignored 子树时才继续拆分，仓库根 `.gitignore` 明确不挂载），并额外将整个 `memory-files/` 目录读写挂载；容器启动后将 mount cleanup 状态标记为 dirty，正常关闭时先停止容器、清理不再属于当前挂载集合的空 mount point，再标记 clean；下次启动会在状态缺失、dirty、mount key 变化或 container ID 变化时于容器启动前补做清理，当前挂载目标、非空路径和符号链接均保留；配置挂载覆盖 `tmpDir` 时跳过同路径 `tmpfs`，使宿主绑定的临时目录可通过容器路径映射读取并发送；`readSandboxNotesIndex` 通过既有容器路径→宿主挂载路径映射同步扫描笔记索引，返回容器路径供 prompt 变量动态构建，因此不依赖容器处于运行状态 |
-| **pi-worker** | Pi worker 客户端（授权握手、后台唤起 wake、tool relay、健康轮询）；按 invocation 内最后一轮 assistant 终态判定 completed/failed，重试期间保留 running；SubAgent 对外使用持久化 nickname（来自 `runtime/pi-agent-names.txt`，空格替换为 `_`），映射写入 Pi session 根目录，池满时淘汰最早映射，worker 启动时清除 30 天前映射；内部 watcher 仍按真实 sessionId 读取状态；SubAgent 的 result/wait 返回完成 message 或运行/终态状态，messages 保留 access 语义并返回 Pi 原始 message；无效输入错误会指出未知 action、意外参数、缺失/无效字段等具体原因；未显式传入 timeout 时，SubAgent invocation 默认 6 小时超时；Read/Write/Edit/Bash 的 worker HTTP 错误仅向上抛出响应体中的具体 `error`，不再包装 tool 错误码和 HTTP 状态码 |
+| **pi-worker** | Pi worker 客户端（授权握手、后台唤起 wake、tool relay、健康轮询）；worker 控制 API 的 JSON 请求体不设置大小上限；按 invocation 内最后一轮 assistant 终态判定 completed/failed，重试期间保留 running；SubAgent 对外使用持久化 nickname（来自 `runtime/pi-agent-names.txt`，空格替换为 `_`），映射写入 Pi session 根目录，池满时淘汰最早映射，worker 启动时清除 30 天前映射；内部 watcher 仍按真实 sessionId 读取状态；SubAgent 的 result/wait 返回完成 message 或运行/终态状态，messages 保留 access 语义和 Pi message 结构，但会剥离图片/音频二进制内容，序列化后超过 2048 字符时只返回首尾各 1024 字符及截断标记；无效输入错误会指出未知 action、意外参数、缺失/无效字段等具体原因；未显式传入 timeout 时，SubAgent invocation 默认 6 小时超时；Read/Write/Edit/Bash 的 worker HTTP 错误仅向上抛出响应体中的具体 `error`，不再包装 tool 错误码和 HTTP 状态码 |
 | **approval** | 基于飞书动态卡片的一对一审批服务（含卡片动作回调鉴权） |
 | **skills** | 技能注册表/加载器/占位符/资源路径 |
 | **agent-run-indicator** | Agent run 指示器抽象（begin/setTyping/fail）+ 飞书动态卡片与 tool 执行上报适配器。正常醒来会新建状态面板、Pin 新面板并取消前一面板的 Pin；该醒来面板整条附属流程为 best-effort，失败只写 warning，不阻断唤醒，创建失败时保留旧面板记录。Tool execution reporter 持有一个与 session 无关的全局内存消息 ID 游标，每次 tool call 直接查询数据库中最新的已发送 assistant 消息或已读 user 消息 ID；未读 user 消息不参与分界。查询 ID 与内存游标不同时新建卡片并更新游标。游标初始为 null 且不持久化，重启后首个 tool call 新建卡片。工具执行卡片的创建、分组、更新和 streaming 设置不写系统日志 |
@@ -96,7 +99,7 @@ Interrupt batch 由 `MessageRuntime` 管理，heartbeat 从 SQLite 找出当前 
 
 | 渠道 | 职责 |
 |---|---|
-| **feishu** | 基于 lark SDK 的 WSClient（WebSocket 订阅 5 类消息/生命周期事件 + 卡片 action）。消息归一化为 `AgentEvent`；`senderName=core` 的 Markdown 出站消息使用用户提供的 Card JSON 2.0 DSL（grey header、`meeting-ai_filled` 图标、`core` 副标题），正文原样注入单一 Markdown 元素并使用普通 Markdown 默认字号；动态卡片（agent run indicator / tool execution，30KB 上限，四元素 ID）；`/pair alice` 单联系人配对；DM/群聊策略（disabled/open/allowlist/requireMention）；typing 用 reaction 模拟；`createFeishuPlugin` 总装 |
+| **feishu** | 基于 lark SDK 的 WSClient（WebSocket 订阅 5 类消息/生命周期事件 + 卡片 action）。消息归一化为 `AgentEvent`；入站语音经 ASR 得到有效转写后才投递；`senderName=core` 的 Markdown 出站消息使用用户提供的 Card JSON 2.0 DSL（grey header、`meeting-ai_filled` 图标、`core` 副标题），正文原样注入单一 Markdown 元素并使用普通 Markdown 默认字号；动态卡片（agent run indicator / tool execution，30KB 上限，四元素 ID）；`/pair alice` 单联系人配对；DM/群聊策略（disabled/open/allowlist/requireMention）；typing 用 reaction 模拟；`createFeishuPlugin` 总装 |
 | **wechat** | iLink `getupdates` 长轮询 + cursor 持久化；登录二维码扫码；图片走 CDN AES-128-ECB 加密上传，音频 ffmpeg+silk-wasm 转 SILK；出站仅 text/image/audio，需联系人 contextToken；状态 JSON 文件（`memory-files/indexes/wechat-ilink-state.json`） |
 | **webrtc-voice** | 自研 WebSocket 信令（offer/ICE/speech-state/interrupt/hangup 等）；两个 peer 实现（werift 进程内 / fork 媒体处理子进程）；`createCallState` 通话状态机 + interrupt epoch + TTS producer 输出 pump + 播放队列；ffmpeg 转 Opus RTP 帧；浏览器测试页 |
 | **tts** | 多 provider 路由（router）：转换 provider（OpenAI API/Bailian 百炼/Mimo）+ 本地服务（MOSS 8765 voice-clone、Genie 8767 stream 模式）；LLM 翻译后合成；流式合成与文本切块；preset 体系（core/shell/edit 四档）；纯符号输入返回静音 PCM |
@@ -233,7 +236,7 @@ first-party skill 位于 `capabilities/skills/{name}/SKILL.md`（frontmatter 含
 ## 10. 测试
 
 - 位置 `tests/`，与 src 平行组织（apps/capabilities/channels/contexts/helpers/infra/platform/scripts）。
-- `node:test` + `node:assert/strict`，`npm test` 用 tsx 串行运行；genie_tts 用 python unittest。
+- `node:test` + `node:assert/strict`，`npm test` 通过 `scripts/run-tests.mjs` 用 tsx 串行运行，不输出逐项通过信息，仅在结束时输出通过测试文件/套件数与总数，失败时输出对应测试诊断；genie_tts 用 python unittest。
 - 风格：每域 `*-helpers.ts` 共享夹具；行为断言（状态码/错误码/stdout）而非固定输出格式。
 - Short Memory 相关：`short-memory-store.test.ts`、`short-memory-worker.test.ts`、`session-clear-coordinator.test.ts`、`llm-session-runtime-session-clear.test.ts`、`agent-loop-runtime-session-clear.test.ts`、`chat-agent-session-clear-wait.test.ts`、`talk-session-close-session-clear.test.ts`、`memory-console-session-clear.test.ts`、`admin-routes-clear-api.test.ts`、`prompt-context/short-memory-variable.test.ts`，以及 `admin-routes-memory.test.ts` / `admin-html-memory-shell.test.ts` 的 Short Memory 扩展用例。
 

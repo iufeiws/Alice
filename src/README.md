@@ -118,6 +118,17 @@
 - `adapters/json-core-profile-store.ts`: core profile JSON store，例如 appearanceDescription。
 - `ports/shell-store.ts`: shell store 端口。
 
+## `contexts/control-command/`
+
+职责：统一识别并执行不进入普通消息处理的入站控制命令，当前包括 `/force_wake` 与 `/force_clear`。
+
+不负责：普通消息持久化、Agent loop 回复、LLM 会话存储实现。
+
+关键模块：
+
+- `application/control-command-runtime.ts`：精确匹配控制命令，获取 MainAgent clearing 占用并调用统一会话清除入口；只为 `/force_wake` 执行状态切换、睡眠茧清理和强制唤醒回调。
+- `src/index.ts`：context 对外出口。
+
 ## `contexts/conversation-hub/`
 
 职责：拥有 conversation/message/log 的统一入口，管理消息持久化、消息接入、系统通知落库和发送记录。

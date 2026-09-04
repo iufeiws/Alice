@@ -77,6 +77,7 @@ test("openai stream client cancels when reader.read throws", async () => {
   let cancelled = false;
   globalThis.fetch = async () => ({
     ok: true,
+    headers: new Headers({ "content-type": "text/event-stream" }),
     body: {
       getReader() {
         return {

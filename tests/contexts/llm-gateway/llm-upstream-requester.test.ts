@@ -1,6 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createOpenAIUpstreamRequester, setOpenAICallObserver } from "../../../src/contexts/llm-gateway/src/llm-upstream-requester.js";
+import {
+  createOpenAIUpstreamRequester,
+  setOpenAICallObserver,
+  setOpenAIStreamLoopObserver
+} from "../../../src/contexts/llm-gateway/src/llm-upstream-requester.js";
 import { createApiKeyAuthorization, type RequestAuthorization } from "../../../src/contexts/llm-gateway/src/request-authorization.js";
 
 test("LLM upstream replays one 401 with refreshed OAuth authorization", async () => {
@@ -252,4 +256,46 @@ test("LLM upstream retries a 503 before returning an attempt to Pi relay", async
   assert.equal(attempt.response.status, 200);
   assert.equal(calls, 2);
   attempt.cleanup();
+});
+
+test("LLM upstream cuts a looping consumed SSE response and retries once", async () => {
+  let calls = 0;
+  const loops: unknown[] = [];
+  setOpenAIStreamLoopObserver((event) => { loops.push(event); });
+  try {
+    const request = createOpenAIUpstreamRequester({
+      baseURL: "https://upstream.example/v1",
+      useProxy: true,
+      fetchImpl: async () => {
+        calls += 1;
+        const content = calls === 1 ? "我要".repeat(10) : "retry ok";
+        return new Response([
+          `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}`,
+          "data: [DONE]",
+          ""
+        ].join("\n\n"), { status: 200, headers: { "content-type": "text/event-stream" } });
+      }
+    });
+
+    const body = await request({
+      path: "/chat/completions",
+      init: { method: "POST", body: JSON.stringify({ model: "model-a", stream: true }) },
+      callContext: { agentId: "chat" },
+      consume: (response) => response.text()
+    });
+
+    assert.match(body, /retry ok/);
+    assert.equal(calls, 2);
+    assert.deepEqual(loops, [{
+      baseURL: "https://upstream.example/v1",
+      agentId: "chat",
+      protocol: "openai-chat-completions",
+      requestedModel: "model-a",
+      phrase: "我要",
+      phraseCharacters: 2,
+      repetitions: 10
+    }]);
+  } finally {
+    setOpenAIStreamLoopObserver(undefined);
+  }
 });

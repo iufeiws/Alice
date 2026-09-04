@@ -1,5 +1,6 @@
 import { Agent } from "undici";
 import type { RequestAuthorization } from "./request-authorization.js";
+import { guardOpenAIStreamLoop, LLMStreamLoopError, type LLMStreamLoopMatch } from "./llm-stream-loop-guard.js";
 
 /**
  * Raw OpenAI-compatible upstream transport owned by the LLM gateway.
@@ -36,8 +37,22 @@ export type OpenAICallEvent = {
 type OpenAICallObserver = (event: OpenAICallEvent) => void | Promise<void>;
 let openAICallObserver: OpenAICallObserver | undefined;
 
+export type OpenAIStreamLoopEvent = LLMStreamLoopMatch & {
+  baseURL: string;
+  agentId: string;
+  protocol: "openai-chat-completions" | "openai-responses";
+  requestedModel?: string;
+};
+
+type OpenAIStreamLoopObserver = (event: OpenAIStreamLoopEvent) => void | Promise<void>;
+let openAIStreamLoopObserver: OpenAIStreamLoopObserver | undefined;
+
 export function setOpenAICallObserver(observer: OpenAICallObserver | undefined): void {
   openAICallObserver = observer;
+}
+
+export function setOpenAIStreamLoopObserver(observer: OpenAIStreamLoopObserver | undefined): void {
+  openAIStreamLoopObserver = observer;
 }
 
 export type OpenAIUpstreamAttempt = {
@@ -69,9 +84,10 @@ export function createOpenAIUpstreamRequester(config: {
     input: OpenAIUpstreamRequestInput & { consume?(response: Response): Promise<T> }
   ): Promise<T | OpenAIUpstreamAttempt> {
     let transportRetries = 0;
+    let streamLoopRetries = 0;
     let authorizationRetries = 0;
     let forcedAuthorization: string | undefined;
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
       const target = new URL(`${baseURL}${input.path}`);
       const authorizationValue = forcedAuthorization ?? await authorization?.authorization(target);
       forcedAuthorization = undefined;
@@ -127,13 +143,23 @@ export function createOpenAIUpstreamRequester(config: {
         continue;
       }
 
-      if (openAICallObserver && response.ok && (input.path === "/chat/completions" || input.path === "/responses")) {
+      const protocol = protocolForPath(input.path);
+      const call = {
+        baseURL,
+        agentId: input.callContext?.agentId ?? "llm",
+        requestedModel: requestModel(input.init.body)
+      };
+      if (response.ok && protocol) {
+        response = guardOpenAIStreamLoop(response, protocol, (match) => emitOpenAIStreamLoop({
+          ...call,
+          ...match,
+          protocol
+        }));
+      }
+
+      if (openAICallObserver && response.ok && protocol) {
         try {
-          response = observeOpenAICallResponse(response, {
-            baseURL,
-            agentId: input.callContext?.agentId ?? "llm",
-            requestedModel: requestModel(input.init.body)
-          });
+          response = observeOpenAICallResponse(response, call);
         } catch {}
       }
 
@@ -149,7 +175,14 @@ export function createOpenAIUpstreamRequester(config: {
         cleanup();
         await cancelResponseBody(response);
         controller.abort();
-        if (transportRetries >= 1 || input.signal?.aborted || !response.ok) throw error;
+        if (input.signal?.aborted || !response.ok) throw error;
+        if (error instanceof LLMStreamLoopError) {
+          if (streamLoopRetries >= 1) throw error;
+          streamLoopRetries += 1;
+          await sleep(openAIRetryDelayMs, input.signal);
+          continue;
+        }
+        if (transportRetries >= 1) throw error;
         transportRetries += 1;
         await sleep(openAIRetryDelayMs, input.signal);
       }
@@ -224,6 +257,18 @@ async function emitOpenAICall(event: OpenAICallEvent): Promise<void> {
   try {
     await openAICallObserver?.(event);
   } catch {}
+}
+
+async function emitOpenAIStreamLoop(event: OpenAIStreamLoopEvent): Promise<void> {
+  try {
+    await openAIStreamLoopObserver?.(event);
+  } catch {}
+}
+
+function protocolForPath(path: string): OpenAIStreamLoopEvent["protocol"] | undefined {
+  if (path === "/chat/completions") return "openai-chat-completions";
+  if (path === "/responses") return "openai-responses";
+  return undefined;
 }
 
 function observedSseResult(text: string): Record<string, unknown> {

@@ -1,7 +1,12 @@
 import { createTokenUsageRuntime } from "./token-usage-runtime.js";
 import { createLLMLogRuntime } from "./llm-log-runtime.js";
 import { createModelPriceSync } from "./model-price-sync.js";
-import { setOpenAICallObserver, type OpenAICallEvent } from "./llm-upstream-requester.js";
+import {
+  setOpenAICallObserver,
+  setOpenAIStreamLoopObserver,
+  type OpenAICallEvent,
+  type OpenAIStreamLoopEvent
+} from "./llm-upstream-requester.js";
 
 const UNKNOWN_PROVIDER_ID = "unknown";
 
@@ -26,6 +31,7 @@ export function createLLMObservabilityRuntime(input: {
     appendLog: input.appendLog
   });
   setOpenAICallObserver(recordGatewayCall);
+  setOpenAIStreamLoopObserver(recordStreamLoop);
 
   const llmLogRuntime = createLLMLogRuntime({
     time: input.time,
@@ -95,6 +101,13 @@ export function createLLMObservabilityRuntime(input: {
     } catch (error) {
       warnUsageFailure("LLM usage observation failed", error);
     }
+  }
+
+  function recordStreamLoop(event: OpenAIStreamLoopEvent): void {
+    input.appendLog(
+      "warn",
+      `LLM stream output loop detected: agent=${event.agentId} protocol=${event.protocol} model=${event.requestedModel ?? "unknown"} phrase_characters=${event.phraseCharacters} repetitions=${event.repetitions} phrase=${JSON.stringify(event.phrase)}`
+    );
   }
 
   function warnUsageFailure(message: string, error: unknown): void {

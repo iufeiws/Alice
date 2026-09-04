@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createPiLLMRelay } from "../../../src/contexts/llm-gateway/src/pi-llm-relay.js";
 import type { PiPresetSnapshot } from "../../../src/contexts/llm-gateway/src/pi-preset-adapter.js";
-import { setOpenAICallObserver } from "../../../src/contexts/llm-gateway/src/llm-upstream-requester.js";
+import { setOpenAICallObserver, setOpenAIStreamLoopObserver } from "../../../src/contexts/llm-gateway/src/llm-upstream-requester.js";
 import { createApiKeyAuthorization, setActiveCredentialRuntime } from "../../../src/contexts/llm-gateway/src/index.js";
 
 setActiveCredentialRuntime({ resolveAuthorization: () => createApiKeyAuthorization("upstream-secret") } as any);
@@ -197,6 +197,32 @@ test("relay preserves SSE while the shared upstream seam observes its completion
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(calls.length, 1);
   assert.equal(calls[0].usage.totalTokens, 11);
+});
+
+test("relay cuts a looping SSE at the shared upstream seam so Pi can retry", async (t) => {
+  const loops: any[] = [];
+  setOpenAIStreamLoopObserver((event) => { loops.push(event); });
+  t.after(() => setOpenAIStreamLoopObserver(undefined));
+  const relay = createPiLLMRelay({
+    time,
+    fetchImpl: async () => new Response([
+      `data: ${JSON.stringify({ choices: [{ delta: { content: "我要".repeat(10) } }] })}`,
+      "data: [DONE]",
+      ""
+    ].join("\n\n"), { status: 200, headers: { "content-type": "text/event-stream" } })
+  });
+  relay.createCapability({ sandboxId: "sandbox-a", token: "token-a", preset });
+  const response = await relay.handle(new Request("http://relay/v1/chat/completions", {
+    method: "POST",
+    headers: { authorization: "Bearer token-a" },
+    body: JSON.stringify({ model: "model-a", messages: [], stream: true })
+  }));
+
+  await assert.rejects(response.text(), /llm_stream_output_loop_detected/);
+  assert.equal(loops.length, 1);
+  assert.equal(loops[0].agentId, "pi");
+  assert.equal(loops[0].protocol, "openai-chat-completions");
+  assert.equal(loops[0].phrase, "我要");
 });
 
 test("relay converts a non-stream preset JSON response into SSE for Pi", async () => {

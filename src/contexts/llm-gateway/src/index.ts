@@ -17,6 +17,7 @@ export * from "./llm-request-diff.js";
 export * from "./llm-request-preview-runtime.js";
 export * from "./llm-request-shape.js";
 export * from "./llm-upstream-requester.js";
+export * from "./llm-stream-loop-guard.js";
 export * from "./token-usage-runtime.js";
 export * from "./pi-preset-adapter.js";
 export * from "./pi-llm-relay.js";

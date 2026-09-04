@@ -5,6 +5,8 @@ import { createMessageRuntime } from "../../../src/contexts/conversation-hub/src
 import { createAliceStore } from "../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentEvent } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import { makeTempDir, memoryStore, randomQueue, textEvent, textEventAt, textOutput, waitFor } from "./message-runtime-helpers.js";
+import { createAgentLoopRuntime } from "../../../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js";
+import { createControlCommandRuntime } from "../../../src/contexts/control-command/src/index.js";
 
 const path = await import("node:path");
 
@@ -12,35 +14,48 @@ test("messageRuntime_forceWakeCommand_queuesSleepCocoonForceWakeEvent", async ()
   const store = createAliceStore(path.join(makeTempDir("runtime-force-wake-morning"), "alice.sqlite"));
   const coreInputs: AgentEvent[] = [];
   let morningEvent: AgentEvent | undefined;
+  const agentLoopRuntime = createAgentLoopRuntime();
+  const agentState = {
+    canReplyToInbound: () => true,
+    canRunHeartbeat: () => true,
+    tick() {
+      return { state: "waiting" as const, intimacy: 50, updatedAt: "2026-05-24T00:00:00.000Z", responseDelayMs: 0 };
+    },
+    getSnapshot() {
+      return { state: "waiting" as const, intimacy: 50, updatedAt: "2026-05-24T00:00:00.000Z", responseDelayMs: 0 };
+    },
+    getInboundDelayMs: () => 0,
+    onChange: () => () => {},
+    noteInboundMessage() {
+      return { state: "waiting" as const, intimacy: 50, updatedAt: "2026-05-24T00:00:00.000Z", responseDelayMs: 0 };
+    },
+    setState(state: "waiting") {
+      return { state, intimacy: 50, updatedAt: "2026-05-24T00:00:00.000Z", responseDelayMs: 0 };
+    }
+  };
+  const onForceWake = () => {
+    morningEvent = {
+      ...textEvent("session-1", "sleep_cocoon_force_wake", "force wake"),
+      type: "system.heartbeat" as const,
+      meta: {
+        receivedAt: "2026-05-24T08:00:00.000Z",
+        raw: { agentInitiatedTriggerEvent: "sleep_cocoon.force_wake" }
+      }
+    };
+  };
   const runtime = createMessageRuntime({
     getDelayMs: () => 0,
     getHeartbeatIntervalMs: () => 10,
     startHeartbeatPaused: true,
-    agentState: {
-      canReplyToInbound: () => true,
-      canRunHeartbeat: () => true,
-      tick() {
-        return { state: "waiting", intimacy: 50, updatedAt: "2026-05-24T00:00:00.000Z", responseDelayMs: 0 };
-      },
-      getInboundDelayMs: () => 0,
-      onChange: () => () => {},
-      noteInboundMessage() {
-        return { state: "waiting", intimacy: 50, updatedAt: "2026-05-24T00:00:00.000Z", responseDelayMs: 0 };
-      },
-      setState(state) {
-        return { state, intimacy: 50, updatedAt: "2026-05-24T00:00:00.000Z", responseDelayMs: 0 };
-      }
-    },
-    onForceWake() {
-      morningEvent = {
-        ...textEvent("session-1", "sleep_cocoon_force_wake", "force wake"),
-        type: "system.heartbeat",
-        meta: {
-          receivedAt: "2026-05-24T08:00:00.000Z",
-          raw: { agentInitiatedTriggerEvent: "sleep_cocoon.force_wake" }
-        }
-      };
-    },
+    agentState,
+    agentLoopRuntime,
+    controlCommandRuntime: createControlCommandRuntime({
+      agentLoopRuntime,
+      agentState,
+      clearLLMSession() {},
+      onForceWake,
+      appendLog() {}
+    }),
     clearLLMSession() {},
     getSleepCocoonMorningEvent() {
       const event = morningEvent;

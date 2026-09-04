@@ -5,6 +5,7 @@ import { createAgentLoopRuntime, type AgentLoopRuntime } from "../../../src/cont
 import type { AgentEvent } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import { createAliceStore } from "../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import { asMainAgentActivityContract, requireMainAgentClearAcquisition } from "../agent-loop/agent-loop-runtime-helpers.js";
+import { createControlCommandRuntime } from "../../../src/contexts/control-command/src/index.js";
 import { makeTempDir, textEvent, waitFor } from "./message-runtime-helpers.js";
 
 const path = await import("node:path");
@@ -44,28 +45,37 @@ function makeRuntime(input: {
     nextTransitionAt: "2026-05-26T00:00:00.000Z",
     responseDelayMs: 0
   });
+  const agentState = {
+    canReplyToInbound: () => true,
+    canRunHeartbeat: () => true,
+    getInboundDelayMs: () => 0,
+    getSnapshot: snapshot,
+    tick: snapshot,
+    setState(next: "waiting", options?: { reason?: string }) {
+      input.setStateRecords?.push(`${next}:${options?.reason ?? ""}`);
+      return { state: next, intimacy: 50, updatedAt: "2026-05-26T00:00:00.000Z", responseDelayMs: 0 };
+    },
+    noteInboundMessage: snapshot,
+    noteInboundProcessed: snapshot
+  };
   const runtime = createMessageRuntime({
     getDelayMs: () => 0,
     getHeartbeatIntervalMs: () => 600_000,
     onHeartbeatTick: input.onHeartbeatTick ?? (() => {}),
     now: () => new Date("2026-05-26T00:00:00.000Z"),
     clearLLMSession: input.clearLLMSession ?? (() => {}),
-    onForceWake: input.onForceWake,
     onIdleTimerTransition: input.onIdleTimerTransition,
     agentLoopRuntime: input.agentLoopRuntime,
-    agentState: {
-      canReplyToInbound: () => true,
-      canRunHeartbeat: () => true, // 关键: 状态侧恒可运行; 门控必须来自 Main Agent activity 占用
-      getInboundDelayMs: () => 0,
-      getSnapshot: snapshot,
-      tick: snapshot,
-      setState(next, options) {
-        input.setStateRecords?.push(`${next}:${options?.reason ?? ""}`);
-        return { state: next, intimacy: 50, updatedAt: "2026-05-26T00:00:00.000Z", responseDelayMs: 0 };
-      },
-      noteInboundMessage: snapshot,
-      noteInboundProcessed: snapshot
-    },
+    agentState,
+    controlCommandRuntime: createControlCommandRuntime({
+      agentLoopRuntime: input.agentLoopRuntime,
+      agentState,
+      clearLLMSession: input.clearLLMSession ?? (() => {}),
+      onForceWake: input.onForceWake,
+      appendLog(level, message) {
+        input.logLines.push(`${level}:${message}`);
+      }
+    }),
     store,
     chatAgent: {
       async prepareEventRun() {

@@ -3,6 +3,7 @@ import { buildWorldWandererTargetReachedEvent } from "../../../contexts/conversa
 import { updateEnvFile } from "../../../apps/api/server/env-file.js";
 import type { StoredMessageLog } from "../../../contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import { defaultMessagingPluginConfigPath, formatCheckChatMessages, readMessagingPluginConfig } from "../../../capabilities/tools/messaging/src/index.js";
+import { createControlCommandRuntime } from "../../../contexts/control-command/src/index.js";
 
 export function createMessageRuntimeRuntime(input: {
   config: any;
@@ -31,6 +32,17 @@ export function createMessageRuntimeRuntime(input: {
   processRestartContinuationStore?: any;
   piWorkerRuntime?: { wakeIfNeeded(): Promise<void> };
 }) {
+  const controlCommandRuntime = createControlCommandRuntime({
+    agentLoopRuntime: input.agentLoopRuntime,
+    agentState: input.agentState,
+    clearLLMSession(reason) {
+      return input.chatAgent.clearLLMSession(reason);
+    },
+    onForceWake() {
+      input.queueForceWakeEvent();
+    },
+    appendLog: input.appendLog
+  });
   return createMessageRuntime({
     getDelayMs: () => input.config.core.inboundDebounceMs,
     formatPendingBatch(messages) {
@@ -108,11 +120,9 @@ export function createMessageRuntimeRuntime(input: {
       });
       if (count > 0) input.appendLog("info", `initiated behavior response marked: session=${messageInput.sessionId} count=${count}`);
     },
-    onForceWake() {
-      input.queueForceWakeEvent();
-    },
+    controlCommandRuntime,
     clearLLMSession(reason) {
-      // §7.1: 返回 Promise 使调用方(mode_transition/force_wake 状态切换)能够 await。
+      // §7.1: 返回 Promise 使调用方(mode_transition/control command)能够 await。
       return input.chatAgent.clearLLMSession(reason);
     },
     appendLog: input.appendLog,

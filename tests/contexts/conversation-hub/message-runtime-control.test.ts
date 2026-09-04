@@ -4,6 +4,8 @@ import { createMessageRuntime } from "../../../src/contexts/conversation-hub/src
 import { createAliceStore } from "../../../src/contexts/conversation-hub/src/adapters/sqlite-conversation-store.js";
 import type { AgentEvent, AgentOutput } from "../../../src/contexts/agent-loop/src/contracts/agent-contracts.js";
 import { makeTempDir, textEvent, textOutput, waitFor } from "./message-runtime-helpers.js";
+import { createAgentLoopRuntime } from "../../../src/contexts/agent-loop/src/runtime/agent-loop-runtime.js";
+import { createControlCommandRuntime } from "../../../src/contexts/control-command/src/index.js";
 
 const path = await import("node:path");
 
@@ -372,24 +374,38 @@ test("messageRuntime_forceWakeCommand_setsWaitingAndSkipsChatAgent", async () =>
   const coreInputs: AgentEvent[] = [];
   const states: string[] = [];
   const clearedReasons: string[] = [];
+  const agentLoopRuntime = createAgentLoopRuntime();
+  const agentState = {
+    canReplyToInbound: () => true,
+    canRunHeartbeat: () => true,
+    tick() {
+      return { state: "waiting" as const, intimacy: 50, updatedAt: "2026-05-24T00:00:00.000Z", responseDelayMs: 0 };
+    },
+    getSnapshot() {
+      return { state: "waiting" as const, intimacy: 50, updatedAt: "2026-05-24T00:00:00.000Z", responseDelayMs: 0 };
+    },
+    getInboundDelayMs: () => 0,
+    onChange: () => () => {},
+    noteInboundMessage() {
+      return { state: "waiting" as const, intimacy: 50, updatedAt: "2026-05-24T00:00:00.000Z", responseDelayMs: 0 };
+    },
+    setState(state: "waiting", options?: { reason?: string; clearSleepCocoon?: boolean }) {
+      states.push(`${state}:${options?.reason ?? ""}:${options?.clearSleepCocoon === true ? "clear" : "keep"}`);
+      return { state, intimacy: 50, updatedAt: "2026-05-24T00:00:00.000Z", responseDelayMs: 0 };
+    }
+  };
   const runtime = createMessageRuntime({
     getDelayMs: () => 0,
-    agentState: {
-      canReplyToInbound: () => true,
-      canRunHeartbeat: () => true,
-      tick() {
-        return { state: "waiting", intimacy: 50, updatedAt: "2026-05-24T00:00:00.000Z", responseDelayMs: 0 };
+    agentState,
+    agentLoopRuntime,
+    controlCommandRuntime: createControlCommandRuntime({
+      agentLoopRuntime,
+      agentState,
+      clearLLMSession(reason) {
+        clearedReasons.push(reason);
       },
-      getInboundDelayMs: () => 0,
-      onChange: () => () => {},
-      noteInboundMessage() {
-        return { state: "waiting", intimacy: 50, updatedAt: "2026-05-24T00:00:00.000Z", responseDelayMs: 0 };
-      },
-      setState(state, options) {
-        states.push(`${state}:${options?.reason ?? ""}:${options?.clearSleepCocoon === true ? "clear" : "keep"}`);
-        return { state, intimacy: 50, updatedAt: "2026-05-24T00:00:00.000Z", responseDelayMs: 0 };
-      }
-    },
+      appendLog() {}
+    }),
     store,
     chatAgent: {
       async prepareEventRun(event) {
@@ -414,4 +430,43 @@ test("messageRuntime_forceWakeCommand_setsWaitingAndSkipsChatAgent", async () =>
   assert.deepEqual(clearedReasons, ["force_wake"]);
   assert.equal(coreInputs.length, 0);
   assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 0);
+});
+
+test("messageRuntime_forceClearCommand_skipsConversationHistoryAndChatAgent", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-force-clear"), "alice.sqlite"));
+  const agentLoopRuntime = createAgentLoopRuntime();
+  const coreInputs: AgentEvent[] = [];
+  const clearedReasons: string[] = [];
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 0,
+    agentLoopRuntime,
+    controlCommandRuntime: createControlCommandRuntime({
+      agentLoopRuntime,
+      clearLLMSession(reason) {
+        clearedReasons.push(reason);
+      },
+      appendLog() {}
+    }),
+    clearLLMSession() {},
+    store,
+    chatAgent: {
+      async prepareEventRun(event) {
+        coreInputs.push(event);
+        return [];
+      }
+    },
+    outputRouter: { async sendAll() {} },
+    appendLog() {},
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  await runtime.ingestEvent(textEvent("session-1", "om_force_clear", "/force_clear"));
+
+  assert.deepEqual(clearedReasons, ["force_clear"]);
+  assert.equal(coreInputs.length, 0);
+  assert.equal(store.listMessagesForConversation("session-1", 10).length, 0);
+  assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 0);
+  await runtime.flushAll();
 });

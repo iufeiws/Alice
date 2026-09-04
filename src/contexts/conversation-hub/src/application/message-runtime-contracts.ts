@@ -5,6 +5,7 @@ import type { AgentStateController } from "../../../../contexts/agent-loop/src/d
 import type { AgentInitiatedBehaviorPlan } from "../../../../contexts/initiative/src/domain/initiated-behavior.js";
 import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js";
 import type { ProcessRestartContinuationStore } from "../../../agent-loop/src/adapters/json-process-restart-continuation-store.js";
+import type { ControlCommandRuntime } from "../../../control-command/src/index.js";
 import type {
   InsertOutboundMessageInput,
   StoredConversationMessage,
@@ -34,7 +35,7 @@ export type MessageRuntimeDeps = {
     userId?: string;
     sessionId: string;
   } | undefined;
-  onForceWake?: () => void;
+  controlCommandRuntime?: ControlCommandRuntime;
   onInboundUserMessage?: (input: { sessionId: string; receivedAt: string; receivedAtUtc?: string }) => void;
   clearLLMSession(reason: LLMSessionClearReason): void | Promise<void>;
   isLLMSessionActive?: () => boolean;

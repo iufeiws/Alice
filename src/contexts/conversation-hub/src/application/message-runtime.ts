@@ -203,6 +203,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
   return {
     ingestEvent(event) {
       event = normalizeInboundEvent(event);
+      if (isEmptyInboundMessage(event)) {
+        deps.appendLog("info", `empty inbound dropped: plugin=${event.source.plugin} kind=${event.payload.kind} session=${event.externalSession.sessionId}`);
+        return Promise.resolve();
+      }
       const persisted = persistInboundAttachment(event, deps);
       if (isPromise(persisted)) return persisted.then(ingestStoredEvent);
       ingestStoredEvent(persisted);
@@ -289,6 +293,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       agentLoopRuntime.setInboundUserMessageInterruptSource(undefined);
     }
   };
+
+  function isEmptyInboundMessage(event: AgentEvent): boolean {
+    if (event.payload.kind === "text") return event.payload.text.length === 0;
+    return event.payload.kind === "audio" && !event.payload.transcript;
+  }
+
   async function ingestStoredEvent(event: AgentEvent): Promise<void> {
     const contentText = summarizeEventPayload(event);
     deps.appendMessageLog({
@@ -303,35 +313,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       rawJson: safeJson(event.meta.raw),
       summary: contentText
     });
-    if (event.payload.kind === "text" && event.payload.text.trim() === "/force_wake") {
-      const wasSleeping = deps.agentState?.getSnapshot?.().state === "sleeping";
-      // §7.1/§10: force_wake 先获取 clearing 占用，再改变状态并清除会话。
-      // 已占用时拒绝本次唤醒，不得提前切换 waiting 或清除 sleep cocoon。
-      const acquisition = agentLoopRuntime.beginClearSession({
-        kind: "chat",
-        sessionId: event.externalSession.sessionId
-      });
-      if (!acquisition.acquired) {
-        deps.appendLog("warn", `force wake skipped: main agent busy ${event.externalSession.sessionId}`);
-        return;
-      }
-      try {
-        await deps.clearLLMSession("force_wake");
-      } catch (error) {
-        deps.appendLog("error", `force wake llm session clear failed: ${error instanceof Error ? error.message : String(error)}`);
-        return;
-      } finally {
-        acquisition.release();
-      }
-      deps.agentState?.setState?.("waiting", { reason: "force_wake", clearSleepCocoon: true });
-      const wakeReady = wasSleeping ? deps.agentState?.waitForWake?.() : undefined;
-      void Promise.resolve(wakeReady).then(
-        () => deps.onForceWake?.(),
-        (error) => deps.appendLog("error", `sandbox restart on force wake failed: ${error instanceof Error ? error.message : String(error)}`)
-      );
-      deps.appendLog("info", `force wake command handled: ${event.externalSession.sessionId}`);
-      return;
-    }
+    const controlCommandResult = deps.controlCommandRuntime?.handle(event);
+    if (controlCommandResult && await controlCommandResult) return;
     const receivedAt = event.meta.receivedAt;
     const receivedAtUtc = event.meta.receivedAtUtc;
     deps.store.upsertInboundMessage({
@@ -346,8 +329,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       createdAt: receivedAt,
       createdAtUtc: receivedAtUtc,
       lastEventAt: receivedAt,
-      lastEventAtUtc: receivedAtUtc,
-      coreProcessedAt: shouldProcessInboundWithCore(event) ? undefined : receivedAt
+      lastEventAtUtc: receivedAtUtc
     });
     deps.onInboundUserMessage?.({
       sessionId: event.externalSession.sessionId,
@@ -355,10 +337,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): MessageRuntime {
       receivedAtUtc
     });
     latestSessionEvents.set(event.externalSession.sessionId, event);
-  }
-  function shouldProcessInboundWithCore(event: AgentEvent): boolean {
-    if (event.payload.kind === "text") return true;
-    return event.payload.kind === "audio" && typeof event.payload.transcript === "string" && event.payload.transcript.trim().length > 0;
   }
   function startManualSession(): boolean {
     const target = deps.getProcessNowTarget?.();

@@ -1,7 +1,7 @@
 import type { LLMChatInput } from "../../../llm-gateway/src/index.js";
 import type { ChatAgentLoopSession } from "./run-chat-loop.js";
 
-export type LLMSessionClearReason = "prompt_static_changed" | "admin_clear" | "admin_cancel" | "mode_transition" | "mode_timeout" | "yield_end" | "process_restart_recovery_failed" | "force_wake";
+export type LLMSessionClearReason = "prompt_static_changed" | "admin_clear" | "admin_cancel" | "mode_transition" | "mode_timeout" | "yield_end" | "process_restart_recovery_failed" | "force_wake" | "force_clear";
 
 export type LLMSessionSnapshot = {
   id?: number;

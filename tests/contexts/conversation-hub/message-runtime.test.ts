@@ -300,6 +300,34 @@ test("messageRuntime_audioTranscriptInbound_processesTranscript", async () => {
   assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 0);
 });
 
+test("messageRuntime drops blank text and audio without a transcript before persistence", async () => {
+  const store = createAliceStore(path.join(makeTempDir("runtime-empty-inbound"), "alice.sqlite"));
+  const logs: string[] = [];
+  const runtime = createMessageRuntime({
+    getDelayMs: () => 0,
+    startHeartbeatPaused: true,
+    clearLLMSession() {},
+    store,
+    chatAgent: { async prepareEventRun() { return []; } },
+    outputRouter: { async sendAll() {} },
+    appendLog(_level, message) { logs.push(message); },
+    appendMessageLog(input) {
+      return store.insertMessageLog({ time: new Date().toISOString(), ...input });
+    }
+  });
+
+  await runtime.ingestEvent(textEvent("session-1", "om_blank", "  \n\t"));
+  await runtime.ingestEvent(messageEvent("session-1", "om_silent_audio", {
+    kind: "audio",
+    assetId: "assets/chat_files/silent.opus"
+  }));
+
+  assert.equal(store.listMessagesForConversation("session-1", 10).length, 0);
+  assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 0);
+  assert.equal(logs.filter((message) => message.startsWith("empty inbound dropped:")).length, 2);
+  await runtime.flushAll();
+});
+
 test("messageRuntime_agentStateDelay_recordsInboundActivity", async () => {
   const store = createAliceStore(path.join(makeTempDir("runtime-state-delay"), "alice.sqlite"));
   const coreInputs: AgentEvent[] = [];
@@ -575,7 +603,7 @@ test("messageRuntime_flushAllWithGatedInbound_stopsHeartbeatWithoutProcessing", 
   assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).length, 1);
 });
 
-test("heartbeat 从 MessageRuntime pending batch 向活动 Chat 插入且不标记已读", async () => {
+test("heartbeat 将活动 Chat 期间收到的所有用户消息类型插入且不标记已读", async () => {
   const store = createAliceStore(path.join(makeTempDir("runtime-active-chat-pending-batch"), "alice.sqlite"));
   const agentLoopRuntime = createAgentLoopRuntime();
   const formatted: string[] = [];
@@ -656,21 +684,65 @@ test("heartbeat 从 MessageRuntime pending batch 向活动 Chat 插入且不标�
 
   await runtime.ingestEvent(textEvent("session-1", "om_initial", "initial"));
   await waitFor(() => agentLoopRuntime.getActiveMainLLMSession()?.phase === "running");
-  await runtime.ingestEvent(textEvent("session-1", "om_during_chat", "during chat"));
+  const duringChatEvents: AgentEvent[] = [
+    textEvent("session-1", "om_text", "during chat"),
+    messageEvent("session-1", "om_markdown", { kind: "markdown", markdown: "**markdown**" }),
+    messageEvent("session-1", "om_image", { kind: "image", assetId: "assets/chat_files/image.png" }),
+    messageEvent("session-1", "om_audio", { kind: "audio", assetId: "assets/chat_files/voice.opus", transcript: "voice text" }),
+    messageEvent("session-1", "om_file", { kind: "file", assetId: "assets/chat_files/report.pdf", filename: "report.pdf" }),
+    messageEvent("session-1", "om_link", { kind: "link", url: "https://example.com" }),
+    messageEvent("session-1", "om_card", { kind: "card_action", actionId: "confirm", values: { confirmed: true } })
+  ];
+  for (const event of duringChatEvents) await runtime.ingestEvent(event);
   assert.deepEqual(formatted, [], "IM ingress 只入库，不直接构造插入内容");
 
   await new Promise((resolve) => setTimeout(resolve, 30));
   assert.deepEqual(formatted, [], "heartbeat 只把 batch 暴露给活动 Chat，尚未到插入点时不结算");
-  assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).some((message) => message.externalMessageId === "om_during_chat"), true);
+  const insertedIds = new Set(duringChatEvents.map((event) => event.source.rawMessageId));
+  assert.deepEqual(
+    store.listUnprocessedCoreMessagesForConversation("session-1", 20)
+      .filter((message) => insertedIds.has(message.externalMessageId))
+      .map((message) => message.contentType),
+    ["text", "markdown", "image", "audio", "file", "link", "card_action"]
+  );
 
   releaseChat?.();
   await waitFor(() => formatted.length === 1);
-  assert.equal(formatted[0], "during chat");
-  assert.equal(requests[1].at(-1).content, "<new_message>\nduring chat\n</new_message>");
-  const duringChat = store.listMessagesForConversation("session-1", 10).find((message) => message.externalMessageId === "om_during_chat");
-  assert.equal(Boolean(duringChat?.isRead), false, "插入 Chat 不改变 isRead");
-  assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 10).some((message) => message.externalMessageId === "om_during_chat"), false);
+  const expectedContent = [
+    "during chat",
+    "**markdown**",
+    "assets/chat_files/image.png",
+    "[语音]voice text",
+    "assets/chat_files/report.pdf",
+    "https://example.com",
+    "card_action"
+  ].join("\n");
+  assert.equal(formatted[0], expectedContent);
+  assert.equal(requests[1].at(-1).content, `<new_message>\n${expectedContent}\n</new_message>`);
+  const insertedMessages = store.listMessagesForConversation("session-1", 20).filter((message) => insertedIds.has(message.externalMessageId));
+  assert.equal(insertedMessages.every((message) => !message.isRead), true, "插入 Chat 不改变 isRead");
+  assert.equal(store.listUnprocessedCoreMessagesForConversation("session-1", 20).length, 0);
 
   await waitFor(() => agentLoopRuntime.getActiveMainLLMSession()?.phase === "idle");
   await runtime.flushAll();
 });
+
+function messageEvent(sessionId: string, rawMessageId: string, payload: AgentEvent["payload"]): AgentEvent {
+  return {
+    id: `evt_${rawMessageId}`,
+    source: {
+      plugin: "feishu",
+      accountId: "main",
+      channelId: "chat",
+      userId: "user",
+      rawMessageId
+    },
+    externalSession: { scope: "dm", sessionId },
+    type: `message.${payload.kind}` as AgentEvent["type"],
+    payload,
+    meta: {
+      receivedAt: "2026-05-24T00:00:00.000Z",
+      replyTo: rawMessageId
+    }
+  };
+}

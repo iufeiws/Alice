@@ -185,6 +185,8 @@ export type FeishuDynamicCardClient = {
   isStarted(): boolean;
   createApprovalCard(input: { accountId?: string; receiveIdType: "open_id"; receiveId: string; requestId: string; title: string; content: string }): Promise<{ messageId: string; cardId: string }>;
   deleteMessage(input: { accountId?: string; messageId: string }): Promise<void>;
+  pinMessage(input: { accountId?: string; messageId: string }): Promise<void>;
+  unpinMessage(input: { accountId?: string; messageId: string }): Promise<void>;
   createAgentRunCard(input: { accountId?: string; receiveIdType: "open_id"; receiveId: string; blocks: FeishuAgentRunCardBlocks }): Promise<{ messageId: string; cardId: string }>;
   updateAgentRunCardBlocks(input: { accountId?: string; cardId: string; blocks: Partial<FeishuAgentRunCardBlocks>; sequence: number }): Promise<void>;
   setAgentRunCardStreaming(input: { accountId?: string; cardId: string; enabled: boolean; sequence: number }): Promise<void>;

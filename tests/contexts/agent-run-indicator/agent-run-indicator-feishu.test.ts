@@ -487,6 +487,70 @@ test("Feishu agent run indicator creates a fresh card on demand", async () => {
     content: "old answer",
     tools: ""
   });
+  assert.deepEqual(
+    client.calls.filter((call) => call.kind === "pin" || call.kind === "unpin"),
+    [
+      { kind: "pin", messageId: "om_new" },
+      { kind: "unpin", messageId: "om_old" }
+    ]
+  );
+});
+
+test("Feishu agent run indicator pin failures only warn and preserve the fresh card", async () => {
+  const store = memoryCardStore({
+    messageId: "om_old",
+    cardId: "card_old",
+    layoutVersion: CARD_LAYOUT_VERSION,
+    nextSequence: 7,
+    updatedAt: "2026-06-28T00:00:00.000Z",
+    state: "idle"
+  });
+  const client = fakeCardClient();
+  client.pinMessage = async () => { throw new Error("pin unavailable"); };
+  client.unpinMessage = async () => { throw new Error("unpin unavailable"); };
+  const warnings: string[] = [];
+  const indicator = createTestFeishuIndicator({
+    client,
+    cardStore: store,
+    log(level, message) {
+      if (level === "warn") warnings.push(message);
+    }
+  });
+
+  await indicator.createFreshCard?.();
+
+  assert.equal(store.read()?.messageId, "om_new");
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0]!, /pin unavailable/);
+  assert.match(warnings[1]!, /unpin unavailable/);
+});
+
+test("Feishu agent run indicator fresh-card creation failure only warns", async () => {
+  const store = memoryCardStore({
+    messageId: "om_old",
+    cardId: "card_old",
+    layoutVersion: CARD_LAYOUT_VERSION,
+    nextSequence: 7,
+    updatedAt: "2026-06-28T00:00:00.000Z",
+    state: "idle"
+  });
+  const client = fakeCardClient();
+  client.createAgentRunCard = async () => { throw new Error("card unavailable"); };
+  const warnings: string[] = [];
+  const indicator = createTestFeishuIndicator({
+    client,
+    cardStore: store,
+    log(level, message) {
+      if (level === "warn") warnings.push(message);
+    }
+  });
+
+  await indicator.createFreshCard?.();
+
+  assert.equal(store.read()?.messageId, "om_old");
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0]!, /card unavailable/);
+  assert.equal(client.calls.some((call) => call.kind === "pin" || call.kind === "unpin"), false);
 });
 
 test("Feishu agent run indicator is unavailable without a unique paired open_id target", async () => {

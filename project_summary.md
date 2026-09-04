@@ -85,7 +85,7 @@ src/
 | **pi-worker** | Pi worker 客户端（授权握手、后台唤起 wake、tool relay、健康轮询）；按 invocation 内最后一轮 assistant 终态判定 completed/failed，重试期间保留 running；SubAgent 对外使用持久化 nickname（来自 `runtime/pi-agent-names.txt`，空格替换为 `_`），映射写入 Pi session 根目录，池满时淘汰最早映射，worker 启动时清除 30 天前映射；内部 watcher 仍按真实 sessionId 读取状态；SubAgent 的 result/wait 返回完成 message 或运行/终态状态，messages 保留 access 语义并返回 Pi 原始 message；无效输入错误会指出未知 action、意外参数、缺失/无效字段等具体原因；未显式传入 timeout 时，SubAgent invocation 默认 6 小时超时；Read/Write/Edit/Bash 的 worker HTTP 错误仅向上抛出响应体中的具体 `error`，不再包装 tool 错误码和 HTTP 状态码 |
 | **approval** | 基于飞书动态卡片的一对一审批服务（含卡片动作回调鉴权） |
 | **skills** | 技能注册表/加载器/占位符/资源路径 |
-| **agent-run-indicator** | Agent run 指示器抽象（begin/setTyping/fail）+ 飞书动态卡片与 tool 执行上报适配器。Tool execution reporter 持有一个与 session 无关的全局内存消息 ID 游标，每次 tool call 直接查询数据库中最新的已发送 assistant 消息或已读 user 消息 ID；未读 user 消息不参与分界。查询 ID 与内存游标不同时新建卡片并更新游标。游标初始为 null 且不持久化，重启后首个 tool call 新建卡片。工具执行卡片的创建、分组、更新和 streaming 设置不写系统日志 |
+| **agent-run-indicator** | Agent run 指示器抽象（begin/setTyping/fail）+ 飞书动态卡片与 tool 执行上报适配器。正常醒来会新建状态面板、Pin 新面板并取消前一面板的 Pin；该醒来面板整条附属流程为 best-effort，失败只写 warning，不阻断唤醒，创建失败时保留旧面板记录。Tool execution reporter 持有一个与 session 无关的全局内存消息 ID 游标，每次 tool call 直接查询数据库中最新的已发送 assistant 消息或已读 user 消息 ID；未读 user 消息不参与分界。查询 ID 与内存游标不同时新建卡片并更新游标。游标初始为 null 且不持久化，重启后首个 tool call 新建卡片。工具执行卡片的创建、分组、更新和 streaming 设置不写系统日志 |
 | **persona / wardrobe** | 纯类型与工具函数（persona 快照；outfit 选择/查找） |
 
 Interrupt batch 由 `MessageRuntime` 管理，heartbeat 从 SQLite 找出当前 Chat 初始输入以外的新 pending 消息并加入 batch；AgentLoop 只通过 interrupt source 判断和拉取已格式化文本，不持有原消息信息。只有 function-call loop 到达真实插入点并拉取文本时才标记对应消息 `coreProcessed`，不会改变 `isRead`；真实执行 `Chat poll` 才标记已读并清空尚未插入的 batch。Yield 与 Interrupt 同时发生时，Yield 仅写入已包含 `Chat poll` 内容的恢复 tool result、丢弃对应 Interrupt 并继续同一 loop，不再重复插入 `<new_message>`。

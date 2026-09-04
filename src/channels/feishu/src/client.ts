@@ -309,6 +309,18 @@ export function createFeishuClient(config: FeishuConfig, accountId: string, deps
       if (result?.code && result.code !== 0) throw new Error(`Feishu message delete failed (code=${result.code} msg=${result.msg ?? "unknown"})`);
       deps.log?.("info", `[${tag}] deleted message ${input.messageId}`);
     },
+    async pinMessage(input) {
+      assertStarted(client);
+      const result = await client.im.v1.pin.create({ data: { message_id: input.messageId } });
+      if (result?.code && result.code !== 0) throw new Error(`Feishu message pin failed (code=${result.code} msg=${result.msg ?? "unknown"})`);
+      deps.log?.("info", `[${tag}] pinned message ${input.messageId}`);
+    },
+    async unpinMessage(input) {
+      assertStarted(client);
+      const result = await client.im.v1.pin.delete({ path: { message_id: input.messageId } });
+      if (result?.code && result.code !== 0) throw new Error(`Feishu message unpin failed (code=${result.code} msg=${result.msg ?? "unknown"})`);
+      deps.log?.("info", `[${tag}] unpinned message ${input.messageId}`);
+    },
     async createAgentRunCard(input) {
       assertStarted(client);
       const card = await client.cardkit.v1.card.create({

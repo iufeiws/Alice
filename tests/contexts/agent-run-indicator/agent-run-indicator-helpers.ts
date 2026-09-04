@@ -29,6 +29,8 @@ export type CardCall =
   | { kind: "update-blocks"; cardId: string; blocks: Partial<CardBlocks>; sequence: number }
   | { kind: "stream"; cardId: string; enabled: boolean; sequence: number }
   | { kind: "convert"; messageId: string }
+  | { kind: "pin"; messageId: string }
+  | { kind: "unpin"; messageId: string }
   | { kind: "tool-create"; receiveId: string; toolName: string }
   | { kind: "tool-append"; cardId: string; toolName: string; sequence: number }
   | { kind: "tool-update"; cardId: string; block: string; content: string; sequence: number }
@@ -109,6 +111,12 @@ export function fakeCardClient(): FeishuDynamicCardClient & { calls: CardCall[] 
     async deleteMessage() {
       throw new Error("unused");
     },
+    async pinMessage(input) {
+      calls.push({ kind: "pin", messageId: input.messageId });
+    },
+    async unpinMessage(input) {
+      calls.push({ kind: "unpin", messageId: input.messageId });
+    },
     async createAgentRunCard(input) {
       calls.push({ kind: "create", receiveId: input.receiveId, blocks: { ...input.blocks } });
       return { messageId: "om_new", cardId: "card_new" };
@@ -180,6 +188,7 @@ export function createTestFeishuIndicator(input: {
   throttleMs?: number;
   resolveAccount?: () => string | undefined;
   getState?: () => { state: string; last?: string };
+  log?: (level: "info" | "warn" | "error", message: string) => void;
 }) {
   return createFeishuDynamicCardAgentRunIndicator({
     enabled: input.enabled ?? (() => true),
@@ -189,7 +198,8 @@ export function createTestFeishuIndicator(input: {
     time: createCurrentTimeProvider("UTC", () => new Date(fixedNow)),
     throttleMs: input.throttleMs,
     resolveAccount: input.resolveAccount,
-    getState: input.getState ?? (() => ({ state: "waiting" }))
+    getState: input.getState ?? (() => ({ state: "waiting" })),
+    log: input.log
   });
 }
 

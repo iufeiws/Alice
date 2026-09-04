@@ -98,6 +98,8 @@ export function createFeishuPlugin(config: FeishuConfig, deps: FeishuPluginDeps)
     isStarted: () => [...monitors.values()].some((monitor) => monitor.isStarted()),
     createApprovalCard: (input) => resolveMonitorFor(input.accountId).createApprovalCard(input),
     deleteMessage: (input) => resolveMonitorFor(input.accountId).deleteMessage(input),
+    pinMessage: (input) => resolveMonitorFor(input.accountId).pinMessage(input),
+    unpinMessage: (input) => resolveMonitorFor(input.accountId).unpinMessage(input),
     createAgentRunCard: (input) => resolveMonitorFor(input.accountId).createAgentRunCard(input),
     updateAgentRunCardBlocks: (input) => resolveMonitorFor(input.accountId).updateAgentRunCardBlocks(input),
     setAgentRunCardStreaming: (input) => resolveMonitorFor(input.accountId).setAgentRunCardStreaming(input),

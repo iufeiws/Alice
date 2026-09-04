@@ -99,10 +99,19 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
       await ensureCard(contact.userId, contact.accountId, { ...blocksFromRecord(input.cardStore.read() ?? {}), state: stateLabel(input.getState?.()) });
     },
     async createFreshCard() {
-      if (!input.enabled() || !input.client.isStarted()) return;
-      const contact = pairedFeishuContact(input.resolveAccount?.());
-      if (!contact?.userId) return;
-      await createCard(contact.userId, contact.accountId, { ...blocksFromRecord(input.cardStore.read() ?? {}), state: stateLabel(input.getState?.()) });
+      try {
+        if (!input.enabled() || !input.client.isStarted()) return;
+        const contact = pairedFeishuContact(input.resolveAccount?.());
+        if (!contact?.userId) return;
+        const previous = input.cardStore.read();
+        const card = await createCard(contact.userId, contact.accountId, { ...blocksFromRecord(previous ?? {}), state: stateLabel(input.getState?.()) });
+        await bestEffortPin(card);
+        if (previous?.messageId && previous.messageId !== card.messageId) {
+          await bestEffortUnpin(previous.messageId, previous.accountId ?? contact.accountId);
+        }
+      } catch (error) {
+        input.log?.("warn", `[agent-run-indicator] failed to create fresh Feishu indicator card: ${errorMessage(error)}`);
+      }
     },
     async begin(beginInput) {
       if (!input.enabled() || !input.client.isStarted()) return undefined;
@@ -316,6 +325,22 @@ export function createFeishuDynamicCardAgentRunIndicator(input: FeishuAgentRunIn
     };
     persistCard(card);
     return card;
+  }
+
+  async function bestEffortPin(card: ActiveCard): Promise<void> {
+    try {
+      await input.client.pinMessage({ messageId: card.messageId, accountId: card.accountId });
+    } catch (error) {
+      input.log?.("warn", `[agent-run-indicator] failed to pin fresh Feishu indicator card ${card.messageId}: ${errorMessage(error)}`);
+    }
+  }
+
+  async function bestEffortUnpin(messageId: string, accountId: string | undefined): Promise<void> {
+    try {
+      await input.client.unpinMessage({ messageId, accountId });
+    } catch (error) {
+      input.log?.("warn", `[agent-run-indicator] failed to unpin previous Feishu indicator card ${messageId}: ${errorMessage(error)}`);
+    }
   }
 
   async function updateStreaming(card: ActiveCard, enabled: boolean): Promise<void> {

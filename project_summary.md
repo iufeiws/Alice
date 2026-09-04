@@ -116,7 +116,7 @@ Interrupt batch 由 `MessageRuntime` 管理，heartbeat 从 SQLite 找出当前 
 | calendar | `calendar` | 日历增删查搜 + 上下文渲染（SQLite CalendarStore） |
 | shell | `Bash` | 沙盒 bash 执行（透传 PiWorker） |
 | file | `Read`/`Write`/`Edit`/`Glob` | 文件读写改查（图片转 llmFollowupAttachments） |
-| location | Panorama | 街景与世界漫游：current 查看当前位置/send 将当前 pano 图片经统一输出目标发送并入库（不标记 `sendsMessage`）/teleport 传送重置轨迹/navigation 设导航目标 |
+| location | Panorama | 街景与世界漫游：current 查看当前位置/send 将当前 pano 图片经统一输出目标发送并入库（不标记 `sendsMessage`）/move 复用 World Wanderer 选路公式执行一次移动/teleport 传送重置轨迹/navigation 设导航目标 |
 | restart | `restart` | 重启 Alice 服务（systemd） |
 | subagent | `SubAgent` | 持久化 SubAgent 会话（spawn/messages/result/send/status/wait/cancel/fork，走 PiWorker；公开会话标识使用 nickname，messages 保留 access 语义并返回 Pi 原始 message） |
 | skills | `Skill` | 按名称加载技能（XML 输出） |

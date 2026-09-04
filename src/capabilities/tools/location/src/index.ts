@@ -3,6 +3,7 @@ import type { CurrentTimeProvider } from "../../../../shared/clock/src/index.js"
 import type { ToolOutputTargetResolver } from "../../../../contexts/capabilities/src/tool-output-target.js";
 import {
   defaultWorldWandererPluginConfigPath,
+  createWorldWandererRuntime,
   pathEntryFromPano,
   readWorldWandererConfig,
   readWorldWandererState,
@@ -27,6 +28,7 @@ export type LocationToolsDeps = {
   outputRouter?: PhotoSendDeps["outputRouter"];
   resolveOutputTarget?: ToolOutputTargetResolver;
   appendMessageLog?: PhotoSendDeps["appendMessageLog"];
+  random?(): number;
 };
 
 export function createLocationTools(deps: LocationToolsDeps): ToolPlugin {
@@ -40,7 +42,7 @@ export function createLocationTools(deps: LocationToolsDeps): ToolPlugin {
       const config = readWorldWandererConfig(deps.configPath);
       if (!config.enabled) return toolError(call, locationToolText.unavailable);
       const action = call.input.action;
-      if (action !== "current" && action !== "send" && action !== "teleport" && action !== "navigation") {
+      if (action !== "current" && action !== "send" && action !== "move" && action !== "teleport" && action !== "navigation") {
         return toolError(call, locationToolText.invalidAction);
       }
       if (action === "teleport" || action === "navigation") {
@@ -54,7 +56,9 @@ export function createLocationTools(deps: LocationToolsDeps): ToolPlugin {
           ? executeTeleport(call, config, lat, lng)
           : executeNavigation(call, config, lat, lng);
       }
-      return action === "send" ? executeSend(call, config) : executeCurrent(call, config);
+      if (action === "send") return executeSend(call, config);
+      if (action === "move") return executeMove(call);
+      return executeCurrent(call, config);
     }
   };
 
@@ -99,6 +103,20 @@ export function createLocationTools(deps: LocationToolsDeps): ToolPlugin {
       appendMessageLog: deps.appendMessageLog
     }, deps.time, target, streetView.assetId);
     return { callId: call.id, ok: true, output: streetView.assetId };
+  }
+
+  async function executeMove(call: ToolCall): Promise<ToolResult> {
+    const before = readWorldWandererState(deps.dbPath, readWorldWandererConfig(deps.configPath));
+    const runtime = createWorldWandererRuntime({
+      configPath: deps.configPath,
+      dbPath: deps.dbPath,
+      googleStreetView: deps.getGoogleStreetView(),
+      now: () => new Date(deps.now()),
+      ...(deps.random ? { random: deps.random } : {})
+    });
+    const after = await runtime.runIdleTransition({ delayMs: 0 });
+    if (!after || after.panoId === before.panoId) return toolError(call, locationToolText.moveUnavailable);
+    return { callId: call.id, ok: true, output: JSON.stringify({ lat: after.location.lat, lng: after.location.lng }) };
   }
 
   async function executeTeleport(call: ToolCall, config: WorldWandererConfig, lat: number, lng: number): Promise<ToolResult> {

@@ -59,7 +59,7 @@ test("Panorama schema uses an action enum with optional coordinates", () => {
   };
   assert.equal(inputSchema.type, "object");
   assert.equal(inputSchema.properties.action.type, "string");
-  assert.deepEqual(inputSchema.properties.action.enum, ["current", "send", "teleport", "navigation"]);
+  assert.deepEqual(inputSchema.properties.action.enum, ["current", "send", "move", "teleport", "navigation"]);
   assert.deepEqual(inputSchema.required, ["action"]);
   assert.equal(inputSchema.additionalProperties, false);
   assert.equal(inputSchema.properties.lat.type, "number");
@@ -253,6 +253,112 @@ test("Panorama send sends and persists the current pano image without counting t
     contentText: "plugin/google-streetview/hidden-pano.jpg"
   }]);
   assert.equal(tools.listTools()[0].sendsMessage, undefined);
+});
+
+test("Panorama move performs exactly one move with the current World Wanderer policy", async () => {
+  const root = tmpDir();
+  const configPath = path.join(root, "config.json");
+  const dbPath = path.join(root, "alice.sqlite");
+  const baseConfig = readWorldWandererConfig(configPath);
+  const graph = new Map([
+    ["start", {
+      panoId: "start",
+      location: { lat: 41, lng: 29 },
+      heading: 90,
+      links: [
+        { panoId: "back", heading: 270, text: "Road" },
+        { panoId: "front", heading: 90, text: "Road" }
+      ],
+      metadata: {}
+    }],
+    ["back", { panoId: "back", location: { lat: 41, lng: 28.999 }, heading: 270, links: [], metadata: {} }],
+    ["front", { panoId: "front", location: { lat: 41, lng: 29.001 }, heading: 90, links: [], metadata: {} }]
+  ]);
+  const requestedPanoIds: string[] = [];
+  const tools = createLocationTools({
+    configPath,
+    dbPath,
+    getGoogleStreetView: () => ({
+      async getPanoGraphByCoordinates() {
+        throw new Error("unexpected getPanoGraphByCoordinates call");
+      },
+      async getPanoGraphByPanoId(input) {
+        requestedPanoIds.push(input.panoId);
+        const pano = graph.get(input.panoId);
+        if (!pano) throw new Error("missing pano");
+        return pano;
+      },
+      async getStreetViewByCoordinates() {
+        throw new Error("unexpected getStreetViewByCoordinates call");
+      }
+    }),
+    now: () => nowIso,
+    random: () => 0.5
+  });
+  writeWorldWandererConfig(configPath, {
+    ...baseConfig,
+    enabled: true,
+    selectionTemperature: 0.01
+  });
+  writeWorldWandererState(dbPath, {
+    location: { lat: 41, lng: 29 },
+    lastHeading: 90,
+    panoId: "start",
+    pathStack: [{ time: "2026-08-11T11:00:00.000", panoId: "start", lat: 41, lng: 29, lastHeading: 90 }]
+  });
+
+  const result = await tools.execute({ id: "call_location", toolName: "Panorama", input: { action: "move" } });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.output, JSON.stringify({ lat: 41, lng: 29.001 }));
+  assert.deepEqual(requestedPanoIds, ["start", "front"]);
+  const state = readWorldWandererState(dbPath, readWorldWandererConfig(configPath));
+  assert.equal(state.panoId, "front");
+  assert.equal(state.lastHeading, 90);
+  assert.deepEqual(state.pathStack.map((entry) => entry.panoId), ["start", "front"]);
+});
+
+test("Panorama move returns an explicit error when no movement is available", async () => {
+  const root = tmpDir();
+  const configPath = path.join(root, "config.json");
+  const dbPath = path.join(root, "alice.sqlite");
+  const baseConfig = readWorldWandererConfig(configPath);
+  const isolated = {
+    panoId: "isolated",
+    location: { lat: 41, lng: 29 },
+    heading: 90,
+    links: [],
+    metadata: {}
+  };
+  const tools = createLocationTools({
+    configPath,
+    dbPath,
+    getGoogleStreetView: () => ({
+      async getPanoGraphByCoordinates() {
+        return isolated;
+      },
+      async getPanoGraphByPanoId() {
+        return isolated;
+      },
+      async getStreetViewByCoordinates() {
+        throw new Error("unexpected getStreetViewByCoordinates call");
+      }
+    }),
+    now: () => nowIso
+  });
+  writeWorldWandererConfig(configPath, { ...baseConfig, enabled: true });
+  writeWorldWandererState(dbPath, {
+    location: isolated.location,
+    lastHeading: 90,
+    panoId: isolated.panoId,
+    pathStack: [{ time: "2026-08-11T11:00:00.000", panoId: isolated.panoId, lat: 41, lng: 29, lastHeading: 90 }]
+  });
+
+  const result = await tools.execute({ id: "call_location", toolName: "Panorama", input: { action: "move" } });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "location_move_unavailable");
+  assert.equal(readWorldWandererState(dbPath, readWorldWandererConfig(configPath)).panoId, "isolated");
 });
 
 test("Panorama teleport queries the nearest pano by input coordinates", async () => {

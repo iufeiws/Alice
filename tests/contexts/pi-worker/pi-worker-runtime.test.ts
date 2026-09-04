@@ -140,6 +140,23 @@ test("SubAgent result returns the completed message or running state", async () 
   await runtime.stop();
 });
 
+test("SubAgent messages truncates long serialized results to 1024 characters at each edge", async () => {
+  const worker = fakeWorker();
+  const longText = `HEAD${"x".repeat(3000)}TAIL`;
+  worker.sessionMessages = async () => [{ role: "assistant", content: longText }];
+  const runtime = createPiWorkerRuntime({ worker, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });
+  await runtime.start();
+  const tool = createSubAgentTool({ runtime });
+  const result = await tool.execute({ id: "messages-long", toolName: "SubAgent", input: { action: "messages", nickname: "pikachu", access: ":" } });
+  assert.equal(typeof result.output, "string");
+  const output = result.output as string;
+  const serialized = JSON.stringify([{ role: "assistant", content: longText }]);
+  assert.ok(output.startsWith(serialized.slice(0, 1024)));
+  assert.ok(output.endsWith(serialized.slice(-1024)));
+  assert.match(output, /<subagent_messages_truncated omitted_chars="\d+" \/>/);
+  await runtime.stop();
+});
+
 test("SubAgent rejects legacy actions, mode, empty entry ids and extra fields", async () => {
   const worker = fakeWorker();
   const runtime = createPiWorkerRuntime({ worker, prepareModel: () => ({ model: "model-a", supportsImage: false, reasoning: false }) });

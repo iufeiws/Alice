@@ -142,6 +142,19 @@ test("real Pi worker: start/send/fork/auth/persistent sessions", { skip: Number(
 
       const get = (pathname: string) => fetch(`${base()}${pathname}`, { headers }).then((response) => response.json() as Promise<any>);
 
+      // The worker control API must accept request bodies larger than 4 MiB.
+      const oversizedConfig = await fetch(`${base()}/config`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          relayUrl: `http://127.0.0.1:${port}/v1`,
+          relayToken,
+          padding: "x".repeat(4 * 1024 * 1024)
+        })
+      });
+      assert.equal(oversizedConfig.status, 200);
+      assert.deepEqual(await oversizedConfig.json(), { ok: true });
+
       // Runtime relay configuration updates the existing worker process without rebuilding its container.
       const nextRelayToken = "test-relay-token-2";
       relay.createCapability({ sandboxId: "sandbox-test", token: nextRelayToken, preset });

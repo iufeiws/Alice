@@ -15,7 +15,7 @@ import { fs, path, fixedTime, makeTempDir } from "../llm-gateway/llm-and-storage
 
 /**
  * Chat 链路集成测试（§12.4）:
- * - 每个 LLMSessionClearReason 都进入统一 clear 入口（§7.1 列出的 7 个；
+ * - 每个 LLMSessionClearReason 都进入统一 clear 入口（当前共 9 个；
  *   `shutdown` 无生产调用点, 已从 clear reason 中移除）。
  * - active session 与无 current session 两种情形。
  * - Short Memory 未完成时会话不得提前清除（§10: 归档/pointer/内存 current 均保持）。
@@ -36,7 +36,8 @@ const ALL_CLEAR_REASONS: LLMSessionClearReason[] = [
   "mode_timeout",
   "yield_end",
   "process_restart_recovery_failed",
-  "force_wake"
+  "force_wake",
+  "force_clear"
 ];
 
 const CAPTURED_ENTRY = {

@@ -78,10 +78,37 @@ test("projectVisibleMessages filters to visible user/assistant messages only", (
   ]);
 });
 
-test("projectRawMessages preserves every Pi message object without visibility filtering", () => {
+test("projectRawMessages preserves Pi message structure without visibility filtering", () => {
   assert.deepEqual(projectRawMessages(REAL_SESSION_ENTRIES), REAL_SESSION_ENTRIES
     .filter((entry) => entry.type === "message")
     .map((entry) => entry.message));
+});
+
+test("projectRawMessages strips binary payloads without mutating Pi session entries", () => {
+  const entries = [{
+    id: "m1",
+    type: "message",
+    message: {
+      role: "toolResult",
+      content: [
+        { type: "text", text: "image result" },
+        { type: "image", data: "large-base64", base64: "duplicate", mimeType: "image/png" },
+        { type: "audio", data: "audio-base64", mimeType: "audio/mpeg" },
+        { type: "image_url", image_url: { url: "data:image/jpeg;base64,large-base64" } }
+      ]
+    }
+  }];
+
+  assert.deepEqual(projectRawMessages(entries), [{
+    role: "toolResult",
+    content: [
+      { type: "text", text: "image result" },
+      { type: "image", mimeType: "image/png" },
+      { type: "audio", mimeType: "audio/mpeg" },
+      { type: "image_url", image_url: {} }
+    ]
+  }]);
+  assert.equal(entries[0].message.content[1].data, "large-base64");
 });
 
 test("projectVisibleMessages strips thinking blocks from visible assistant content", () => {

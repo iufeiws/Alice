@@ -28,7 +28,7 @@
 Array<Record<string, unknown>>
 ```
 
-返回 Pi JSONL 中原始 `type: "message"` 的 `message` 对象，不过滤 user、assistant、tool result、tool call、progress 或 thinking。`access` 参数保持原有功能，只接受单个整数或 `start:end`；索引越界会报错，切片可以返回空数组。
+返回 Pi JSONL 中 `type: "message"` 的 `message` 结构，不过滤 user、assistant、tool result、tool call、progress 或 thinking；图片、音频等 content part 中的二进制 `data` / `base64` 和 data URL 不会返回。`access` 参数保持原有功能，只接受单个整数或 `start:end`；索引越界会报错，切片可以返回空数组。序列化结果超过 2048 字符时，工具返回改为仅保留首尾各 1024 字符的截断文本，中间标注被省略的字符数。
 
 ### `result`
 

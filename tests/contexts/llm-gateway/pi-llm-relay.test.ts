@@ -317,6 +317,33 @@ test("relay http server returns 502 for gateway upstream failures instead of han
   }
 });
 
+test("relay forwards request bodies larger than 4 MiB", async () => {
+  let upstreamBody: Record<string, any> | undefined;
+  const relay = createPiLLMRelay({
+    time,
+    host: "127.0.0.1",
+    port: 0,
+    fetchImpl: async (_url, init) => {
+      upstreamBody = JSON.parse(String(init?.body)) as Record<string, any>;
+      return new Response(JSON.stringify({ choices: [] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+  });
+  const { token } = relay.createCapability({ sandboxId: "sandbox-a", token: "token-a", preset });
+  const { port, close } = await relay.start();
+  try {
+    const largeContent = "x".repeat(4 * 1024 * 1024);
+    const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: "model-a", messages: [{ role: "user", content: largeContent }] })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(upstreamBody?.messages?.[0]?.content, largeContent);
+  } finally {
+    await close();
+  }
+});
+
 test("relay upstream timeout stays armed for the whole SSE stream and releases the slot", async () => {
   let aborted = false;
   const relay = createPiLLMRelay({

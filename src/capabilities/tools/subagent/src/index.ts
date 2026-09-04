@@ -13,6 +13,8 @@ export type SubAgentInput =
   | { action: "cancel"; nickname: string }
   | { action: "fork"; nickname: string; entryId?: string };
 
+const SUBAGENT_MESSAGES_EDGE_CHARS = 1024;
+
 // Future plan only: `list` may gain its own input and dispatch branch later.
 // It is intentionally absent from the public union and cannot be called now.
 
@@ -59,7 +61,10 @@ export function createSubAgentTool(input: {
         }
         return { callId: call.id, ok: true, output: { nickname: invocation.nickname } };
       }
-      if (value.action === "messages") return { callId: call.id, ok: true, output: await input.runtime.messagesSubAgent(value.nickname, value.access, context?.signal) };
+      if (value.action === "messages") {
+        const messages = await input.runtime.messagesSubAgent(value.nickname, value.access, context?.signal);
+        return { callId: call.id, ok: true, output: formatSubAgentMessages(messages) };
+      }
       if (value.action === "result") return { callId: call.id, ok: true, output: await input.runtime.resultSubAgent(value.nickname, context?.signal) };
       if (value.action === "send") {
         const invocation = await input.runtime.sendSubAgent(value.nickname, {
@@ -81,6 +86,14 @@ export function createSubAgentTool(input: {
       return { callId: call.id, ok: true, output: { nickname: result.nickname } };
     }
   };
+}
+
+export function formatSubAgentMessages(messages: unknown): unknown {
+  const serialized = JSON.stringify(messages);
+  const retainedChars = SUBAGENT_MESSAGES_EDGE_CHARS * 2;
+  if (serialized.length <= retainedChars) return messages;
+  const omittedChars = serialized.length - retainedChars;
+  return `${serialized.slice(0, SUBAGENT_MESSAGES_EDGE_CHARS)}\n<subagent_messages_truncated omitted_chars="${omittedChars}" />\n${serialized.slice(-SUBAGENT_MESSAGES_EDGE_CHARS)}`;
 }
 
 function messageTargetFromCall(call: ToolCall, resolveOutputTarget?: ToolOutputTargetResolver): Record<string, unknown> | undefined {

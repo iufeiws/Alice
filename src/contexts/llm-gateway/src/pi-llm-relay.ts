@@ -4,7 +4,6 @@ import type { PiPresetSnapshot } from "./pi-preset-adapter.js";
 import { createOpenAIUpstreamRequester, type OpenAIUpstreamRequest } from "./llm-upstream-requester.js";
 import { resolveCredentialAuthorization } from "./credential-runtime.js";
 
-const MAX_BODY_BYTES = 4 * 1024 * 1024;
 const allowedResponseHeaders = ["content-type", "cache-control", "x-request-id", "retry-after"];
 
 export type PiRelayCapability = {
@@ -36,10 +35,8 @@ export function createPiLLMRelay(input: {
   host?: string;
   port?: number;
   fetchImpl?: typeof fetch;
-  maxBodyBytes?: number;
   maxConcurrency?: number;
 }): PiLLMRelay {
-  const maxBodyBytes = input.maxBodyBytes ?? MAX_BODY_BYTES;
   const slots = createConcurrencySlots(input.maxConcurrency ?? 1);
   const capabilities = new Map<string, PiRelayCapability>();
   let activeServer: { close(callback: (error?: Error) => void): void } | undefined;
@@ -72,7 +69,6 @@ export function createPiLLMRelay(input: {
     handle(request) {
       return handleRelayRequest(request, {
         capabilities,
-        maxBodyBytes,
         slots,
         time: input.time
       });
@@ -81,17 +77,9 @@ export function createPiLLMRelay(input: {
       const http = await import("node:http");
       const server = http.createServer(async (req, res) => {
         const chunks: Buffer[] = [];
-        let size = 0;
         try {
           for await (const chunk of req) {
             const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-            size += buffer.byteLength;
-            if (size > maxBodyBytes) {
-              res.statusCode = 413;
-              res.end("request_body_too_large");
-              req.destroy();
-              return;
-            }
             chunks.push(buffer);
           }
           const response = await handleRelayRequest({
@@ -101,7 +89,6 @@ export function createPiLLMRelay(input: {
             body: Buffer.concat(chunks)
           }, {
             capabilities,
-            maxBodyBytes,
             slots,
             time: input.time
           });
@@ -203,7 +190,6 @@ async function handleRelayRequest(
   request: Request | PiRelayRequest,
   input: {
     capabilities: Map<string, PiRelayCapability>;
-    maxBodyBytes: number;
     slots: { acquire(): boolean; release(): void };
     time: CurrentTimeProvider;
   }
@@ -221,13 +207,7 @@ async function handleRelayRequest(
   const preset = capability.preset;
   const expectedPath = preset.protocol === "openai-responses" ? "/v1/responses" : "/v1/chat/completions";
   if (pathname !== expectedPath) return relayError(404, "pi_relay_protocol_mismatch");
-  let body: Buffer;
-  try {
-    body = await readBody(request, input.maxBodyBytes);
-  } catch (error) {
-    if (error instanceof Error && error.message === "pi_relay_body_too_large") return relayError(413, error.message);
-    throw error;
-  }
+  const body = await readBody(request);
   let parsed: Record<string, unknown>;
   try {
     parsed = JSON.parse(body.toString("utf8")) as Record<string, unknown>;
@@ -413,18 +393,14 @@ function nonStreamingJsonToSse(bytes: Uint8Array, time: CurrentTimeProvider): st
   return `data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`;
 }
 
-function readBody(request: Request | PiRelayRequest, maxBodyBytes: number): Promise<Buffer> {
-  if (request instanceof Request) return request.arrayBuffer().then((body) => {
-    if (body.byteLength > maxBodyBytes) throw new Error("pi_relay_body_too_large");
-    return Buffer.from(body);
-  });
+function readBody(request: Request | PiRelayRequest): Promise<Buffer> {
+  if (request instanceof Request) return request.arrayBuffer().then((body) => Buffer.from(body));
   if (request.body === undefined || request.body === null) return Promise.resolve(Buffer.alloc(0));
   const body = typeof request.body === "string"
     ? Buffer.from(request.body)
     : request.body instanceof ArrayBuffer
       ? Buffer.from(new Uint8Array(request.body))
       : Buffer.from(request.body as Uint8Array);
-  if (body.byteLength > maxBodyBytes) return Promise.reject(new Error("pi_relay_body_too_large"));
   return Promise.resolve(body);
 }
 

@@ -39,11 +39,27 @@ export function projectVisibleMessages(entries) {
     .map((entry) => ({ role: entry.message.role, content: stripThinkingBlocks(entry.message.content) }));
 }
 
-/** 保留 Pi JSONL 中的原始 message 对象，不做可见性、thinking 或 tool 过滤。 */
+/**
+ * 保留 Pi JSONL 中的 message 结构，不做可见性、thinking 或 tool 过滤。
+ * 二进制 content part 只保留元数据，不向宿主返回 data/base64 或 data URL。
+ */
 export function projectRawMessages(entries) {
   return entries
     .filter((entry) => entry?.type === "message")
-    .map((entry) => entry.message);
+    .map((entry) => stripBinaryPayloads(entry.message));
+}
+
+function stripBinaryPayloads(value) {
+  if (Array.isArray(value)) return value.map(stripBinaryPayloads);
+  if (!value || typeof value !== "object") return value;
+  const binaryPart = value.type === "image" || value.type === "audio";
+  const projected = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (binaryPart && (key === "data" || key === "base64")) continue;
+    if (key === "url" && typeof child === "string" && child.startsWith("data:")) continue;
+    projected[key] = stripBinaryPayloads(child);
+  }
+  return projected;
 }
 
 /** entryId 之后（含）的最后一条可见 assistant 消息；无则 undefined。 */

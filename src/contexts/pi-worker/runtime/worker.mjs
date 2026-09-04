@@ -21,7 +21,6 @@ const nicknameMap = createPiAgentNicknameMap({
   filePath: path.join(sessionRoot, "pi-agent-nicknames.json"),
   names: readPiAgentNames(path.join(runtimeDir, "pi-agent-names.txt"))
 });
-const maxBodyBytes = 4 * 1024 * 1024;
 const maxConcurrency = positiveInteger(process.env.PI_MAX_CONCURRENCY, 2);
 const maxQueueSize = positiveInteger(process.env.PI_MAX_QUEUE_SIZE, 20);
 const defaultTaskTimeoutSeconds = positiveInteger(process.env.PI_TASK_TIMEOUT_SECONDS, 21_600);
@@ -48,7 +47,7 @@ const server = http.createServer(async (request, response) => {
     response.setHeader("content-type", "application/json");
     response.end(JSON.stringify(result.body));
   } catch (error) {
-    response.statusCode = error?.message === "worker_body_too_large" ? 413 : 500;
+    response.statusCode = 500;
     response.setHeader("content-type", "application/json");
     response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
   }
@@ -649,10 +648,7 @@ function authenticate(request) {
 
 async function readBody(request) {
   const chunks = [];
-  let size = 0;
   for await (const chunk of request) {
-    size += chunk.length;
-    if (size > maxBodyBytes) throw new Error("worker_body_too_large");
     chunks.push(chunk);
   }
   if (!chunks.length) return {};

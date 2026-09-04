@@ -126,7 +126,7 @@ Interrupt batch 由 `MessageRuntime` 管理，heartbeat 从 SQLite 找出当前 
 | dice | `Dice` | 投骰子 |
 | sleep-cocoon | `sleep_cocoon` | 睡眠茧：in 钻进入睡（随机 ±15 分钟）/ out 取消；不再发送就寝/起床系统通知 |
 | bookcase | `Bookcase` | 书橱抽书讲故事 / 还书（assets/tools/bookcase/booksummaries.sqlite） |
-| wardrobe | `Wardrobe` | 查看/切换服装（list/mirror/switch/random，可触发 on-body 生成；random 成功后返回当前服装的 mirror 结果；不再发送更衣系统通知） |
+| wardrobe | `Wardrobe` | 查看/切换服装（list/mirror/switch/random，可触发 on-body 生成；switch 成功后返回当前服装的 mirror 结果，random 随机选装后复用 switch；不再发送更衣系统通知） |
 | finish-and-wait | `Yield` | 等待、清空上下文或结束：clear 清除当前 LLM 对话并在同一 loop 开启新一轮，同时追加仅供 Core/Albert 使用的 `<Alert info="上下文历史已清空" />`；await_chat 固定等待 15 分钟；schedule（10s–15min 定时返回）实现保留但不在 profile 中暴露；连续 schedule 且无 subagent 运行时拒绝（防空转） |
 
 `Yield`、`SubAgent`、`Panorama` 的 tool 输入 schema 使用 `action` 字符串 `enum` 与可选参数；各 action 的实际参数要求仍由工具执行层校验，不使用 `oneOf`。`Panorama.send` 只是发送当前 pano 图片的 helper action，工具定义不设置 `sendsMessage`，因此 agent loop 不会将其计为已完成用户消息回复。

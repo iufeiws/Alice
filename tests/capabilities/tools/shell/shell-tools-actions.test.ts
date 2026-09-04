@@ -90,7 +90,7 @@ test("wardrobe mirror does not send a message", async () => {
   assert.deepEqual(sent, []);
 });
 
-test("wardrobe switch returns changed outfit message", async () => {
+test("wardrobe switch returns the current outfit mirror result", async () => {
   const store = makeShellStore("wardrobe-switch-action", [
     { id: "o1", name: "O One", content: "outfit one" },
     { id: "o2", name: "O Two", content: "outfit two" }
@@ -102,6 +102,7 @@ test("wardrobe switch returns changed outfit message", async () => {
   const result = await tools.execute({ id: "call_switch", toolName: "Wardrobe", input: { action: "switch", name: "O Two" } });
 
   assert.equal(result.ok, true);
+  assert.equal(result.output, '<O Two group="root">\noutfit two\n</O Two>');
   assert.equal(store.get(new Date("2026-05-26T12:31:00.000Z"), "Asia/Shanghai").outfit.id, "o2");
 });
 

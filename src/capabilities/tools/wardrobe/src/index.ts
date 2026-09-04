@@ -83,9 +83,15 @@ export function createWardrobeTools(deps: WardrobeToolsDeps): ToolPlugin {
     };
   }
 
-  async function switchWardrobe(call: ToolCall): Promise<ToolResult> {
-    const target = resolveTarget(call);
+  async function switchWardrobe(
+    call: ToolCall,
+    selectedOutfit?: Outfit,
+    selectedTarget?: WardrobeToolTarget
+  ): Promise<ToolResult> {
+    const target = selectedTarget ?? resolveTarget(call);
     if (!target) return wardrobeError(call, wardrobeToolText.noCurrentSession);
+    if (selectedOutfit) return changeWardrobe(call, target, selectedOutfit.id);
+
     const name = stringValue(call.input.name).trim();
     if (!name) return wardrobeError(call, wardrobeToolText.nameRequired);
 
@@ -113,15 +119,10 @@ export function createWardrobeTools(deps: WardrobeToolsDeps): ToolPlugin {
     const query = stringValue(call.input.name).trim();
     const outfits = query ? filterOutfits(config.outfits, query) : config.outfits;
     if (outfits.length === 0) return wardrobeError(call, wardrobeToolText.unknownOutfitName);
-    return changeWardrobe(call, target, outfits[Math.floor(Math.random() * outfits.length)].id, true);
+    return switchWardrobe(call, outfits[Math.floor(Math.random() * outfits.length)], target);
   }
 
-  async function changeWardrobe(
-    call: ToolCall,
-    target: WardrobeToolTarget,
-    outfitId: string,
-    returnCurrentOutfit = false
-  ): Promise<ToolResult> {
+  async function changeWardrobe(call: ToolCall, target: WardrobeToolTarget, outfitId: string): Promise<ToolResult> {
     let current;
     try {
       current = deps.wardrobeRuntime.switchOutfit(time.now().date, time.timeZone, outfitId);
@@ -138,7 +139,7 @@ export function createWardrobeTools(deps: WardrobeToolsDeps): ToolPlugin {
     return {
       callId: call.id,
       ok: true,
-      output: returnCurrentOutfit ? formatOutfit(current.outfit, false) : wardrobeToolText.switched
+      output: formatOutfit(current.outfit, false)
     };
   }
 

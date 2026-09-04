@@ -21,6 +21,5 @@ export const wardrobeToolText = {
   noCurrentSession: "No current messaging session is available",
   nameRequired: "name is required",
   unknownOutfitName: "unknown outfit name",
-  ambiguousOutfitName: (name: string) => `ambiguous outfit name: ${name}`,
-  switched: "success"
+  ambiguousOutfitName: (name: string) => `ambiguous outfit name: ${name}`
 };

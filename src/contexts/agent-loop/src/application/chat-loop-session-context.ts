@@ -57,12 +57,12 @@ function shouldResumeWait(session: ChatAgentLoopSession, event: AgentEvent, nowM
   const raw = event.meta.raw;
   if (!Boolean(raw && typeof raw === "object" && "agentInitiatedTriggerEvent" in raw
     && raw.agentInitiatedTriggerEvent === "yield.timeout")) return false;
-  // await_chat 超时无新消息 → 不恢复 loop, 由 chat-agent 直接结束会话。
+  // await 超时无新消息 → 不恢复 loop, 由 chat-agent 直接结束会话。
   return session.waitChatMode === "schedule";
 }
 
 function isYieldWaitMode(mode: ChatAgentLoopSession["waitChatMode"]): boolean {
-  return mode === "schedule" || mode === "await_chat";
+  return mode === "schedule" || mode === "await";
 }
 
 export function findToolPlugin(tools: ToolPlugin[], toolName: string): ToolPlugin | undefined {

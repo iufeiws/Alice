@@ -2,21 +2,25 @@ import type { ToolDefinition } from "../../../contexts/tool-execution/src/index.
 
 export const minYieldWaitSeconds = 10;
 export const maxYieldWaitSeconds = 15 * 60;
-/** await_chat 固定等待时长: 15 分钟。 */
+/** await 固定等待时长: 15 分钟。 */
 export const awaitChatWaitSeconds = maxYieldWaitSeconds;
 export const clearYieldAlbertContent = '<Alert info="上下文历史已清空" />';
+
+const actionDescriptions = [
+  "new：清空当前的工具调用和思考等上下文，然后重新进入 agent loop。",
+  "await：固定等待 15 分钟；有新消息时提前返回，超时无消息则结束。",
+  "finish：直接结束当前对话。"
+];
 
 export const finishAndWaitTool: ToolDefinition = {
   name: "Yield",
   passRenderText: true,
   suppressExecutionCard: true,
-  // schedule 已禁用，不暴露给 LLM；保留原描述便于恢复时参考。
-  // description: "等待回复或结束聊天。action=schedule 定时(秒)后再次返回, 中途有新消息时提前返回; action=await_chat 固定等待 15 分钟, 有新消息时提前返回, 超时无消息则结束; action=finish 直接结束",
-  description: "等待回复、清空上下文或结束聊天。action=clear 清空当前的工具调用和思考等上下文然后重新进入agent loop; action=await_chat 固定等待 15 分钟, 有新消息时提前返回, 超时无消息则结束; action=finish 直接结束",
+  description: actionDescriptions.join("\n"),
   inputSchema: {
     type: "object",
     properties: {
-      action: { type: "string", enum: ["clear", "await_chat", "finish"] }
+      action: { type: "string", enum: ["new", "await", "finish"] }
     },
     required: ["action"],
     additionalProperties: false

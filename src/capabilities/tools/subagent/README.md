@@ -44,7 +44,7 @@ Array<Record<string, unknown>>
 
 ### `send`
 
-向指定 nickname 对应 session 提交一条新任务消息并立即返回原 nickname；需要结果时再调用 wait 或 result。
+向指定 nickname 对应 session 提交一条新任务消息并立即返回原 nickname；需要结果时再调用 result。
 
 ```ts
 { action: "send"; nickname: string; message: string; timeoutSeconds?: number }
@@ -62,17 +62,9 @@ Array<Record<string, unknown>>
 { updatedAt: string; messages: number; status: "queued" | "running" | "completed" | "failed" | "interrupted" | "timed_out" | "aborted" }
 ```
 
-### `wait`
+### 内部保留的 `wait`
 
-等待 nickname 对应 session 当前任务结束；完成时返回最新 assistant 消息，等待结束时仍未完成则返回 running，其他终态只返回状态。
-
-```ts
-{ action: "wait"; nickname: string; timeoutSeconds?: number }
-// output
-{ status: "running" }
-  | { status: "completed"; message: { role: "assistant"; content: unknown } }
-  | { status: "failed" | "interrupted" | "timed_out" | "aborted" }
-```
+执行层仍保留 `wait`，但它已从输入 schema 和工具描述中注释掉，不会暴露给 LLM。
 
 ### `cancel`
 
@@ -84,7 +76,7 @@ Array<Record<string, unknown>>
 "cancelled"
 ```
 
-返回值只表示取消请求已提交；最终状态由后续 `wait` 或 `status` 查询。
+返回值只表示取消请求已提交；最终状态由后续 `status` 查询。
 
 ### `fork`
 

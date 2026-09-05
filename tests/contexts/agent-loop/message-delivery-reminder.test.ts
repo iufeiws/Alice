@@ -177,7 +177,7 @@ test("restored continuation state keeps the reminder deduplicated", async () => 
   ), false);
 });
 
-for (const action of ["finish", "await_chat"] as const) {
+for (const action of ["finish", "await"] as const) {
   test(`Yield ${action} returns the reminder as a tool error once`, async () => {
     const seenRequests: Array<Array<{ role: string; content?: unknown }>> = [];
     const calls: ToolCall[] = [];
@@ -277,11 +277,11 @@ function reminderTools(calls: ToolCall[], options: { failChat?: boolean } = {}):
       if (call.toolName === "Yield" && call.input.action === "finish") {
         return { callId: call.id, ok: true, invalidateLLMSession: true, llmSessionClearReason: "yield_end" };
       }
-      if (call.toolName === "Yield" && call.input.action === "await_chat") {
+      if (call.toolName === "Yield" && call.input.action === "await") {
         return {
           callId: call.id,
           ok: true,
-          meta: { yieldReturn: true, yieldAction: "await_chat", yieldSeconds: 900 }
+          meta: { yieldReturn: true, yieldAction: "await", yieldSeconds: 900 }
         };
       }
       return { callId: call.id, ok: true, output: "ok" };

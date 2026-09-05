@@ -9,7 +9,7 @@ import { createSessionResolver } from "../../../src/contexts/agent-loop/src/appl
 import { createFinishAndWaitTools, clearYieldAlbertContent } from "../../../src/capabilities/tools/finish-and-wait/src/index.js";
 import { createChatAgent, runPreparedChatEvent, textEvent } from "./agent-tools-helpers.js";
 
-test("Yield clear rebuilds the chat session and sends a fresh request with the Albert alert", async () => {
+test("Yield new rebuilds the chat session and sends a fresh request with the Albert alert", async () => {
   const requests: LLMChatInput[] = [];
   const appended: unknown[] = [];
   let rebuilt = 0;
@@ -22,9 +22,9 @@ test("Yield clear rebuilds the chat session and sends a fresh request with the A
             role: "assistant",
             content: "",
             toolCalls: [{
-              id: "call_clear",
+              id: "call_new",
               type: "function",
-              function: { name: "Yield", arguments: '{"action":"clear"}' }
+              function: { name: "Yield", arguments: '{"action":"new"}' }
             }]
           },
           finishReason: "tool_calls"
@@ -64,7 +64,7 @@ test("Yield clear rebuilds the chat session and sends a fresh request with the A
   assert.equal(requests.length, 2);
   assert.equal(rebuilt, 1);
   assert.deepEqual(appended, [{
-    callId: "call_clear",
+    callId: "call_new",
     requester: textEvent().source,
     externalSession: textEvent().externalSession,
     contentText: clearYieldAlbertContent
@@ -76,7 +76,7 @@ test("Yield clear rebuilds the chat session and sends a fresh request with the A
   assert.equal(requests[1].messages.some((message) => message.role === "assistant" && message.toolCalls?.some((call) => call.function.name === "Yield")), false);
 });
 
-test("Yield clear does not append Albert or continue when session clear is not completed", async () => {
+test("Yield new does not append Albert or continue when session clear is not completed", async () => {
   const requests: LLMChatInput[] = [];
   const appended: unknown[] = [];
   const llm: LLMClient = {
@@ -87,9 +87,9 @@ test("Yield clear does not append Albert or continue when session clear is not c
           role: "assistant",
           content: "",
           toolCalls: [{
-            id: "call_clear_failed",
+            id: "call_new_failed",
             type: "function",
-            function: { name: "Yield", arguments: '{"action":"clear"}' }
+            function: { name: "Yield", arguments: '{"action":"new"}' }
           }]
         },
         finishReason: "tool_calls"

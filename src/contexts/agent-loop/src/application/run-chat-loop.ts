@@ -38,7 +38,7 @@ export type ChatAgentLoopSession = {
   fixedPrefixStartedAt?: string;
   loopStartedAt?: string;
   waitChatStartedAt?: number;
-  waitChatMode?: "schedule" | "await_chat";
+  waitChatMode?: "schedule" | "await";
   waitChatUntil?: number;
   waitChatTarget?: YieldResumeTarget;
   skipNextAppendLayers?: boolean;
@@ -531,7 +531,7 @@ function shouldDeferYieldForMessageDelivery(
   if (toolName !== "Yield") return false;
   if (!toolResult.ok) return false;
   if (toolInput.action === "finish") return toolResult.invalidateLLMSession === true;
-  if (toolInput.action === "await_chat") return toolResult.meta?.yieldReturn === true;
+  if (toolInput.action === "await") return toolResult.meta?.yieldReturn === true;
   return false;
 }
 

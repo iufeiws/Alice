@@ -1,7 +1,7 @@
 import type { ToolCall, ToolExecutionContext, ToolPlugin, ToolResult } from "../../../../contexts/tool-execution/src/index.js";
 import { awaitChatWaitSeconds, clearYieldAlbertContent, finishAndWaitTool, maxYieldWaitSeconds, minYieldWaitSeconds } from "../profile.js";
 
-export type FinishAndWaitActions = "schedule" | "clear" | "await_chat" | "finish";
+export type FinishAndWaitActions = "schedule" | "new" | "await" | "finish";
 
 export { clearYieldAlbertContent };
 
@@ -21,7 +21,7 @@ export function createFinishAndWaitTools(input?: {
       const error = validateYieldInput(call.input);
       if (error) return { callId: call.id, ok: false, error };
       const action = call.input.action as FinishAndWaitActions;
-      if (action === "clear") {
+      if (action === "new") {
         if (call.input.__preview === true) return { callId: call.id, ok: true };
         return {
           callId: call.id,
@@ -71,7 +71,7 @@ export function createFinishAndWaitTools(input?: {
         ok: true,
         meta: {
           yieldReturn: true,
-          yieldAction: "await_chat",
+          yieldAction: "await",
           yieldSeconds: awaitChatWaitSeconds
         }
       };
@@ -82,7 +82,7 @@ export function createFinishAndWaitTools(input?: {
 function validateYieldInput(input: Record<string, unknown>): string | undefined {
   const keys = Object.keys(input).filter((key) => key !== "__preview");
   const action = input.action;
-  if (action === "clear" || action === "finish" || action === "await_chat") {
+  if (action === "new" || action === "finish" || action === "await") {
     return keys.length === 1 ? undefined : `Yield ${action} only accepts action`;
   }
   if (action === "schedule") {
@@ -92,5 +92,5 @@ function validateYieldInput(input: Record<string, unknown>): string | undefined 
     }
     return undefined;
   }
-  return "Yield action must be schedule, clear, await_chat or finish";
+  return "Yield action must be schedule, new, await or finish";
 }

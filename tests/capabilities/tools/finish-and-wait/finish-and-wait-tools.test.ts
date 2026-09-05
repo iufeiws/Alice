@@ -5,20 +5,20 @@ import {
   createFinishAndWaitTools
 } from "../../../../src/capabilities/tools/finish-and-wait/src/index.js";
 
-test("Yield clear requests a fresh round and appends an Albert alert", async () => {
+test("Yield new requests a fresh round and appends an Albert alert", async () => {
   const tools = createFinishAndWaitTools();
   const definition = tools.listTools()[0];
 
   assert.deepEqual((definition.inputSchema as { properties: { action: { enum: string[] } } }).properties.action.enum, [
-    "clear",
-    "await_chat",
+    "new",
+    "await",
     "finish"
   ]);
 
   const result = await tools.execute({
-    id: "call_clear",
+    id: "call_new",
     toolName: "Yield",
-    input: { action: "clear" },
+    input: { action: "new" },
     requester: { plugin: "feishu", channelId: "chat-1", userId: "user-1" },
     externalSession: { scope: "dm", sessionId: "session-1" }
   });
@@ -33,9 +33,9 @@ test("Yield clear requests a fresh round and appends an Albert alert", async () 
     content: clearYieldAlbertContent
   }]);
   const preview = await tools.execute({
-    id: "preview_clear",
+    id: "preview_new",
     toolName: "Yield",
-    input: { action: "clear", __preview: true },
+    input: { action: "new", __preview: true },
     requester: { plugin: "feishu", channelId: "chat-1", userId: "user-1" },
     externalSession: { scope: "dm", sessionId: "session-1" }
   });

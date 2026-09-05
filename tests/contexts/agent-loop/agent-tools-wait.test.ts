@@ -161,7 +161,7 @@ function timedYieldEvent() {
   };
 }
 
-test("chat agent ends session when await_chat times out without new messages", async () => {
+test("chat agent ends session when await times out without new messages", async () => {
   const requests: LLMChatInput[] = [];
   const sessionUpdates: LLMSessionSnapshot[] = [];
   const clearReasons: string[] = [];
@@ -181,7 +181,7 @@ test("chat agent ends session when await_chat times out without new messages", a
               toolCalls: [{
                 id: "tool_wait",
                 type: "function",
-                function: { name: "Yield", arguments: "{\"action\":\"await_chat\"}" }
+                function: { name: "Yield", arguments: "{\"action\":\"await\"}" }
               }]
             },
             finishReason: "tool_calls"
@@ -214,7 +214,7 @@ test("chat agent ends session when await_chat times out without new messages", a
   });
 
   await runPreparedChatEvent(core, textEvent());
-  assert.equal(sessionUpdates.at(-1)?.waitChatMode, "await_chat");
+  assert.equal(sessionUpdates.at(-1)?.waitChatMode, "await");
   assert.equal(sessionUpdates.at(-1)?.waitChatUntil, "2026-05-26T00:15:00.000Z");
 
   nowMs = Date.parse("2026-05-26T00:15:01.000Z");
@@ -223,7 +223,7 @@ test("chat agent ends session when await_chat times out without new messages", a
   assert.deepEqual(clearReasons, ["yield_end"]);
 });
 
-test("chat agent resumes await_chat on new message before deadline", async () => {
+test("chat agent resumes await on new message before deadline", async () => {
   const requests: LLMChatInput[] = [];
   const sessionUpdates: LLMSessionSnapshot[] = [];
   let persistedSession: LLMSessionSnapshot | undefined;
@@ -242,7 +242,7 @@ test("chat agent resumes await_chat on new message before deadline", async () =>
             toolCalls: [{
               id: "tool_wait",
               type: "function",
-              function: { name: "Yield", arguments: "{\"action\":\"await_chat\"}" }
+              function: { name: "Yield", arguments: "{\"action\":\"await\"}" }
             }]
           },
           finishReason: "tool_calls"

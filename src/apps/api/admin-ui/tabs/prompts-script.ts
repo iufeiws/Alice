@@ -73,7 +73,7 @@ export function renderPromptsScript(): string {
               <div id="promptConsecutiveToolReminder">\${renderLayerDocument(activeProfile.consecutiveToolReminderLayer, { editorId: "consecutive-tool-reminder", roles: ["user"] })}</div>
               <button type="button" id="prompt-consecutive-tool-reminder-add">Add Consecutive Tool Reminder Message</button>
               <h2>Silent Ending Reminder</h2>
-              <p class="muted">Appended as a user message before a raw, empty, or Yield finish/await_chat ending. It is injected at most once per turn, independently of the consecutive-tool reminder.</p>
+              <p class="muted">Appended as a user message before a raw, empty, or Yield finish/await ending. It is injected at most once per turn, independently of the consecutive-tool reminder.</p>
               <div id="promptSilentEndingReminder">\${renderLayerDocument(activeProfile.silentEndingReminderLayer, { editorId: "silent-ending-reminder", roles: ["user"] })}</div>
               <button type="button" id="prompt-silent-ending-reminder-add">Add Silent Ending Reminder Message</button>
               \`}

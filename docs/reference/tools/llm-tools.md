@@ -20,11 +20,13 @@
 
 ## Yield
 
-`Yield` 是等待控制工具，承载 `finish_and_wait` 语义。模型调用后当前 loop 让出，后续由 heartbeat 恢复并补齐聊天轮询结果。支持三种 action：
+`Yield` 是等待控制工具，承载 `finish_and_wait` 语义。模型调用后当前 loop 让出，后续由 heartbeat 恢复并补齐聊天轮询结果。LLM 可见三种 action：
 
-- `schedule`：定时（`timer` 秒，10~900，必填）后再次返回；中途有新消息会提前返回。
-- `await_chat`：固定等待 15 分钟；有新消息提前返回，超时无消息则直接结束会话。
+- `new`：清空当前 LLM 对话上下文，并在同一 loop 开启新一轮。
+- `await`：固定等待 15 分钟；有新消息提前返回，超时无消息则直接结束会话。
 - `finish`：直接结束，清空当前 LLM 会话。
+
+执行层仍保留未暴露给 LLM 的 `schedule` action，用于定时恢复。
 
 `schedule` 连续调用（上一个已完成工具也是 `Yield`）且当前没有运行中的 subagent 后台任务时会报错，防止模型空转。
 

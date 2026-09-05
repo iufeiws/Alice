@@ -188,7 +188,7 @@ test("pi completion without a message target still lands in Core pending", async
   assert.equal(noteInbound.count, 0, "无投递目标时也只能保留 Core pending，不能直接登记 inbound 状态");
 });
 
-test("Yield clear appends an Albert message without sending it or creating Core pending work", () => {
+test("Yield new appends an Albert message without sending it or creating Core pending work", () => {
   const store = createAliceStore(path.join(makeTempDir("yield-clear-albert"), "alice.sqlite"));
   const sent: AgentOutput[] = [];
   const { runtime, noteInbound } = createRuntime({ store, sent });

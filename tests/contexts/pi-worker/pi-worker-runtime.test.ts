@@ -65,17 +65,17 @@ test("File and shell text results reach the LLM as plain text", async () => {
   await runtime.stop();
 });
 
-test("SubAgent exposes the eight public actions with their fixed nickname description", () => {
+test("SubAgent exposes the seven public actions with their fixed nickname description", () => {
   assert.equal(subAgentTool.description, [
     "spawn：创建新的持久化 SubAgent session 并提交第一条任务消息，立即返回 nickname，不等待任务完成。",
     "messages：读取指定 nickname 对应 session 的 Pi 原始消息，并用 access 按 Python 索引或切片语义读取，例如 -1、:3、2:。",
     "result：读取指定 nickname 对应 session 当前任务的结果；完成时返回最新 assistant message，运行中返回 running，其他终态只返回状态。",
-    "send：向指定 nickname 对应 session 提交一条新任务消息并立即返回原 nickname；需要结果时再调用 wait 或 result。",
+    "send：向指定 nickname 对应 session 提交一条新任务消息并立即返回原 nickname；需要结果时再调用 result。",
     "status：非阻塞查询指定 nickname 对应 session 的单一状态、最后更新时间和可见消息数量，状态包含 queued、running 及五种终态。",
-    "wait：等待指定 nickname 对应 session 当前任务结束；完成时返回最新 assistant 消息，等待结束时仍未完成则返回 running，其他终态只返回状态。",
     "cancel：请求取消指定 nickname 对应 session 当前运行或排队的任务，成功返回 cancelled，session 保持可复用。",
     "fork：从指定 nickname 对应 session 创建独立的新 session，可用 entryId 指定历史分支点，成功返回新 nickname。"
   ].join("\n"));
+  assert.equal(subAgentTool.description.includes("wait："), false);
   const inputSchema = subAgentTool.inputSchema as {
     type: string;
     properties: Record<string, { type?: string; enum?: string[]; minLength?: number; minimum?: number }>;
@@ -85,7 +85,7 @@ test("SubAgent exposes the eight public actions with their fixed nickname descri
   };
   assert.equal(inputSchema.type, "object");
   assert.equal(inputSchema.properties.action.type, "string");
-  assert.deepEqual(inputSchema.properties.action.enum, ["spawn", "messages", "result", "send", "status", "wait", "cancel", "fork"]);
+  assert.deepEqual(inputSchema.properties.action.enum, ["spawn", "messages", "result", "send", "status", "cancel", "fork"]);
   assert.equal(inputSchema.properties.message.type, "string");
   assert.equal(inputSchema.properties.message.minLength, 1);
   assert.equal(inputSchema.properties.nickname.type, "string");

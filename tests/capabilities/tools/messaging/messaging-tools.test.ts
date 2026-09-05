@@ -61,6 +61,11 @@ test("finishAndWaitTools validates actions and wait range", async () => {
   const waitTool = tools.listTools().find((tool) => tool.name === "Yield");
   assert.ok(waitTool);
   assert.equal(waitTool.description.includes("schedule"), false);
+  assert.equal(waitTool.description, [
+    "new：清空当前的工具调用和思考等上下文，然后重新进入 agent loop。",
+    "await：固定等待 15 分钟；有新消息时提前返回，超时无消息则结束。",
+    "finish：直接结束当前对话。"
+  ].join("\n"));
   const inputSchema = waitTool.inputSchema as {
     type: string;
     properties: { action: { type?: string; enum?: string[] } };
@@ -70,7 +75,7 @@ test("finishAndWaitTools validates actions and wait range", async () => {
   };
   assert.equal(inputSchema.type, "object");
   assert.equal(inputSchema.properties.action.type, "string");
-  assert.deepEqual(inputSchema.properties.action.enum, ["clear", "await_chat", "finish"]);
+  assert.deepEqual(inputSchema.properties.action.enum, ["new", "await", "finish"]);
   assert.deepEqual(inputSchema.required, ["action"]);
   assert.equal(inputSchema.additionalProperties, false);
   assert.equal(inputSchema.oneOf, undefined);
@@ -79,16 +84,16 @@ test("finishAndWaitTools validates actions and wait range", async () => {
     assert.equal(result.ok, true);
     assert.equal(result.meta?.yieldSeconds, timer);
   }
-  const awaitChat = await tools.execute({ id: "await_chat", toolName: "Yield", input: { action: "await_chat" } });
-  assert.equal(awaitChat.ok, true);
-  assert.equal(awaitChat.meta?.yieldAction, "await_chat");
-  assert.equal(awaitChat.meta?.yieldSeconds, 900);
+  const awaitResult = await tools.execute({ id: "await", toolName: "Yield", input: { action: "await" } });
+  assert.equal(awaitResult.ok, true);
+  assert.equal(awaitResult.meta?.yieldAction, "await");
+  assert.equal(awaitResult.meta?.yieldSeconds, 900);
   for (const input of [
     {},
     { action: "poll" },
     { action: "wait_for", timer: 10 },
     { action: "finish", timer: 10 },
-    { action: "await_chat", timer: 10 },
+    { action: "await", timer: 10 },
     { action: "schedule" },
     { action: "schedule", timer: 9 },
     { action: "schedule", timer: 901 },

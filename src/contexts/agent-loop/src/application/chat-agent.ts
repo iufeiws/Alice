@@ -471,8 +471,8 @@ export function createChatAgent(deps: ChatAgentDeps): ChatAgent {
           session.skipNextAppendLayers = undefined;
           noteLLMSessionUpdated(session);
         }
-        // await_chat 定时超时且无新消息: 直接结束会话(yield_end), 不恢复 loop。
-        if (session.waitChatMode === "await_chat" && agentInitiatedTriggerEventFromRaw(event.meta.raw) === "yield.timeout") {
+        // await 定时超时且无新消息: 直接结束会话(yield_end), 不恢复 loop。
+        if (session.waitChatMode === "await" && agentInitiatedTriggerEventFromRaw(event.meta.raw) === "yield.timeout") {
           clearWaitState(session);
           // §7.1: yield_end 清除完成前不得返回或开启新 loop。
           await clearLoopSession(() => deps.onLLMSessionCleared("yield_end"));

@@ -19,7 +19,7 @@ export type LLMSessionSnapshot = {
   fixedPrefixStartedAt?: string;
   loopStartedAt?: string;
   waitChatStartedAt?: string;
-  waitChatMode?: "schedule" | "await_chat";
+  waitChatMode?: "schedule" | "await";
   waitChatUntil?: string;
   waitChatTarget?: ChatAgentLoopSession["waitChatTarget"];
   skipNextAppendLayers?: boolean;
@@ -40,7 +40,7 @@ export type LLMSessionRecord = ChatAgentLoopSession & {
   fixedPrefixStartedAt?: string;
   loopStartedAt?: string;
   waitChatStartedAt?: number;
-  waitChatMode?: "schedule" | "await_chat" ;
+  waitChatMode?: "schedule" | "await";
   waitChatUntil?: number;
   waitChatTarget?: ChatAgentLoopSession["waitChatTarget"];
   skipNextAppendLayers?: boolean;

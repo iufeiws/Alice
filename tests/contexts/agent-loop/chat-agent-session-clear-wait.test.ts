@@ -191,7 +191,7 @@ test("prompt 静态指纹变化(prompt_static_changed)路径等待 clear 完成"
   assert.equal(requests.length, 1, "clear 完成后不得开启新 loop / 新请求");
 });
 
-test("Yield 结束(await_chat 超时, yield_end)路径等待 clear 完成", async () => {
+test("Yield 结束(await 超时, yield_end)路径等待 clear 完成", async () => {
   const requests: LLMChatInput[] = [];
   const clearedReasons: string[] = [];
   let persistedSession: LLMSessionSnapshot | undefined;
@@ -214,7 +214,7 @@ test("Yield 结束(await_chat 超时, yield_end)路径等待 clear 完成", asyn
               toolCalls: [{
                 id: "tool_wait",
                 type: "function",
-                function: { name: "Yield", arguments: "{\"action\":\"await_chat\"}" }
+                function: { name: "Yield", arguments: "{\"action\":\"await\"}" }
               }]
             },
             finishReason: "tool_calls"
@@ -248,7 +248,7 @@ test("Yield 结束(await_chat 超时, yield_end)路径等待 clear 完成", asyn
   });
 
   await runPreparedChatEvent(core, textEvent());
-  assert.equal(persistedSession?.waitChatMode, "await_chat");
+  assert.equal(persistedSession?.waitChatMode, "await");
 
   nowMs = Date.parse("2026-05-26T00:15:01.000Z");
   let settled = false;

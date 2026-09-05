@@ -183,13 +183,13 @@ export function chatTestTools(onCall?: (call: ToolCall) => void) {
             llmSessionClearReason: "yield_end" as const
           };
         }
-        if (call.input.action === "await_chat") {
+        if (call.input.action === "await") {
           return {
             callId: call.id,
             ok: true,
             meta: {
               yieldReturn: true,
-              yieldAction: "await_chat" as const,
+              yieldAction: "await" as const,
               yieldSeconds: 900
             }
           };
